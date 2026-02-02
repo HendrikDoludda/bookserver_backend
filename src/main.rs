@@ -1,3 +1,7 @@
+mod config;
+mod folder_scanner;
+mod models;
+
 use axum::{routing::get, Json, Router};
 use serde::Serialize;
 use tracing::info;
@@ -10,9 +14,11 @@ async fn main() {
 
     let app = Router::new()
         .route("/health", get(health))
-        .route("/info", get(info));
+        .route("/info", get(info))
+        .route("/scan", get(scan));
 
-    let address = "127.0.0.1:3000";
+    let port = config::get_port();
+    let address = format!("127.0.0.1:{}", port);
 
     info!("Starting server on {}!",address);
 
@@ -33,6 +39,11 @@ async fn info() -> Json<InfoResponse> {
         name: "Book Server",
         version: env!("CARGO_PKG_VERSION"),
     })
+}
+
+async fn scan() -> Json<crate::models::ScanResult> {
+    let result = folder_scanner::initiate_folder_scanner();
+    Json(result)
 }
 
 

@@ -1,0 +1,256 @@
+use serde::Serialize;
+use std::path::PathBuf;
+use strum_macros::EnumIter;
+
+// ===========Database models =================
+#[derive(Debug, Clone, Serialize, EnumIter)]
+pub enum DatabaseTypes{
+    Books,
+    Library,
+    LibraryElements,
+    Series,
+    Users,
+}
+
+impl DatabaseTypes{
+    pub fn get_table_name(&self) -> &str{
+        match self{
+            DatabaseTypes::Books => "books",
+            DatabaseTypes::Library => "library",
+            DatabaseTypes::Series => "series",
+            DatabaseTypes::Users => "users",
+            DatabaseTypes::LibraryElements => "library_elements",
+        }
+    }
+
+    pub fn get_file_path(&self) -> PathBuf{
+        let base_path = std::path::Path::new("./data/databases/");
+        if (!base_path.exists()){
+            std::fs::create_dir_all(base_path).unwrap();
+        }
+        base_path.join("app_data.sqlite")
+    }
+}
+
+//============  Library model =================
+#[derive(Debug, Clone, Serialize)]
+pub enum LibraryType {
+    Books,
+    Comics,
+    Magazines,
+    Documents,
+    Others,
+}
+
+//============  Book format model =================
+#[derive(Debug, Clone, Serialize)]
+pub enum BookFormat {
+    Pdf,
+    Epub,
+    Cbz,
+    ImageComic,
+    None,
+}
+
+//============  Book language model =================
+
+#[derive(Debug, Clone, Serialize)]
+pub enum BookLanguage {
+    English,
+    German,
+    French,
+    Spanish,
+    Portuguese,
+    Italian,
+    Russian,
+    Chinese,
+    Japanese,
+    // Catch-all for any other language
+    Other(String),
+}
+
+impl BookLanguage {
+    pub fn from_code(code: &str) -> Self {
+        match code.to_lowercase().as_str() {
+            "en" => BookLanguage::English,
+            "de" => BookLanguage::German,
+            "fr" => BookLanguage::French,
+            "es" => BookLanguage::Spanish,
+            "pt" => BookLanguage::Portuguese,
+            "it" => BookLanguage::Italian,
+            "ru" => BookLanguage::Russian,
+            "zh" => BookLanguage::Chinese,
+            "ja" => BookLanguage::Japanese,
+            other => BookLanguage::Other(other.to_string()),
+        }
+    }
+
+    pub fn to_code(&self) -> String {
+        match self {
+            BookLanguage::English => "en".to_string(),
+            BookLanguage::German => "de".to_string(),
+            BookLanguage::French => "fr".to_string(),
+            BookLanguage::Spanish => "es".to_string(),
+            BookLanguage::Portuguese => "pt".to_string(),
+            BookLanguage::Italian => "it".to_string(),
+            BookLanguage::Russian => "ru".to_string(),
+            BookLanguage::Chinese => "zh".to_string(),
+            BookLanguage::Japanese => "ja".to_string(),
+            BookLanguage::Other(lang) => lang.clone(),
+        }
+    }
+}
+
+
+//============  Book metadata model =================
+#[derive(Debug, Clone, Serialize)]
+pub struct BookMetadata {
+    pub title: String,
+    pub author: String,
+    pub cover_image: Option<String>,
+    pub format: BookFormat,
+    pub tags: Vec<String>,
+    pub description: Option<String>,
+    pub folder_path: Vec<String>,
+    pub language: Option<BookLanguage>,
+    pub page_count: Option<i32>,
+    pub series: Option<i64>,
+}
+
+pub enum BookDatabaseColumns{
+    Title,
+    Author,
+    CoverImage,
+    Format,
+    Tags,
+    Description,
+    FolderPath,
+    Language,
+    PageCount,
+    Series,
+}
+
+impl BookDatabaseColumns{
+    pub fn as_str(&self) -> &str{
+        match self{
+            BookDatabaseColumns::Title => "title",
+            BookDatabaseColumns::Author => "author",
+            BookDatabaseColumns::CoverImage => "cover_image",
+            BookDatabaseColumns::Format => "format",
+            BookDatabaseColumns::Tags => "tags",
+            BookDatabaseColumns::Description => "description",
+            BookDatabaseColumns::FolderPath => "folder_path",
+            BookDatabaseColumns::Language => "language",
+            BookDatabaseColumns::PageCount => "page_count",
+            BookDatabaseColumns::Series => "series",
+        }
+    }
+}
+
+//============  Book series metadata model =================
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BookSeriesMetadata{
+    pub name: String,
+    pub description: Option<String>,
+    pub cover_image: Option<String>,
+    pub start_release_year: Option<i64>,
+    pub end_release_year: Option<i64>,
+}
+
+pub enum SeriesDatabaseColumns{
+    Name,
+    Description,
+    CoverImage,
+    StartReleaseYear,
+    EndReleaseYear,
+}
+
+impl SeriesDatabaseColumns{
+    pub fn as_str(&self) -> &str{
+        match self{
+            SeriesDatabaseColumns::Name => "name",
+            SeriesDatabaseColumns::Description => "description",
+            SeriesDatabaseColumns::CoverImage => "cover_image",
+            SeriesDatabaseColumns::StartReleaseYear => "start_release_year",
+            SeriesDatabaseColumns::EndReleaseYear => "end_release_year",
+        }
+    }
+}
+
+//============  User metadata model =================
+#[derive(Debug, Clone, Serialize)]
+pub struct UserMetadata {
+    pub username: String,
+    pub passweord_hash: String,
+    pub email: Option<String>,
+}
+
+pub enum UserDatabaseColumns{
+    Username,
+    PasswordHash,
+    Email,
+}
+impl UserDatabaseColumns{
+    pub fn as_str(&self) -> &str{
+        match self{
+            UserDatabaseColumns::Username => "username",
+            UserDatabaseColumns::PasswordHash => "password_hash",
+            UserDatabaseColumns::Email => "email",
+        }
+    }
+}
+
+//============  Library metadata model =================
+#[derive(Debug, Clone, Serialize)]
+pub struct LibraryMetadata {
+    pub name: String,
+    pub library_type: LibraryType,
+    pub cover_image: Option<String>,
+    pub description: Option<String>,
+}
+
+pub enum LibraryDatabaseColumns{
+    Name,
+    LibraryType,
+    CoverImage,
+    Description,
+}
+
+impl LibraryDatabaseColumns{
+    pub fn as_str(&self) -> &str{
+        match self{
+            LibraryDatabaseColumns::Name => "library_name",
+            LibraryDatabaseColumns::LibraryType => "library_type",
+            LibraryDatabaseColumns::CoverImage => "cover_image",
+            LibraryDatabaseColumns::Description => "description",
+        }
+    }
+}
+
+//============  Series-Library connection model =================
+#[derive(Debug, Clone, Serialize)]
+pub struct SeriesLibraryConnection{
+    pub series_id: i64,
+    pub library_id: i64,
+}
+
+pub enum SeriesLibraryConnectionDatabaseColumns{
+    SeriesId,
+    LibraryId,
+}
+
+impl SeriesLibraryConnectionDatabaseColumns{
+    pub fn as_str(&self) -> &str{
+        match self{
+            SeriesLibraryConnectionDatabaseColumns::SeriesId => "series_id",
+            SeriesLibraryConnectionDatabaseColumns::LibraryId => "library_id",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ScanResult {
+    pub series: Vec<BookSeriesMetadata>,
+    pub books: Vec<BookMetadata>,
+}
