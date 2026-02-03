@@ -118,6 +118,16 @@ impl Database {
             Ok(None)
         }
     }
+
+    pub fn setup_new_transaction<F, T> (&self, operation: F) -> Result<T>
+    where
+        F: FnOnce(&Connection) -> Result<T>,
+    {
+        let tx = self.connection.transaction()?;
+        let result = operation(&tx)?;
+        tx.commit()?;
+        Ok(result)
+    }
 }
 
 fn initialize_database(conn: &Connection) -> Result<(), rusqlite::Error> {
