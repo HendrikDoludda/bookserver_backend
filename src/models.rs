@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use strum_macros::EnumIter;
 
 // ===========Database models =================
-#[derive(Debug, Clone, Serialize, EnumIter)]
+#[derive(Debug, Clone, Serialize, EnumIter, PartialEq)]
 pub enum DatabaseTypes{
     Books,
     Library,
@@ -25,7 +25,7 @@ impl DatabaseTypes{
 
     pub fn get_file_path(&self) -> PathBuf{
         let base_path = std::path::Path::new("./data/databases/");
-        if (!base_path.exists()){
+        if !base_path.exists(){
             std::fs::create_dir_all(base_path).unwrap();
         }
         base_path.join("app_data.sqlite")
@@ -42,6 +42,27 @@ pub enum LibraryType {
     Others,
 }
 
+impl LibraryType {
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "books" => LibraryType::Books,
+            "comics" => LibraryType::Comics,
+            "magazines" => LibraryType::Magazines,
+            "documents" => LibraryType::Documents,
+            _ => LibraryType::Others,
+        }
+    }
+    pub fn as_str(&self) -> &str {
+        match self {
+            LibraryType::Books => "books",
+            LibraryType::Comics => "comics",
+            LibraryType::Magazines => "magazines",
+            LibraryType::Documents => "documents",
+            LibraryType::Others => "others",
+        }
+    }
+}
+
 //============  Book format model =================
 #[derive(Debug, Clone, Serialize)]
 pub enum BookFormat {
@@ -50,6 +71,27 @@ pub enum BookFormat {
     Cbz,
     ImageComic,
     None,
+}
+
+impl BookFormat {
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "pdf" => BookFormat::Pdf,
+            "epub" => BookFormat::Epub,
+            "cbz" => BookFormat::Cbz,
+            "imagecomic" => BookFormat::ImageComic,
+            _ => BookFormat::None,
+        }
+    }
+    pub fn as_str(&self) -> &str {
+        match self {
+            BookFormat::Pdf => "pdf",
+            BookFormat::Epub => "epub",
+            BookFormat::Cbz => "cbz",
+            BookFormat::ImageComic => "imagecomic",
+            BookFormat::None => "none",
+        }
+    }
 }
 
 //============  Book language model =================
@@ -112,7 +154,7 @@ pub struct BookMetadata {
     pub tags: Vec<String>,
     pub description: Option<String>,
     pub folder_path: Vec<String>,
-    pub language: Option<BookLanguage>,
+    pub language: BookLanguage,
     pub page_count: Option<i32>,
     pub series: Option<i64>,
 }
@@ -228,6 +270,38 @@ impl LibraryDatabaseColumns{
     }
 }
 
+//============  Column Selector enum =================
+pub enum ColumnSelector {
+    Book(BookDatabaseColumns),
+    Library(LibraryDatabaseColumns),
+    Series(SeriesDatabaseColumns),
+    User(UserDatabaseColumns),
+}
+
+impl From<BookDatabaseColumns> for ColumnSelector {
+    fn from(col: BookDatabaseColumns) -> Self {
+        ColumnSelector::Book(col)
+    }
+}
+
+impl From<LibraryDatabaseColumns> for ColumnSelector {
+    fn from(col: LibraryDatabaseColumns) -> Self {
+        ColumnSelector::Library(col)
+    }
+}
+
+impl From<SeriesDatabaseColumns> for ColumnSelector {
+    fn from(col: SeriesDatabaseColumns) -> Self {
+        ColumnSelector::Series(col)
+    }
+}
+
+impl From<UserDatabaseColumns> for ColumnSelector {
+    fn from(col: UserDatabaseColumns) -> Self {
+        ColumnSelector::User(col)
+    }
+}
+
 //============  Series-Library connection model =================
 #[derive(Debug, Clone, Serialize)]
 pub struct SeriesLibraryConnection{
@@ -247,10 +321,4 @@ impl SeriesLibraryConnectionDatabaseColumns{
             SeriesLibraryConnectionDatabaseColumns::LibraryId => "library_id",
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ScanResult {
-    pub series: Vec<BookSeriesMetadata>,
-    pub books: Vec<BookMetadata>,
 }

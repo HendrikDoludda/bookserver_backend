@@ -1,12 +1,10 @@
-mod config;
-mod folder_scanner;
-mod models;
-
 use axum::{routing::get, Json, Router};
 use serde::Serialize;
 use tracing::info;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
+use bookserver_backend::db::Database;
+use bookserver_backend::config::get_port;
 
 #[tokio::main]
 async fn main() {
@@ -15,9 +13,10 @@ async fn main() {
     let app = Router::new()
         .route("/health", get(health))
         .route("/info", get(info))
-        .route("/scan", get(scan));
+        .route("/setup_db", get(setup_db));
+        //.route("/scan", get(scan));
 
-    let port = config::get_port();
+    let port = get_port();
     let address = format!("127.0.0.1:{}", port);
 
     info!("Starting server on {}!",address);
@@ -41,10 +40,10 @@ async fn info() -> Json<InfoResponse> {
     })
 }
 
-async fn scan() -> Json<crate::models::ScanResult> {
-    let result = folder_scanner::initiate_folder_scanner();
-    Json(result)
-}
+// async fn scan() -> Json<crate::models::ScanResult> {
+//     let result = folder_scanner::initiate_folder_scanner();
+//     Json(result)
+// }
 
 
 #[derive(Serialize)]
@@ -56,4 +55,9 @@ struct HealthResponse{
 struct InfoResponse{
     name: &'static str,
     version: &'static str,
+}
+
+async fn setup_db() -> &'static str {
+    let db = Database::new().unwrap();
+    "Database setup complete!"
 }

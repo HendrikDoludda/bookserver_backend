@@ -1,65 +1,66 @@
 use rusqlite::ToSql;
-use rusqlite::types::ToSqlOutput;
-use rusqlite::types::Value;
-use crate::utils::convert_file_path_to_blob;
+use crate::models::{
+    BookMetadata, BookSeriesMetadata, LibraryMetadata, SeriesLibraryConnection, UserMetadata,
+    BookFormat, BookLanguage,
+};
 
 pub trait ToSqlRow {
-    fn convert(&self) -> Vec<&dyn ToSql>;
+    fn convert(&self) -> Vec<Box<dyn ToSql>>;
 }
 
 impl ToSqlRow for BookMetadata {
-    fn convert(&self) -> Vec<&dyn ToSql> {
+    fn convert(&self) -> Vec<Box<dyn ToSql>> {
         vec![
-            &self.title,
-            &self.author,
-            &self.format,
-            &self.language,
-            &self.cover_image_path,
-            &self.file_path,
-            &self.page_count,
-            &self.series,
+            Box::new(self.title.clone()),
+            Box::new(self.author.clone()),
+            Box::new(self.format.as_str().to_string()),
+            Box::new(self.language.to_code()),
+            Box::new(self.cover_image.clone()),
+            Box::new(self.folder_path.join("/")),
+            Box::new(self.page_count),
+            Box::new(self.series)
         ]
     }
 }
 
 impl ToSqlRow for BookSeriesMetadata {
-    fn convert(&self) -> Vec<&dyn ToSql> {
+    fn convert(&self) -> Vec<Box<dyn ToSql>> {
         vec![
-            &self.name,
-            &self.description,
-            &self.cover_image_path,
-            &self.start_release_year,
-            &self.end_release_year,
+            Box::new(self.name.clone()),
+            Box::new(self.description.clone().unwrap_or_default()),
+            Box::new(self.cover_image.clone()),
+            Box::new(self.start_release_year),
+            Box::new(self.end_release_year),
         ]
     }
 }
 
 impl ToSqlRow for LibraryMetadata {
-    fn convert(&self) -> Vec<&dyn ToSql> {
+    fn convert(&self) -> Vec<Box<dyn ToSql>> {
         vec![
-            &self.library_name,
-            &self.library_type,
-            &self.cover_image_path,
-            &self.description,
+            Box::new(self.name.clone()),
+            Box::new(self.library_type.as_str().to_string()),
+            Box::new(self.cover_image.clone()),
+            Box::new(self.description.clone()),
         ]
     }
 }
 
 impl ToSqlRow for SeriesLibraryConnection {
-    fn convert(&self) -> Vec<&dyn ToSql> {
+    fn convert(&self) -> Vec<Box<dyn ToSql>> {
         vec![
-            &self.series_id,
-            &self.library_id,
+            Box::new(self.series_id),
+            Box::new(self.library_id),
         ]
     }
 }
 
 impl ToSqlRow for UserMetadata {
-    fn convert(&self) -> Vec<&dyn ToSql> {
+    fn convert(&self) -> Vec<Box<dyn ToSql>> {
         vec![
-            &self.username,
-            &self.password_hash,
-            &self.email,
+            Box::new(self.username.clone()),
+            Box::new(self.passweord_hash.clone()),
+            Box::new(self.email.clone()),
         ]
     }
 }
