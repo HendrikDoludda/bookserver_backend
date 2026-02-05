@@ -79,7 +79,7 @@ impl BookFormat {
             "pdf" => BookFormat::Pdf,
             "epub" => BookFormat::Epub,
             "cbz" => BookFormat::Cbz,
-            "imagecomic" => BookFormat::ImageComic,
+            "image_comic" => BookFormat::ImageComic,
             _ => BookFormat::None,
         }
     }
@@ -88,7 +88,7 @@ impl BookFormat {
             BookFormat::Pdf => "pdf",
             BookFormat::Epub => "epub",
             BookFormat::Cbz => "cbz",
-            BookFormat::ImageComic => "imagecomic",
+            BookFormat::ImageComic => "image_comic",
             BookFormat::None => "none",
         }
     }
