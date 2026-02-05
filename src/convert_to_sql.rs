@@ -1,7 +1,6 @@
 use rusqlite::ToSql;
 use crate::models::{
     BookMetadata, BookSeriesMetadata, LibraryMetadata, SeriesLibraryConnection, UserMetadata,
-    BookFormat, BookLanguage,
 };
 
 pub trait ToSqlRow {

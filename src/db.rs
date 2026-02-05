@@ -1,7 +1,5 @@
 use crate::models::DatabaseTypes;
-use axum::extract::Query;
 use rusqlite::{Connection, Result,ToSql,params};
-use serde::de::value;
 use std::path::Path;
 use crate::models::{
     BookDatabaseColumns, LibraryDatabaseColumns, SeriesDatabaseColumns, UserDatabaseColumns, ColumnSelector
@@ -245,54 +243,54 @@ fn insert_user(conn: &Connection, user: &impl ToSqlRow) -> Result<()> {
 
 fn update_book(
     conn: &Connection,
-    valueToUpdate: BookDatabaseColumns,
-    newValue: &dyn ToSql,
-    bookId: i64,
+    value_to_update: BookDatabaseColumns,
+    new_value: &dyn ToSql,
+    book_id: i64,
 ) -> Result<()> {
-    let query = format!("UPDATE books SET {} = ?1 WHERE id = ?2", valueToUpdate.as_str());
-    let rows = conn.execute(&query, params![newValue, bookId])?;
+    let query = format!("UPDATE books SET {} = ?1 WHERE id = ?2", value_to_update.as_str());
+    let rows = conn.execute(&query, params![new_value, book_id])?;
     println!("Updated {} rows in books table.", rows);
     Ok(())
 }
 
 fn update_series(
     conn: &Connection,
-    valueToUpdate: SeriesDatabaseColumns,
-    newValue: &dyn ToSql,
-    seriesId: i64,
+    value_to_update: SeriesDatabaseColumns,
+    new_value: &dyn ToSql,
+    series_id: i64,
 ) -> Result<()> {
     let query = format!(
         "UPDATE series SET {} = ?1 WHERE id = ?2",
-        valueToUpdate.as_str()
+        value_to_update.as_str()
     );
-    let rows = conn.execute(&query, params![newValue, seriesId])?;
+    let rows = conn.execute(&query, params![new_value, series_id])?;
     println!("Updated {} rows in series table.", rows);
     Ok(())
 }
 
 fn update_library(
     conn: &Connection,
-    valueToUpdate: LibraryDatabaseColumns,
-    newValue: &dyn ToSql,
-    libraryId: i64,
+    value_to_update: LibraryDatabaseColumns,
+    new_value: &dyn ToSql,
+    library_id: i64,
 ) -> Result<()> {
     let query = format!(
         "UPDATE library SET {} = ?1 WHERE id = ?2",
-        valueToUpdate.as_str()
+        value_to_update.as_str()
     );
-    let rows = conn.execute(&query, params![newValue, libraryId])?;
+    let rows = conn.execute(&query, params![new_value, library_id])?;
     println!("Updated {} rows in library table.", rows);
     Ok(())
 }
 
 fn update_user(
     conn: &Connection,
-    valueToUpdate: UserDatabaseColumns,
-    newValue: &dyn ToSql,
-    userId: i64,
+    value_to_update: UserDatabaseColumns,
+    new_value: &dyn ToSql,
+    user_id: i64,
 ) -> Result<()> {
-    let query = format!("UPDATE users SET {} = ?1 WHERE id = ?2", valueToUpdate.as_str());
-    let rows = conn.execute(&query, params![newValue, userId])?;
+    let query = format!("UPDATE users SET {} = ?1 WHERE id = ?2", value_to_update.as_str());
+    let rows = conn.execute(&query, params![new_value, user_id])?;
     println!("Updated {} rows in users table.", rows);
     Ok(())
 }

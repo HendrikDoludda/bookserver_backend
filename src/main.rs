@@ -58,6 +58,6 @@ struct InfoResponse{
 }
 
 async fn setup_db() -> &'static str {
-    let db = Database::new().unwrap();
+    Database::new().unwrap();
     "Database setup complete!"
 }
