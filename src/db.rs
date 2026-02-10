@@ -5,47 +5,60 @@ use crate::models::{
     BookDatabaseColumns, LibraryDatabaseColumns, SeriesDatabaseColumns, UserDatabaseColumns, ColumnSelector
 };
 use crate::convert_to_sql::ToSqlRow;
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
 
 pub struct Database {
-    connection: Connection,
+    pool: r2d2::Pool<SqliteConnectionManager>,
 }
 
 impl Database {
     pub fn new() -> Result<Self> {
-        let path = Path::new("./data/databases/");
+        let path = Path::new("./data/databases/app_data.sqlite");
         std::fs::create_dir_all("./data/databases/").map_err(|_| rusqlite::Error::InvalidQuery)?;
-        let conn = Connection::open(path.join("app_data.sqlite"))?;
-        conn.execute_batch(
-            "
-        PRAGMA foreign_keys = ON;
-        PRAGMA journal_mode = WAL;
-        PRAGMA user_version = 1;
-        ",
-        )?;
+
+        let manager = SqliteConnectionManager::file(path)
+            .with_init(|conn| {
+                conn.execute_batch(
+                    "
+                    PRAGMA foreign_keys = ON;
+                    PRAGMA journal_mode = WAL;
+                    PRAGMA user_version = 1;
+                    ",
+                )
+            });
+            let pool = Pool::builder()
+            .max_size(8)
+            .build(manager)
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        
+                let conn = pool.get().map_err(|_| rusqlite::Error::InvalidQuery)?;
         initialize_database(&conn)?;
-        Ok(Self { connection: conn })
+        Ok(Self { pool })
     }
 
     pub fn insert(&self, db_type: DatabaseTypes, data: &impl ToSqlRow) -> Result<()> {
+        let conn  = self.pool.get()
+        .map_err(|_| rusqlite::Error::InvalidQuery)?;
         match db_type {
             DatabaseTypes::Books => {
-                insert_book(&self.connection, data)?;
+                insert_book(&conn, data)?;
                 Ok(())
             }
             DatabaseTypes::Library => {
-                insert_library(&self.connection, data)?;
+                insert_library(&conn, data)?;
                 Ok(())
             }
             DatabaseTypes::LibraryElements => {
-                insert_library_elements(&self.connection, data)?;
+                insert_library_elements(&conn, data)?;
                 Ok(())
             }
             DatabaseTypes::Series => {
-                insert_series(&self.connection, data)?;
+                insert_series(&conn, data)?;
                 Ok(())
             }
             DatabaseTypes::Users => {
-                insert_user(&self.connection, data)?;
+                insert_user(&conn, data)?;
                 Ok(())
             }
         }
@@ -58,20 +71,22 @@ impl Database {
         new_value: &dyn rusqlite::ToSql,
         id: i64,
     ) -> Result<()> {
+        let conn = self.pool.get()
+        .map_err(|_| rusqlite::Error::InvalidQuery)?;
         match (db_type, column.into()) {
             (DatabaseTypes::Books, ColumnSelector::Book(col)) => {
-                update_book(&self.connection, col, new_value, id)?;
+                update_book(&conn, col, new_value, id)?;
             }
             (DatabaseTypes::Library, ColumnSelector::Library(col)) => {
-                update_library(&self.connection, col, new_value, id)?;
+                update_library(&conn, col, new_value, id)?;
             }
             (DatabaseTypes::Series, ColumnSelector::Series(col)) => {
-                update_series(&self.connection, col, new_value, id)?;
+                update_series(&conn, col, new_value, id)?;
             }
             (DatabaseTypes::Users, ColumnSelector::User(col)) => {
-                update_user(&self.connection, col, new_value, id)?;
+                update_user(&conn, col, new_value, id)?;
             }
-            _ => {}
+            _ => return Err(rusqlite::Error::InvalidQuery), // Invalid combination of db_type and column
         }
         Ok(())
     }
@@ -80,9 +95,11 @@ impl Database {
         if db_type == DatabaseTypes::LibraryElements {
             return Err(rusqlite::Error::InvalidQuery); // Prevent direct deletion from junction table
         } else {
+           let conn = self.pool.get()
+        .map_err(|_| rusqlite::Error::InvalidQuery)?;
             let table_name = db_type.get_table_name();
             let query = format!("DELETE FROM {} WHERE id = ?1", table_name);
-            self.connection.execute(&query, rusqlite::params![id])?;
+            conn.execute(&query, rusqlite::params![id])?;
             Ok(())
         }
     }
@@ -92,9 +109,10 @@ impl Database {
         series_id: i64,
         library_id: i64,
     ) -> Result<()> {
+        let conn = self.pool.get()
+        .map_err(|_| rusqlite::Error::InvalidQuery)?;
         let query = "DELETE FROM library_elements WHERE series_id = ?1 AND library_id = ?2";
-        self.connection
-            .execute(&query, rusqlite::params![series_id, library_id])?;
+        conn.execute(&query, rusqlite::params![series_id, library_id])?;
         Ok(())
     }
 
@@ -104,6 +122,8 @@ impl Database {
         column: impl Into<ColumnSelector>,
         new_value: &dyn rusqlite::ToSql,
     ) -> Result<Option<i64>> {
+        let conn = self.pool.get()
+        .map_err(|_| rusqlite::Error::InvalidQuery)?;
         let table_name = db_type.get_table_name();
         let column_name= match column.into() {
             ColumnSelector::Book(col) => col.as_str().to_string(),
@@ -112,7 +132,7 @@ impl Database {
             ColumnSelector::User(col) => col.as_str().to_string(),
         };
         let query = format!("SELECT id FROM {} WHERE {} = ?1", table_name,column_name);
-        let mut stmt = self.connection.prepare(&query)?;
+        let mut stmt = conn.prepare(&query)?;
         let mut rows = stmt.query(rusqlite::params![new_value])?;
 
         if let Some(row) = rows.next()? {
@@ -123,11 +143,13 @@ impl Database {
         }
     }
 
-    pub fn setup_new_transaction<F, T> (&mut self, operation: F) -> Result<T>
+    pub fn setup_new_transaction<F, T> (&self, operation: F) -> Result<T>
     where
         F: FnOnce(&Connection) -> Result<T>,
     {
-        let tx = self.connection.transaction()?;
+        let mut conn = self.pool.get()
+        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let tx = conn.transaction()?;
         let result = operation(&tx)?;
         tx.commit()?;
         Ok(result)
@@ -139,7 +161,7 @@ fn initialize_database(conn: &Connection) -> Result<(), rusqlite::Error> {
         "
         -- ============= Setup Books Table =================
         CREATE TABLE IF NOT EXISTS books (
-            id INTEGER PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             author TEXT,
             format TEXT,
@@ -147,12 +169,12 @@ fn initialize_database(conn: &Connection) -> Result<(), rusqlite::Error> {
             cover_image TEXT,
             file_path TEXT NOT NULL UNIQUE,
             page_count INTEGER,
-            series INTEGER
+            FOREIGN KEY (series) REFERENCES series(id) ON DELETE SET NULL
         );
 
         -- ============= Setup Library Table =================
         CREATE TABLE IF NOT EXISTS library (
-            id INTEGER PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             library_name TEXT NOT NULL,
             library_type TEXT,
             cover_image TEXT,
@@ -170,7 +192,7 @@ fn initialize_database(conn: &Connection) -> Result<(), rusqlite::Error> {
 
         -- ============= Setup Series Table =================
         CREATE TABLE IF NOT EXISTS series (
-            id INTEGER PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             description TEXT NOT NULL,
             cover_image TEXT,
@@ -180,7 +202,7 @@ fn initialize_database(conn: &Connection) -> Result<(), rusqlite::Error> {
 
         -- ============= Setup Users Table =================
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
             email TEXT
