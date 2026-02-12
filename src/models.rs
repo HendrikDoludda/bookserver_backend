@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::path::PathBuf;
+use std::{path::PathBuf, time::SystemTime};
 use strum_macros::EnumIter;
 
 // ===========Database models =================
@@ -153,10 +153,16 @@ pub struct BookMetadata {
     pub format: BookFormat,
     pub tags: Vec<String>,
     pub description: Option<String>,
-    pub folder_path: Vec<String>,
+    pub file_path: String,
     pub language: BookLanguage,
     pub page_count: Option<i32>,
     pub series: Option<i64>,
+    pub volume_number: Option<i64>,
+    pub chapter_number: Option<i64>,
+    pub page_number: Option<i64>,
+    pub file_hash: Option<String>,
+    pub last_modified: Option<SystemTime>,
+    pub file_size: Option<u64>,
 }
 
 pub enum BookDatabaseColumns{
@@ -166,10 +172,16 @@ pub enum BookDatabaseColumns{
     Format,
     Tags,
     Description,
-    FolderPath,
+    FilePath,
     Language,
     PageCount,
     Series,
+    VolumeNumber,
+    ChapterNumber,
+    PageNumber,
+    FileHash,
+    LastModified,
+    FileSize,
 }
 
 impl BookDatabaseColumns{
@@ -181,10 +193,16 @@ impl BookDatabaseColumns{
             BookDatabaseColumns::Format => "format",
             BookDatabaseColumns::Tags => "tags",
             BookDatabaseColumns::Description => "description",
-            BookDatabaseColumns::FolderPath => "folder_path",
+            BookDatabaseColumns::FilePath => "file_path",
             BookDatabaseColumns::Language => "language",
             BookDatabaseColumns::PageCount => "page_count",
             BookDatabaseColumns::Series => "series",
+            BookDatabaseColumns::VolumeNumber => "volume_number",
+            BookDatabaseColumns::ChapterNumber => "chapter_number",
+            BookDatabaseColumns::PageNumber => "page_number",
+            BookDatabaseColumns::FileHash => "file_hash",
+            BookDatabaseColumns::LastModified => "last_modified",
+            BookDatabaseColumns::FileSize => "file_size",
         }
     }
 }
@@ -321,4 +339,13 @@ impl SeriesLibraryConnectionDatabaseColumns{
             SeriesLibraryConnectionDatabaseColumns::LibraryId => "library_id",
         }
     }
+}
+
+//============Parsed Name model =================
+#[derive(Debug, Clone, Serialize)]
+pub struct ParsedName{
+    pub title: String,
+    pub volume_number: Option<i64>,
+    pub chapter_number: Option<i64>,
+    pub page_number: Option<i64>,
 }

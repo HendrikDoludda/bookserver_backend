@@ -1,7 +1,7 @@
-use rusqlite::ToSql;
 use crate::models::{
     BookMetadata, BookSeriesMetadata, LibraryMetadata, SeriesLibraryConnection, UserMetadata,
 };
+use rusqlite::ToSql;
 
 pub trait ToSqlRow {
     fn convert(&self) -> Vec<Box<dyn ToSql>>;
@@ -15,9 +15,20 @@ impl ToSqlRow for BookMetadata {
             Box::new(self.format.as_str().to_string()),
             Box::new(self.language.to_code()),
             Box::new(self.cover_image.clone()),
-            Box::new(self.folder_path.join("/")),
+            Box::new(self.description.clone()),
+            Box::new(self.tags.join(",")),
+            Box::new(self.file_path.clone()),
             Box::new(self.page_count),
-            Box::new(self.series)
+            Box::new(self.volume_number),
+            Box::new(self.chapter_number),
+            Box::new(self.page_number),
+            Box::new(self.file_hash.clone()),
+            Box::new(
+                self.last_modified
+                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64),
+            ),
+            Box::new(self.file_size.map(|size| size as i64)),
+            Box::new(self.series),
         ]
     }
 }
@@ -47,10 +58,7 @@ impl ToSqlRow for LibraryMetadata {
 
 impl ToSqlRow for SeriesLibraryConnection {
     fn convert(&self) -> Vec<Box<dyn ToSql>> {
-        vec![
-            Box::new(self.series_id),
-            Box::new(self.library_id),
-        ]
+        vec![Box::new(self.series_id), Box::new(self.library_id)]
     }
 }
 

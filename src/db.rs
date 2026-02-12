@@ -120,7 +120,7 @@ impl Database {
         &self,
         db_type: DatabaseTypes,
         column: impl Into<ColumnSelector>,
-        new_value: &dyn rusqlite::ToSql,
+        value_to_search_for: &dyn rusqlite::ToSql,
     ) -> Result<Option<i64>> {
         let conn = self.pool.get()
         .map_err(|_| rusqlite::Error::InvalidQuery)?;
@@ -133,7 +133,7 @@ impl Database {
         };
         let query = format!("SELECT id FROM {} WHERE {} = ?1", table_name,column_name);
         let mut stmt = conn.prepare(&query)?;
-        let mut rows = stmt.query(rusqlite::params![new_value])?;
+        let mut rows = stmt.query(rusqlite::params![value_to_search_for])?;
 
         if let Some(row) = rows.next()? {
             let id: i64 = row.get(0)?;
@@ -167,9 +167,17 @@ fn initialize_database(conn: &Connection) -> Result<(), rusqlite::Error> {
             format TEXT,
             language TEXT,
             cover_image TEXT,
+            description TEXT,
+            tags TEXT,
             file_path TEXT NOT NULL UNIQUE,
             page_count INTEGER,
-            FOREIGN KEY (series) REFERENCES series(id) ON DELETE SET NULL
+            volume_number INTEGER,
+            chapter_number INTEGER,
+            page_number INTEGER,
+            file_hash TEXT,
+            last_modified INTEGER,
+            file_size INTEGER,
+            series INTEGER
         );
 
         -- ============= Setup Library Table =================
@@ -213,7 +221,22 @@ fn initialize_database(conn: &Connection) -> Result<(), rusqlite::Error> {
 }
 
 fn insert_book(conn: &Connection, book: &impl ToSqlRow) -> Result<()> {
-    let query = "INSERT INTO books (title, author, format, language, cover_image, file_path, page_count, series) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)";
+    let query = "INSERT INTO books (title, 
+    author, 
+    format, 
+    language, 
+    cover_image, 
+    description, 
+    tags, 
+    file_path, 
+    page_count, 
+    volume_number, 
+    chapter_number, 
+    page_number, 
+    file_hash, 
+    last_modified, 
+    file_size, 
+    series) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)";
     let values = book.convert();
     conn.execute(
         query,
