@@ -1,12 +1,13 @@
-use crate::models::DatabaseTypes;
-use rusqlite::{Connection, Result,ToSql,params};
-use std::path::Path;
-use crate::models::{
-    BookDatabaseColumns, LibraryDatabaseColumns, SeriesDatabaseColumns, UserDatabaseColumns, ColumnSelector
-};
 use crate::convert_to_sql::ToSqlRow;
-use r2d2::Pool;
+use crate::models::DatabaseTypes;
+use crate::models::{
+    BookDatabaseColumns, ColumnSelector, LibraryDatabaseColumns, SeriesDatabaseColumns,
+    UserDatabaseColumns,
+};
+use r2d2::{ManageConnection, Pool};
 use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::{params, Connection, Result, ToSql};
+use std::path::Path;
 
 pub struct Database {
     pool: r2d2::Pool<SqliteConnectionManager>,
@@ -15,51 +16,62 @@ pub struct Database {
 impl Database {
     pub fn new() -> Result<Self> {
         let path = Path::new("./data/databases/app_data.sqlite");
-        std::fs::create_dir_all("./data/databases/").map_err(|_| rusqlite::Error::InvalidQuery)?;
+    
+    // Ensure the database folder exists
+    std::fs::create_dir_all("./data/databases/").map_err(|_| rusqlite::Error::InvalidQuery)?;
 
-        let manager = SqliteConnectionManager::file(path)
-            .with_init(|conn| {
-                conn.execute_batch(
-                    "
-                    PRAGMA foreign_keys = ON;
-                    PRAGMA journal_mode = WAL;
-                    PRAGMA user_version = 1;
-                    ",
-                )
-            });
-            let pool = Pool::builder()
-            .max_size(8)
-            .build(manager)
-            .map_err(|_| rusqlite::Error::InvalidQuery)?;
-        
-                let conn = pool.get().map_err(|_| rusqlite::Error::InvalidQuery)?;
+    let manager = SqliteConnectionManager::file(path);
+
+    // Initialize DB with a single connection to set PRAGMAs and create tables
+    {
+        let conn = manager.connect()?;
+        conn.execute_batch(
+            "
+            PRAGMA foreign_keys = ON;
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA busy_timeout = 5000;
+            ",
+        )?;
+
+        // Database schema initialization (only once)
         initialize_database(&conn)?;
-        Ok(Self { pool })
     }
 
-    pub fn insert(&self, db_type: DatabaseTypes, data: &impl ToSqlRow) -> Result<()> {
-        let conn  = self.pool.get()
+    // Now that initialization is done, build the r2d2 connection pool
+    let pool = Pool::builder()
+        .max_size(8) // or 4 for better concurrency control
+        .build(manager)
         .map_err(|_| rusqlite::Error::InvalidQuery)?;
+
+    // Get a connection from the pool (to ensure the pool is set up correctly)
+    let _conn = pool.get().map_err(|_| rusqlite::Error::InvalidQuery)?;
+
+    Ok(Self { pool })
+    }
+
+    pub fn insert(&self, db_type: DatabaseTypes, data: &impl ToSqlRow) -> Result<i64> {
+        let conn = self.pool.get().map_err(|_| rusqlite::Error::InvalidQuery)?;
         match db_type {
             DatabaseTypes::Books => {
-                insert_book(&conn, data)?;
-                Ok(())
+                let id: i64 = insert_book(&conn, data)?;
+                Ok(id)
             }
             DatabaseTypes::Library => {
-                insert_library(&conn, data)?;
-                Ok(())
+                let id: i64 = insert_library(&conn, data)?;
+                Ok(id)
             }
             DatabaseTypes::LibraryElements => {
-                insert_library_elements(&conn, data)?;
-                Ok(())
+                let id: i64 =insert_library_elements(&conn, data)?;
+                Ok(id)
             }
             DatabaseTypes::Series => {
-                insert_series(&conn, data)?;
-                Ok(())
+                let id: i64 =insert_series(&conn, data)?;
+                Ok(id)
             }
             DatabaseTypes::Users => {
-                insert_user(&conn, data)?;
-                Ok(())
+                let id: i64 =insert_user(&conn, data)?;
+                Ok(id)
             }
         }
     }
@@ -71,8 +83,7 @@ impl Database {
         new_value: &dyn rusqlite::ToSql,
         id: i64,
     ) -> Result<()> {
-        let conn = self.pool.get()
-        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let conn = self.pool.get().map_err(|_| rusqlite::Error::InvalidQuery)?;
         match (db_type, column.into()) {
             (DatabaseTypes::Books, ColumnSelector::Book(col)) => {
                 update_book(&conn, col, new_value, id)?;
@@ -95,8 +106,7 @@ impl Database {
         if db_type == DatabaseTypes::LibraryElements {
             return Err(rusqlite::Error::InvalidQuery); // Prevent direct deletion from junction table
         } else {
-           let conn = self.pool.get()
-        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            let conn = self.pool.get().map_err(|_| rusqlite::Error::InvalidQuery)?;
             let table_name = db_type.get_table_name();
             let query = format!("DELETE FROM {} WHERE id = ?1", table_name);
             conn.execute(&query, rusqlite::params![id])?;
@@ -109,8 +119,7 @@ impl Database {
         series_id: i64,
         library_id: i64,
     ) -> Result<()> {
-        let conn = self.pool.get()
-        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let conn = self.pool.get().map_err(|_| rusqlite::Error::InvalidQuery)?;
         let query = "DELETE FROM library_elements WHERE series_id = ?1 AND library_id = ?2";
         conn.execute(&query, rusqlite::params![series_id, library_id])?;
         Ok(())
@@ -122,16 +131,15 @@ impl Database {
         column: impl Into<ColumnSelector>,
         value_to_search_for: &dyn rusqlite::ToSql,
     ) -> Result<Option<i64>> {
-        let conn = self.pool.get()
-        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let conn = self.pool.get().map_err(|_| rusqlite::Error::InvalidQuery)?;
         let table_name = db_type.get_table_name();
-        let column_name= match column.into() {
+        let column_name = match column.into() {
             ColumnSelector::Book(col) => col.as_str().to_string(),
             ColumnSelector::Library(col) => col.as_str().to_string(),
             ColumnSelector::Series(col) => col.as_str().to_string(),
             ColumnSelector::User(col) => col.as_str().to_string(),
         };
-        let query = format!("SELECT id FROM {} WHERE {} = ?1", table_name,column_name);
+        let query = format!("SELECT id FROM {} WHERE {} = ?1", table_name, column_name);
         let mut stmt = conn.prepare(&query)?;
         let mut rows = stmt.query(rusqlite::params![value_to_search_for])?;
 
@@ -143,12 +151,11 @@ impl Database {
         }
     }
 
-    pub fn setup_new_transaction<F, T> (&self, operation: F) -> Result<T>
+    pub fn setup_new_transaction<F, T>(&self, operation: F) -> Result<T>
     where
         F: FnOnce(&Connection) -> Result<T>,
     {
-        let mut conn = self.pool.get()
-        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let mut conn = self.pool.get().map_err(|_| rusqlite::Error::InvalidQuery)?;
         let tx = conn.transaction()?;
         let result = operation(&tx)?;
         tx.commit()?;
@@ -220,7 +227,7 @@ fn initialize_database(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
-fn insert_book(conn: &Connection, book: &impl ToSqlRow) -> Result<()> {
+fn insert_book(conn: &Connection, book: &impl ToSqlRow) -> Result<i64> {
     let query = "INSERT INTO books (title, 
     author, 
     format, 
@@ -242,48 +249,40 @@ fn insert_book(conn: &Connection, book: &impl ToSqlRow) -> Result<()> {
         query,
         rusqlite::params_from_iter(values), // Convert Vec<Box<dyn ToSql>> to params
     )?;
-    Ok(())
+    let id = conn.last_insert_rowid();
+    Ok(id)
 }
 
-fn insert_series(conn: &Connection, series: &impl ToSqlRow) -> Result<()> {
+fn insert_series(conn: &Connection, series: &impl ToSqlRow) -> Result<i64> {
     let query = "INSERT INTO series (name, description, cover_image, start_release_year, end_release_year) VALUES (?1, ?2, ?3, ?4, ?5)";
     let values = series.convert();
-    conn.execute(
-        query,
-        rusqlite::params_from_iter(values),
-    )?;
-    Ok(())
+    conn.execute(query, rusqlite::params_from_iter(values))?;
+    let id = conn.last_insert_rowid();
+    Ok(id)
 }
 
-fn insert_library(conn: &Connection, library: &impl ToSqlRow) -> Result<()> {
+fn insert_library(conn: &Connection, library: &impl ToSqlRow) -> Result<i64> {
     let query = "INSERT INTO library (library_name, library_type, cover_image, description) VALUES (?1, ?2, ?3, ?4)";
     let values = library.convert();
-    conn.execute(
-        query,
-        rusqlite::params_from_iter(values),
-    )?;
-    Ok(())
+    conn.execute(query, rusqlite::params_from_iter(values))?;
+    let id = conn.last_insert_rowid();
+    Ok(id)
 }
 
-fn insert_library_elements(conn: &Connection, elements: &impl ToSqlRow) -> Result<()> {
+fn insert_library_elements(conn: &Connection, elements: &impl ToSqlRow) -> Result<i64> {
     let query = "INSERT INTO library_elements (library_id, series_id) VALUES (?1, ?2)";
     let values = elements.convert();
 
-    conn.execute(
-        query,
-        rusqlite::params_from_iter(values),
-    )?;
-    Ok(())
+    conn.execute(query, rusqlite::params_from_iter(values))?;
+    Ok(0)
 }
 
-fn insert_user(conn: &Connection, user: &impl ToSqlRow) -> Result<()> {
+fn insert_user(conn: &Connection, user: &impl ToSqlRow) -> Result<i64> {
     let query = "INSERT INTO users (username, password_hash, email) VALUES (?1, ?2, ?3)";
     let values = user.convert();
-    conn.execute(
-        query,
-        rusqlite::params_from_iter(values),
-    )?;
-    Ok(())
+    conn.execute(query, rusqlite::params_from_iter(values))?;
+    let id = conn.last_insert_rowid();
+    Ok(id)
 }
 
 fn update_book(
@@ -292,7 +291,10 @@ fn update_book(
     new_value: &dyn ToSql,
     book_id: i64,
 ) -> Result<()> {
-    let query = format!("UPDATE books SET {} = ?1 WHERE id = ?2", value_to_update.as_str());
+    let query = format!(
+        "UPDATE books SET {} = ?1 WHERE id = ?2",
+        value_to_update.as_str()
+    );
     let rows = conn.execute(&query, params![new_value, book_id])?;
     println!("Updated {} rows in books table.", rows);
     Ok(())
@@ -334,7 +336,10 @@ fn update_user(
     new_value: &dyn ToSql,
     user_id: i64,
 ) -> Result<()> {
-    let query = format!("UPDATE users SET {} = ?1 WHERE id = ?2", value_to_update.as_str());
+    let query = format!(
+        "UPDATE users SET {} = ?1 WHERE id = ?2",
+        value_to_update.as_str()
+    );
     let rows = conn.execute(&query, params![new_value, user_id])?;
     println!("Updated {} rows in users table.", rows);
     Ok(())

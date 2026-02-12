@@ -1,39 +1,72 @@
 use crate::config;
 use crate::db::Database;
 use crate::models::{
-    BookDatabaseColumns, BookFormat, BookMetadata, ColumnSelector, DatabaseTypes, ParsedName,
+    BookDatabaseColumns, BookFormat, BookMetadata, BookSeriesMetadata, ColumnSelector, DatabaseTypes, ParsedName
 };
+
+use blake3::Hasher;
+use once_cell::sync::Lazy;
 use regex::Regex;
-use std::{fs::File, io::Read, io, path::PathBuf};
-use tokio::fs::{self as other_fs};
-use blake3;
+use std::{
+    fs::File,
+    io::{self},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+use tokio::{fs, sync::Semaphore};
+
+static VOLUME_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\b(?:v|vol|volume)[ _]?(\d+)\b").unwrap());
+
+static CHAPTER_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\b(?:c|chap|chapter)[ _]?(\d+)\b").unwrap());
+
+static PAGE_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\b(?:p|pa|page)[ _]?(\d+)\b").unwrap());
+
 
 //This function will scan all assigned folders for valid file types
 //creates entries for them in the database
 //should be done async and be able to run multiple in parralel
-pub async fn scan_all_folders() -> Result<(), ()> {
-    let folders_to_scan: Vec<String> = config::get_books_dirs();
-    let db = Database::new().unwrap();
-    for folder in folders_to_scan {
-        let path: PathBuf = PathBuf::from(folder);
-        scan_folder(path, &db).await.unwrap();
+pub async fn scan_all_folders() -> anyhow::Result<()> {
+    let folders = config::get_books_dirs();
+    let db = Arc::new(Database::new()?);
+
+    for folder in folders {
+        scan_folder(PathBuf::from(folder), db.clone()).await?;
     }
+
     Ok(())
 }
 
 //This function will scan a single folder for valid file types
 //creates entries for them in the database
-pub async fn scan_folder(path: PathBuf, db: &Database) -> Result<(), io::Error> {
+pub async fn scan_folder(path: PathBuf, db: Arc<Database>) -> anyhow::Result<()> {
+    let semaphore = Arc::new(Semaphore::new(1)); // limit concurrency
     let mut directories = vec![path];
+
     while let Some(dir) = directories.pop() {
-        let mut entries = other_fs::read_dir(dir).await?;
+        let mut entries = fs::read_dir(dir).await?;
 
         while let Some(entry) = entries.next_entry().await? {
             let entry_path = entry.path();
+
             if entry_path.is_dir() {
                 directories.push(entry_path);
             } else {
-                create_book_entry(&entry_path, db).ok();
+                let db = db.clone();
+                let permit = semaphore.clone().acquire_owned().await?;
+
+                tokio::spawn(async move {
+                    let _permit = permit;
+
+                    if let Err(e) =
+                        tokio::task::spawn_blocking(move || create_book_entry(&entry_path, &db))
+                            .await
+                    {
+                        eprintln!("Task join error: {e}");
+                    }
+                });
             }
         }
     }
@@ -42,59 +75,55 @@ pub async fn scan_folder(path: PathBuf, db: &Database) -> Result<(), io::Error> 
 }
 
 //This function will be run when a valid file type has been found
-fn create_book_entry(path: &PathBuf, db: &Database) -> Result<(), ()> {
-    if is_valid_file_type(path) {
-        let format = get_book_format(path);
-        let (modified_time, file_size) = match path.metadata() {
-            Ok(meta) => (meta.modified().ok(), Some(meta.len())),
-            Err(_) => (None, None),
-        };
-        //get final folder path for entry
-        let final_folder_path = get_final_folder_path(path, &format);
-        //check if folder path exists in database
-        if check_folder_path_exists_in_db(&final_folder_path, db) {
-            println!(
-                "Folder path already exists in database: {}",
-                final_folder_path.display()
-            );
-            return Ok(());
-        }
-        //create final book name (removing Volume/chapter/page information if it exists)
-        let file_name_information = get_final_file_name(&final_folder_path);
-        //create basic metadata for book entry
-        let file_hash = get_file_hash(&final_folder_path).ok();
-
-        let metadata = BookMetadata {
-            title: file_name_information.title,
-            author: "Unknown Author".to_string(),
-            format: BookFormat::from_str(&format),
-            tags: vec![],
-            description: None,
-            file_path: final_folder_path.to_string_lossy().to_string(),
-            language: crate::models::BookLanguage::Other("Unknown".to_string()),
-            page_count: Some(0),
-            cover_image: None,
-            series: None,
-            volume_number: file_name_information.volume_number,
-            chapter_number: file_name_information.chapter_number,
-            page_number: file_name_information.page_number,
-            file_hash: file_hash,
-            last_modified: modified_time,
-            file_size: file_size,
-        };
-
-        //for file formats that support it we can create a partial metadata entry and update the basic one
-        //should check for page count and cover image, language code if the file type supports it
-
-        println!("Found valid file: {:?} with format: {}", path, format);
-        if let Err(e) = db.insert(DatabaseTypes::Books, &metadata) {
-            eprintln!("Failed to insert book: {e}");
-        }
+fn create_book_entry(path: &Path, db: &Database) -> anyhow::Result<()> {
+    if !is_valid_file_type(path) {
+        return Ok(());
     }
+
+    let format = get_book_format(path)?;
+
+    let file = File::open(path)?;
+    let metadata = file.metadata()?;
+
+    let modified_time = metadata.modified().ok();
+    let file_size = metadata.len();
+
+    let file_hash = hash_file(file)?;
+
+    let final_path = get_final_folder_path(path, format.as_str());
+    if check_folder_path_exists_in_db(&final_path, db){
+        return Ok(());
+    }
+
+    let parsed_name = get_final_file_name(&final_path);
+    let series_id: i64 = get_series_id(parsed_name.title.clone(), db);
+
+    let metadata_entry = BookMetadata {
+        title: parsed_name.title,
+        author: "Unknown Author".to_string(),
+        format: format,
+        tags: vec![],
+        description: None,
+        file_path: final_path.to_string_lossy().to_string(),
+        language: crate::models::BookLanguage::Other("Unknown".to_string()),
+        page_count: Some(0),
+        cover_image: None,
+        series: Some(series_id),
+        volume_number: parsed_name.volume_number,
+        chapter_number: parsed_name.chapter_number,
+        page_number: parsed_name.page_number,
+        file_hash: Some(file_hash),
+        last_modified: modified_time,
+        file_size: Some(file_size),
+    };
+
+    db.insert(DatabaseTypes::Books, &metadata_entry)?;
+
     Ok(())
 }
 
-fn get_final_folder_path(path: &PathBuf, format: &str) -> PathBuf {
+
+fn get_final_folder_path(path: &Path, format: &str) -> PathBuf {
     if (BookFormat::ImageComic.as_str() == format) && path.parent().is_some() {
         let parent = path.parent().unwrap();
         if parent.is_dir() {
@@ -115,79 +144,91 @@ fn check_folder_path_exists_in_db(path: &PathBuf, db: &Database) -> bool {
         _ => false,
     }
 }
-
-fn get_final_file_name(path: &PathBuf) -> ParsedName {
-    let file_name = path.file_stem().unwrap().to_string_lossy().to_string();
-    let volume_regex = Regex::new(r"(?i)\b(?:v|vol|volume)[ _]?(\d+)\b").unwrap();
-    let chapter_regex = Regex::new(r"(?i)\b(?:c|chap|chapter)[ _]?(\d+)\b").unwrap();
-    let page_regex = Regex::new(r"(?i)\b(?:p|pa|page)[ _]?(\d+)\b").unwrap();
-
-    let volume = volume_regex
-        .captures(&file_name)
-        .and_then(|cap| cap.get(1))
-        .map(|m| m.as_str().parse::<i64>().ok())
-        .flatten();
-    let chapter = chapter_regex
-        .captures(&file_name)
-        .and_then(|cap| cap.get(1))
-        .map(|m| m.as_str().parse::<i64>().ok())
-        .flatten();
-    let page = page_regex
-        .captures(&file_name)
-        .and_then(|cap| cap.get(1))
-        .map(|m| m.as_str().parse::<i64>().ok())
-        .flatten();
-
-    let cleaned_name = volume_regex.replace_all(&file_name, "").to_string();
-    let cleaned_name = chapter_regex.replace_all(&cleaned_name, "").to_string();
-    let cleaned_name = page_regex.replace_all(&cleaned_name, "").to_string();
-
-    let parts: String = cleaned_name
-        .replace('-', " ")
-        .replace('_', " ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .trim()
+fn get_final_file_name(path: &Path) -> ParsedName {
+    let file_name = path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
         .to_string();
 
+    let volume = extract_number(&VOLUME_REGEX, &file_name);
+    let chapter = extract_number(&CHAPTER_REGEX, &file_name);
+    let page = extract_number(&PAGE_REGEX, &file_name);
+
+    let cleaned = PAGE_REGEX
+        .replace_all(
+            &CHAPTER_REGEX.replace_all(
+                &VOLUME_REGEX.replace_all(&file_name, ""),
+                "",
+            ),
+            "",
+        )
+        .to_string();
+
+    let title = cleaned
+        .replace(['-', '_'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
     ParsedName {
-        title: parts,
+        title,
         volume_number: volume,
         chapter_number: chapter,
         page_number: page,
     }
 }
 
-fn is_valid_file_type(path: &PathBuf) -> bool {
+fn extract_number(regex: &Regex, text: &str) -> Option<i64> {
+    regex
+        .captures(text)
+        .and_then(|cap| cap.get(1))
+        .and_then(|m| m.as_str().parse::<i64>().ok())
+}
+
+
+fn is_valid_file_type(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("pdf" | "epub" | "cbz" | "jpg" | "jpeg" | "png")
+    )
+}
+
+fn get_book_format(path: &Path) -> anyhow::Result<BookFormat> {
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("pdf") | Some("epub") | Some("cbz") | Some("jpg") | Some("jpeg") | Some("png") => true,
-        _ => false,
+        Some("pdf") => Ok(BookFormat::Pdf),
+        Some("epub") => Ok(BookFormat::Epub),
+        Some("cbz") => Ok(BookFormat::Cbz),
+        Some("jpg" | "jpeg" | "png") => Ok(BookFormat::ImageComic),
+        _ => Err(anyhow::anyhow!("Unsupported file format")),
     }
 }
 
-fn get_book_format(path: &PathBuf) -> String {
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some("pdf") => BookFormat::Pdf.as_str().to_string(),
-        Some("epub") => BookFormat::Epub.as_str().to_string(),
-        Some("cbz") => BookFormat::Cbz.as_str().to_string(),
-        Some("jpg") | Some("jpeg") | Some("png") => BookFormat::ImageComic.as_str().to_string(),
-        _default => {
-            println!("Invalid file type: {:?}", path);
-            BookFormat::None.as_str().to_string()
-        }
-    }
-}
 
-fn get_file_hash(path: &PathBuf)-> io::Result<String> {
-    let mut file = File::open(path)?;
-    let mut hasher = blake3::Hasher::new();
-
+fn hash_file(mut file: File) -> io::Result<String> {
+    let mut hasher = Hasher::new();
     std::io::copy(&mut file, &mut hasher)?;
-
     Ok(hasher.finalize().to_hex().to_string())
 }
 
-fn create_series_entry() -> Result<(), ()> {
-    Ok(())
+fn get_series_id(file_name: String, db: &Database) -> i64{
+    match db.get_id_from_table(
+        DatabaseTypes::Series,
+        ColumnSelector::Series(crate::models::SeriesDatabaseColumns::Name),
+        &file_name.to_lowercase(),
+    ) {
+        Ok(Some(id)) => id, // found an existing series
+        Ok(None) | Err(_) => create_series_entry(file_name, db), // not found or DB error
+    }
+}
+
+fn create_series_entry(file_name: String, db: &Database) -> i64{
+    let series_entry = BookSeriesMetadata{
+        name: file_name.to_lowercase(),
+        description: None,
+        cover_image: None,
+        start_release_year: None,
+        end_release_year: None
+    };
+    db.insert(DatabaseTypes::Series, &series_entry).unwrap_or_default()
 }

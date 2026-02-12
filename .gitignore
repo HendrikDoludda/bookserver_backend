@@ -1,1 +1,5 @@
 /target
+#ignore file types
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
