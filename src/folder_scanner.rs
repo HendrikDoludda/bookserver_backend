@@ -3,7 +3,7 @@ use crate::db::Database;
 use crate::models::{
     BookDatabaseColumns, BookFormat, BookMetadata, BookSeriesMetadata, ColumnSelector, DatabaseTypes, ParsedName
 };
-
+use crate::cover_image_retriever::get_cover_image;
 use blake3::Hasher;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -97,6 +97,7 @@ fn create_book_entry(path: &Path, db: &Database) -> anyhow::Result<()> {
 
     let parsed_name = get_final_file_name(&final_path);
     let series_id: i64 = get_series_id(parsed_name.title.clone(), db);
+    let cover_image = get_cover_image_location(&final_path,format.clone(),&file_hash.clone());
 
     let metadata_entry = BookMetadata {
         title: parsed_name.title,
@@ -107,7 +108,7 @@ fn create_book_entry(path: &Path, db: &Database) -> anyhow::Result<()> {
         file_path: final_path.to_string_lossy().to_string(),
         language: crate::models::BookLanguage::Other("Unknown".to_string()),
         page_count: Some(0),
-        cover_image: None,
+        cover_image: cover_image,
         series: Some(series_id),
         volume_number: parsed_name.volume_number,
         chapter_number: parsed_name.chapter_number,
@@ -120,6 +121,21 @@ fn create_book_entry(path: &Path, db: &Database) -> anyhow::Result<()> {
     db.insert(DatabaseTypes::Books, &metadata_entry)?;
 
     Ok(())
+}
+
+fn get_cover_image_location(path: &PathBuf, format: BookFormat, hash: &String) -> Option<String>{
+    let cover_image_location = get_cover_image(path, format, hash);
+    let cover_image = match cover_image_location {
+    Ok(path) => path.to_str().map(String::from),
+    Err(e) => {
+        eprintln!(
+            "Failed cover creation for path {:?}: {}",
+            path, e
+        );
+        None
+    }
+};
+cover_image
 }
 
 
@@ -232,3 +248,4 @@ fn create_series_entry(file_name: String, db: &Database) -> i64{
     };
     db.insert(DatabaseTypes::Series, &series_entry).unwrap_or_default()
 }
+
