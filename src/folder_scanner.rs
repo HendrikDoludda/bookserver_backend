@@ -3,6 +3,7 @@ use crate::db::Database;
 use crate::models::{
     BookDatabaseColumns, BookFormat, BookMetadata, BookSeriesMetadata, ColumnSelector, DatabaseTypes, ParsedName
 };
+use crate::error_types::{FolderScannerError};
 use crate::cover_image_retriever::get_cover_image;
 use blake3::Hasher;
 use once_cell::sync::Lazy;
@@ -15,7 +16,7 @@ use std::{
 };
 use tokio::{fs, sync::Semaphore};
 
-static VOLUME_REGEX: Lazy<Regex> =
+static VOLUME_REGEX: Lazy<Regex>=
     Lazy::new(|| Regex::new(r"(?i)\b(?:v|vol|volume)[ _]?(\d+)\b").unwrap());
 
 static CHAPTER_REGEX: Lazy<Regex> =
@@ -41,21 +42,21 @@ pub async fn scan_all_folders() -> anyhow::Result<()> {
 
 //This function will scan a single folder for valid file types
 //creates entries for them in the database
-pub async fn scan_folder(path: PathBuf, db: Arc<Database>) -> anyhow::Result<()> {
+pub async fn scan_folder(path: PathBuf, db: Arc<Database>) -> anyhow::Result<(),FolderScannerError> {
     let semaphore = Arc::new(Semaphore::new(1)); // limit concurrency
     let mut directories = vec![path];
 
     while let Some(dir) = directories.pop() {
-        let mut entries = fs::read_dir(dir).await?;
+        let mut entries = fs::read_dir(dir).await.map_err(|_|FolderScannerError::MissingDirectory)?;
 
-        while let Some(entry) = entries.next_entry().await? {
+        while let Some(entry) = entries.next_entry().await.map_err(|_|FolderScannerError::FileNotFound)? {
             let entry_path = entry.path();
 
             if entry_path.is_dir() {
                 directories.push(entry_path);
             } else {
                 let db = db.clone();
-                let permit = semaphore.clone().acquire_owned().await?;
+                let permit = semaphore.clone().acquire_owned().await.map_err(|_|FolderScannerError::PermitCreationFailed);
 
                 tokio::spawn(async move {
                     let _permit = permit;

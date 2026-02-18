@@ -4,6 +4,7 @@ use crate::models::{
     BookDatabaseColumns, ColumnSelector, LibraryDatabaseColumns, SeriesDatabaseColumns,
     UserDatabaseColumns,
 };
+use crate::error_types::{DatabaseError};
 use r2d2::{ManageConnection, Pool};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, Connection, Result, ToSql};
@@ -14,17 +15,17 @@ pub struct Database {
 }
 
 impl Database {
-    pub fn new() -> Result<Self> {
+    pub fn new() -> Result<Self,DatabaseError> {
         let path = Path::new("./data/databases/app_data.sqlite");
     
     // Ensure the database folder exists
-    std::fs::create_dir_all("./data/databases/").map_err(|_| rusqlite::Error::InvalidQuery)?;
+    std::fs::create_dir_all("./data/databases/").map_err(|_| DatabaseError::DirectoryCreationFailure)?;
 
     let manager = SqliteConnectionManager::file(path);
 
     // Initialize DB with a single connection to set PRAGMAs and create tables
     {
-        let conn = manager.connect()?;
+        let conn = manager.connect().map_err(|_|DatabaseError::FailedToConnectToDatabase)?;
         conn.execute_batch(
             "
             PRAGMA foreign_keys = ON;
@@ -32,20 +33,20 @@ impl Database {
             PRAGMA synchronous = NORMAL;
             PRAGMA busy_timeout = 5000;
             ",
-        )?;
+        ).map_err(|_|DatabaseError::ConnectionExecutableFailure)?;
 
         // Database schema initialization (only once)
-        initialize_database(&conn)?;
+        initialize_database(&conn).map_err(|_|DatabaseError::DatabaseInitializationFailure)?;
     }
 
     // Now that initialization is done, build the r2d2 connection pool
     let pool = Pool::builder()
         .max_size(8) // or 4 for better concurrency control
         .build(manager)
-        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        .map_err(|_|DatabaseError::ConnectionPoolFailure)?;
 
     // Get a connection from the pool (to ensure the pool is set up correctly)
-    let _conn = pool.get().map_err(|_| rusqlite::Error::InvalidQuery)?;
+    let _conn = pool.get().map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
 
     Ok(Self { pool })
     }

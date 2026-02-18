@@ -1,6 +1,81 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+pub enum DatabaseError{
+    #[error("Could not initialize the database")]
+    DatabaseInitializationFailure,
+
+    #[error("Could not create required directory for database creation")]
+    DirectoryCreationFailure,
+
+    #[error("Could not establish a connection to the database")]
+    FailedToConnectToDatabase,
+
+    #[error("Failed creation of the database connection pool")]
+    ConnectionPoolFailure,
+
+    #[error("Failed getting a connection from the pool")]
+    PoolConnectionRetrievalFailure,
+
+    #[error("Failed inserting metadata for one item")]
+    InsertionFailure,
+
+    #[error("Failed updating an already existing entry in the database")]
+    UpdatingFailure,
+
+    #[error("Tried to delete an item from the library-series table, which is not allowed")]
+    LibrarySeriesException,
+
+    #[error("Entry in database is not found")]
+    EntryNotFound,
+
+    #[error("Connection executable task has failed")]
+    ConnectionExecutableFailure,
+
+    #[error("connection task preparation has failed")]
+    TaskPreparationFailure,
+
+    #[error("Failed to get next row from database table")]
+    NextRowFailure,
+}
+
+#[derive(Error, Debug)]
+pub enum FolderScannerError{
+    #[error("File type not recognized")]
+    FileTypeNotRecognized,
+
+    #[error("File Not Found")]
+    FileNotFound,
+
+    #[error("Metadata extraction failed")]
+    MetadataExtractionFailed,
+
+    #[error("System does not support getting modified file information")]
+    UnsupportedOperatingSystem,
+
+    #[error("File Hashing Failed")]
+    FileHashingFailed,
+
+    #[error("Could not insert book entry into the database")]
+    BookInsertionFailed,
+
+    #[error("Could not insert series entry into the database")]
+    SeriesInsertionFailed,
+
+    #[error("Directory not found")]
+    MissingDirectory,
+
+    #[error("Permit creation failed")]
+    PermitCreationFailed,
+
+    #[error("Could not create new database connection")]
+    DatabaseConnectionFailed,
+
+    #[error("Failed to regex the book title properly")]
+    RegexFailure,
+}
+
+#[derive(Error, Debug)]
 pub enum CoverImageError {
     #[error("File not found")]
     FileNotFound,

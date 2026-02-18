@@ -4,6 +4,5 @@ pub mod utils;
 pub mod models;
 pub mod convert_to_sql;
 pub mod folder_scanner;
-pub mod task_manager;
 pub mod cover_image_retriever;
 pub mod error_types;
