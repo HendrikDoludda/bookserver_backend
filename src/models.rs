@@ -349,3 +349,12 @@ pub struct ParsedName{
     pub chapter_number: Option<i64>,
     pub page_number: Option<i64>,
 }
+
+#[derive(Debug, Clone ,Serialize)]
+pub struct FileExtractedMetadata{
+    pub file_size: Option<u64>,
+    pub modified_date: Option<SystemTime>,
+    pub page_number: Option<i32>,
+    pub language_code: BookLanguage,
+    pub author: String,
+}

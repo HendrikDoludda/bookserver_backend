@@ -37,6 +37,24 @@ pub enum DatabaseError{
 
     #[error("Failed to get next row from database table")]
     NextRowFailure,
+
+    #[error("Invalid combination of Database type and column")]
+    InvalidRequest,
+
+    #[error("Statement Query has failed")]
+    QueryFailure,
+
+    #[error("Retrieving Id has failed")]
+    IdRetrievalFailure,
+
+    #[error("Failed to create a transaction")]
+    TransactionFailure,
+
+    #[error("Failed to create a new operation")]
+    OperationFailure,
+
+    #[error("Failed to commit the created operation to the transaction")]
+    OperationCommitFailure,
 }
 
 #[derive(Error, Debug)]
@@ -77,6 +95,7 @@ pub enum FolderScannerError{
 
 #[derive(Error, Debug)]
 pub enum CoverImageError {
+
     #[error("File not found")]
     FileNotFound,
 
@@ -118,4 +137,25 @@ pub enum CoverImageError {
 
     #[error("System failed to create a document from pdf")]
     PdfToDocumentError,
+}
+
+#[derive(Error,Debug,Clone)]
+pub enum StreamReaderErrors{
+    #[error("File Not Found")]
+    FileNotFound,
+    
+    #[error("Could not extract the string to str")]
+    FileSizeConversionFailed,
+
+    #[error("The range header that was provided is not valid")]
+    InvalidRangeHeader,
+
+     #[error("No file type found in the metadata")]
+    NoFileTypeFound,
+
+    #[error("Could not create the server response!")]
+    ResponseCreationFailed,
+
+    #[error("Could not create the body component!")]
+    BodyCreationFailed,
 }

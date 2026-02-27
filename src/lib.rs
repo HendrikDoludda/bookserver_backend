@@ -6,3 +6,4 @@ pub mod convert_to_sql;
 pub mod folder_scanner;
 pub mod cover_image_retriever;
 pub mod error_types;
+pub mod stream_reader;
