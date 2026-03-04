@@ -17,6 +17,7 @@ use std::{
     sync::Arc,
 };
 use tokio::{fs, sync::Semaphore};
+use crate::insert::Insert;
 
 //preloaded regex expressions that can be used without the need to re-create any
 static VOLUME_REGEX: Lazy<Regex> =
@@ -148,7 +149,7 @@ fn create_book_entry(path: &Path, db: &Database) -> anyhow::Result<(), FolderSca
         file_size: metadata.file_size,
     };
 
-    db.insert(DatabaseTypes::Books, &metadata_entry)
+    db.insert( &metadata_entry)
         .map_err(|_| FolderScannerError::BookInsertionFailed)?;
 
     Ok(())
@@ -311,6 +312,6 @@ fn create_series_entry(file_name: String, db: &Database) -> Result<i64, FolderSc
         start_release_year: None,
         end_release_year: None,
     };
-    db.insert(DatabaseTypes::Series, &series_entry)
+    db.insert(&series_entry)
         .map_err(|_| FolderScannerError::SeriesInsertionFailed)
 }

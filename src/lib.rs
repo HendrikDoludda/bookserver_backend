@@ -7,3 +7,6 @@ pub mod folder_scanner;
 pub mod cover_image_retriever;
 pub mod error_types;
 pub mod stream_reader;
+pub mod insert;
+pub mod db_update;
+pub mod extract;

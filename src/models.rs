@@ -184,8 +184,8 @@ pub enum BookDatabaseColumns{
     FileSize,
 }
 
-impl BookDatabaseColumns{
-    pub fn as_str(&self) -> &str{
+impl AsRef<str> for BookDatabaseColumns{
+    fn as_ref(&self) -> &str{
         match self{
             BookDatabaseColumns::Title => "title",
             BookDatabaseColumns::Author => "author",
@@ -226,8 +226,8 @@ pub enum SeriesDatabaseColumns{
     EndReleaseYear,
 }
 
-impl SeriesDatabaseColumns{
-    pub fn as_str(&self) -> &str{
+impl AsRef<str> for SeriesDatabaseColumns{
+    fn as_ref(&self) -> &str{
         match self{
             SeriesDatabaseColumns::Name => "name",
             SeriesDatabaseColumns::Description => "description",
@@ -251,8 +251,8 @@ pub enum UserDatabaseColumns{
     PasswordHash,
     Email,
 }
-impl UserDatabaseColumns{
-    pub fn as_str(&self) -> &str{
+impl AsRef<str> for UserDatabaseColumns{
+    fn as_ref(&self) -> &str{
         match self{
             UserDatabaseColumns::Username => "username",
             UserDatabaseColumns::PasswordHash => "password_hash",
@@ -277,8 +277,8 @@ pub enum LibraryDatabaseColumns{
     Description,
 }
 
-impl LibraryDatabaseColumns{
-    pub fn as_str(&self) -> &str{
+impl AsRef<str> for LibraryDatabaseColumns{
+    fn as_ref(&self) -> &str{
         match self{
             LibraryDatabaseColumns::Name => "library_name",
             LibraryDatabaseColumns::LibraryType => "library_type",
@@ -332,8 +332,8 @@ pub enum SeriesLibraryConnectionDatabaseColumns{
     LibraryId,
 }
 
-impl SeriesLibraryConnectionDatabaseColumns{
-    pub fn as_str(&self) -> &str{
+impl AsRef<str> for SeriesLibraryConnectionDatabaseColumns{
+    fn as_ref(&self) -> &str{
         match self{
             SeriesLibraryConnectionDatabaseColumns::SeriesId => "series_id",
             SeriesLibraryConnectionDatabaseColumns::LibraryId => "library_id",
@@ -357,4 +357,11 @@ pub struct FileExtractedMetadata{
     pub page_number: Option<i32>,
     pub language_code: BookLanguage,
     pub author: String,
+}
+
+pub enum DatabaseEntry{
+    Book(BookMetadata),
+    Library(LibraryMetadata),
+    Series(BookSeriesMetadata),
+    User(UserMetadata)
 }
