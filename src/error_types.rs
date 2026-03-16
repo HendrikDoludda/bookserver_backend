@@ -1,4 +1,5 @@
 use thiserror::Error;
+use axum::{http::{StatusCode}, body::Body, response::{IntoResponse,Response}};
 
 #[derive(Error, Debug)]
 pub enum DatabaseError{
@@ -55,6 +56,17 @@ pub enum DatabaseError{
 
     #[error("Failed to commit the created operation to the transaction")]
     OperationCommitFailure,
+}
+
+
+impl IntoResponse for DatabaseError{
+    fn into_response(self) -> Response<Body> {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {:?}", self),
+        )
+            .into_response()
+    }
 }
 
 #[derive(Error, Debug)]

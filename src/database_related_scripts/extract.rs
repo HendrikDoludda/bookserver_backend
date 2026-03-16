@@ -1,7 +1,7 @@
 use crate::{
     error_types::DatabaseError,
     models::{
-        BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, LibraryMetadata, LibraryType, SeriesLibraryConnection, UserMetadata
+        BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, LibraryMetadata, LibraryType, UserMetadata
     },
 };
 use rusqlite::{params, Connection, OptionalExtension};

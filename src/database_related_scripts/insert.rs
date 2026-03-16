@@ -92,7 +92,7 @@ impl Insert for LibraryMetadata {
 
         let params = params![
             self.name.clone(),
-            self.library_type.as_str().clone(),
+            self.library_type.as_str(),
             self.cover_image.clone(),
             self.description.clone()
         ];

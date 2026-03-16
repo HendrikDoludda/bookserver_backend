@@ -1,10 +1,9 @@
 use crate::config;
-use crate::cover_image_retriever::get_cover_image;
+use crate::scanner::cover_image_retriever::get_cover_image;
 use crate::db::Database;
-use crate::error_types::FolderScannerError;
+use crate::error_types::{DatabaseError, FolderScannerError};
 use crate::models::{
-    BookDatabaseColumns, BookFormat, BookMetadata, BookSeriesMetadata, ColumnSelector,
-    DatabaseTypes, FileExtractedMetadata, ParsedName,
+    BookDatabaseColumns, BookFormat, BookMetadata, BookSeriesMetadata, ColumnSelector, DatabaseTypes, FileExtractedMetadata, LibraryMetadata, ParsedName, SeriesLibraryConnection
 };
 use blake3::Hasher;
 use log::warn;
@@ -17,7 +16,6 @@ use std::{
     sync::Arc,
 };
 use tokio::{fs, sync::Semaphore};
-use crate::insert::Insert;
 
 //preloaded regex expressions that can be used without the need to re-create any
 static VOLUME_REGEX: Lazy<Regex> =
@@ -37,7 +35,8 @@ pub async fn scan_all_folders() -> anyhow::Result<()> {
     let db = Arc::new(Database::new()?);
 
     for folder in folders {
-        scan_folder(PathBuf::from(folder), db.clone()).await?;
+        let library_id = get_library_id(folder.clone(), &db.clone())?;
+        scan_folder(PathBuf::from(folder), db.clone(),library_id).await?;
     }
 
     Ok(())
@@ -48,6 +47,7 @@ pub async fn scan_all_folders() -> anyhow::Result<()> {
 pub async fn scan_folder(
     path: PathBuf,
     db: Arc<Database>,
+    library_id: i64,
 ) -> anyhow::Result<(), FolderScannerError> {
     let semaphore = Arc::new(Semaphore::new(1)); // limit concurrency
     let mut directories = vec![path];
@@ -78,7 +78,7 @@ pub async fn scan_folder(
                     let _permit = permit;
 
                     if let Err(e) =
-                        tokio::task::spawn_blocking(move || create_book_entry(&entry_path, &db))
+                        tokio::task::spawn_blocking(move || create_book_entry(&entry_path, &db,library_id))
                             .await
                     {
                         eprintln!("Task join error: {e}");
@@ -92,7 +92,7 @@ pub async fn scan_folder(
 }
 
 //This function will be run when a valid file type has been found
-fn create_book_entry(path: &Path, db: &Database) -> anyhow::Result<(), FolderScannerError> {
+fn create_book_entry(path: &Path, db: &Database, library_id: i64) -> anyhow::Result<(), FolderScannerError> {
     if !is_valid_file_type(path) {
         return Ok(());
     }
@@ -117,7 +117,7 @@ fn create_book_entry(path: &Path, db: &Database) -> anyhow::Result<(), FolderSca
     }
 
     let parsed_name = get_final_file_name(&final_path);
-    let series_id = match get_series_id(parsed_name.title.clone(), db) {
+    let series_id = match get_series_id(parsed_name.title.clone(), db, library_id) {
         Ok(id) => Some(id),
         Err(e) => {
             warn!("Failed to get series id because of : {:?}", e);
@@ -293,18 +293,18 @@ fn hash_file(mut file: File) -> io::Result<String> {
     Ok(hasher.finalize().to_hex().to_string())
 }
 
-fn get_series_id(file_name: String, db: &Database) -> Result<i64, FolderScannerError> {
+fn get_series_id(file_name: String, db: &Database, library_id: i64) -> Result<i64, FolderScannerError> {
     match db.get_id_from_table(
         DatabaseTypes::Series,
         ColumnSelector::Series(crate::models::SeriesDatabaseColumns::Name),
         &file_name.to_lowercase(),
     ) {
         Ok(Some(id)) => Ok(id), // found an existing series
-        Ok(None) | Err(_) => create_series_entry(file_name, db), // not found or DB error
+        Ok(None) | Err(_) => create_series_entry(file_name, db, library_id), // not found or DB error
     }
 }
 
-fn create_series_entry(file_name: String, db: &Database) -> Result<i64, FolderScannerError> {
+fn create_series_entry(file_name: String, db: &Database, library_id: i64) -> Result<i64, FolderScannerError> {
     let series_entry = BookSeriesMetadata {
         name: file_name.to_lowercase(),
         description: None,
@@ -312,6 +312,37 @@ fn create_series_entry(file_name: String, db: &Database) -> Result<i64, FolderSc
         start_release_year: None,
         end_release_year: None,
     };
-    db.insert(&series_entry)
-        .map_err(|_| FolderScannerError::SeriesInsertionFailed)
+    let id = db.insert(&series_entry)
+        .map_err(|_| FolderScannerError::SeriesInsertionFailed)?;
+    link_series_to_default_library(id, library_id, db).map_err(|_|FolderScannerError::SeriesInsertionFailed)?;
+    Ok(id)
+}
+
+fn link_series_to_default_library(series_id: i64, library_id: i64, db: &Database)->Result<(),DatabaseError>{
+    let linked_series = SeriesLibraryConnection{
+        series_id: series_id,
+        library_id: library_id,
+    };
+    db.insert(&linked_series)?;
+    Ok(())
+}
+
+fn get_library_id(name: String, db: &Database)-> Result<i64, DatabaseError>{
+    match db.get_id_from_table(DatabaseTypes::Library,
+         ColumnSelector::Library(crate::models::LibraryDatabaseColumns::Name),
+          &name.to_lowercase())
+          {
+            Ok(Some(result)) => Ok(result),
+            Ok(None)|Err(_) => create_library_entry(name, db)
+         }
+}
+
+fn create_library_entry(name: String, db: &Database) -> Result<i64,DatabaseError>{
+    let library_entry = LibraryMetadata{
+        name: name.to_lowercase(),
+        library_type: crate::models::LibraryType::Books,
+        cover_image: None,
+        description: None,
+    };
+    db.insert(&library_entry)
 }

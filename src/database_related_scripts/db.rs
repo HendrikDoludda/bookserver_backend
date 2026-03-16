@@ -1,16 +1,14 @@
-use crate::convert_to_sql::ToSqlRow;
-use crate::models::{BookFormat, BookLanguage, BookMetadata, DatabaseEntry, DatabaseTypes};
-use crate::models::{
-    BookDatabaseColumns, ColumnSelector, LibraryDatabaseColumns, SeriesDatabaseColumns,
-    UserDatabaseColumns,
-};
+
+use crate::models::{DatabaseTypes};
+use crate::models::{ColumnSelector};
 use crate::error_types::{DatabaseError};
 use r2d2::{ManageConnection, Pool};
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{params, Connection, Result, ToSql, OptionalExtension};
+use rusqlite::{Connection, Result, ToSql};
 use std::path::Path;
-use crate::insert::Insert;
-use crate::db_update::Update;
+use crate::database_related_scripts::insert::Insert;
+use crate::database_related_scripts::db_update::Update;
+use crate::database_related_scripts::extract::Extract;
 
 pub struct Database {
     pool: r2d2::Pool<SqliteConnectionManager>,
@@ -23,31 +21,27 @@ impl Database {
     // Ensure the database folder exists
     std::fs::create_dir_all("./data/databases/").map_err(|_| DatabaseError::DirectoryCreationFailure)?;
 
-    let manager = SqliteConnectionManager::file(path);
-
-    // Initialize DB with a single connection to set PRAGMAs and create tables
-    {
-        let conn = manager.connect().map_err(|_|DatabaseError::FailedToConnectToDatabase)?;
-        conn.execute_batch(
-            "
+    let manager = SqliteConnectionManager::file(path).with_init(|c| {
+        c.execute_batch("
             PRAGMA foreign_keys = ON;
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
             PRAGMA busy_timeout = 5000;
-            ",
-        ).map_err(|_|DatabaseError::ConnectionExecutableFailure)?;
+            ")?;
+        Ok(())
+    });
 
-        // Database schema initialization (only once)
+    {
+        let conn = manager.connect().map_err(|_|DatabaseError::FailedToConnectToDatabase)?;
+
         initialize_database(&conn).map_err(|_|DatabaseError::DatabaseInitializationFailure)?;
     }
 
-    // Now that initialization is done, build the r2d2 connection pool
     let pool = Pool::builder()
-        .max_size(8) // or 4 for better concurrency control
+        .max_size(4) 
         .build(manager)
         .map_err(|_|DatabaseError::ConnectionPoolFailure)?;
 
-    // Get a connection from the pool (to ensure the pool is set up correctly)
     let _conn = pool.get().map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
 
     Ok(Self { pool })
@@ -61,7 +55,6 @@ impl Database {
 
     pub fn update_value<U,T>(
         &self,
-        db_type: DatabaseTypes,
         column: U::Column,
         new_value: T,
         id: i64,
@@ -85,13 +78,14 @@ impl Database {
         }
     }
 
-    pub fn get_entry(
+    //not certain about this. Should be somewhat correct, but not sure about type safety and everything
+    pub fn get_entry<T>(
         &self,
-        db_type: DatabaseTypes,
         id: i64
-    ) -> Result<DatabaseEntry,DatabaseError>{
+    ) -> Result<T,DatabaseError>
+    where T: Extract, {
         let conn = self.pool.get().map_err(|_|DatabaseError::PoolConnectionRetrievalFailure)?;
-        Err(DatabaseError::ConnectionExecutableFailure)
+        T::extract(&conn, id)?.ok_or(DatabaseError::EntryNotFound)
     }
 
     pub fn remove_entry_from_library_elements(
@@ -103,6 +97,22 @@ impl Database {
         let query = "DELETE FROM library_elements WHERE series_id = ?1 AND library_id = ?2";
         conn.execute(&query, rusqlite::params![series_id, library_id]).map_err(|_|DatabaseError::ConnectionExecutableFailure)?;
         Ok(())
+    }
+
+    pub fn get_series_entries_in_library(
+        &self,
+        library_id: i64
+    ) -> Result<Vec<i64>,DatabaseError>{
+        let conn = self.pool.get().map_err(|_|DatabaseError::PoolConnectionRetrievalFailure)?;
+        let mut stmt = conn.prepare(
+            "SELECT series_id FROM library_elements WHERE library_id = ?1")
+            .map_err(|_|DatabaseError::OperationFailure)?;
+        let rows = stmt.query_map(
+            rusqlite::params![library_id], 
+            |row| {row.get::<_,i64>("series_id")})
+            .map_err(|_|DatabaseError::OperationFailure)?;
+        let series_ids: Result<Vec<i64>,_> = rows.collect();
+        Ok(series_ids.map_err(|_|DatabaseError::OperationFailure)?)
     }
 
     pub fn get_id_from_table(
