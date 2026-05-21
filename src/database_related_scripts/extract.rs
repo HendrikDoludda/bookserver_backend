@@ -1,7 +1,8 @@
 use crate::{
     error_types::DatabaseError,
     models::{
-        BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, LibraryMetadata, LibraryType, UserMetadata
+        BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, LibraryMetadata, LibraryType,
+        UserMetadata,
     },
 };
 use rusqlite::{params, Connection, OptionalExtension};
@@ -33,8 +34,9 @@ impl Extract for BookMetadata {
 
             let file_size: Option<u64> = row.get::<_, Option<i64>>(15)?.map(|size| size as u64);
 
-            let time: Option<SystemTime> = row.get::<_, Option<i64>>(14)?
-    .map(|secs| UNIX_EPOCH + Duration::from_secs(secs as u64));
+            let time: Option<SystemTime> = row
+                .get::<_, Option<i64>>(14)?
+                .map(|secs| UNIX_EPOCH + Duration::from_secs(secs as u64));
 
             let tags: Vec<String> = row
                 .get::<_, String>(7)?
@@ -66,10 +68,9 @@ impl Extract for BookMetadata {
     }
 }
 
-
 impl Extract for BookSeriesMetadata {
     const QUERY: &'static str = "SELECT 
-    name, description, cover_image, 
+    id, name, description, cover_image, 
     start_release_year, end_release_year
     FROM series WHERE id = ?1";
 
@@ -82,7 +83,7 @@ impl Extract for BookSeriesMetadata {
                 description: Some(row.get(2)?),
                 cover_image: Some(row.get(3)?),
                 start_release_year: Some(row.get(4)?),
-                end_release_year: Some(row.get(5)?)
+                end_release_year: Some(row.get(5)?),
             })
         })
         .optional()
@@ -90,45 +91,46 @@ impl Extract for BookSeriesMetadata {
     }
 }
 
-impl Extract for LibraryMetadata{
+impl Extract for LibraryMetadata {
     const QUERY: &'static str = "SELECT
-    library_name, library_type, cover_image,
+    id, library_name, library_type, cover_image,
     description
     FROM library WHERE id = ?1";
 
     fn extract(conn: &Connection, id: i64) -> Result<Option<Self>, DatabaseError> {
         let query = Self::QUERY;
 
-        conn.query_row(&query, params![id], |row|{
+        conn.query_row(&query, params![id], |row| {
             let library_type_string: String = row.get(2)?;
             Ok(Self {
                 name: row.get(1)?,
                 library_type: LibraryType::from_str(library_type_string.as_str()),
                 cover_image: Some(row.get(3)?),
-                description: Some(row.get(4)?)
+                description: Some(row.get(4)?),
             })
         })
         .optional()
-        .map_err(|_|DatabaseError::QueryFailure)
+        .map_err(|_| DatabaseError::QueryFailure)
     }
 }
 
 impl Extract for UserMetadata {
     const QUERY: &'static str = "
     SELECT 
-    username, password_hash, email
+    id, username, password_hash, email
     FROM users WHERE id = ?1";
 
     fn extract(conn: &Connection, id: i64) -> Result<Option<Self>, DatabaseError> {
         let query = Self::QUERY;
 
-        conn.query_row(&query, params![id], |row|{
-            Ok(Self { 
+        conn.query_row(&query, params![id], |row| {
+            Ok(Self {
                 username: row.get(1)?,
                 passweord_hash: row.get(2)?,
-                email: row.get(3)? })
+                email: row.get(3)?,
+            })
         })
         .optional()
-        .map_err(|_|DatabaseError::QueryFailure)
+        .map_err(|_| DatabaseError::QueryFailure)
     }
 }

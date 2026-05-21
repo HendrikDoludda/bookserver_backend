@@ -1,8 +1,12 @@
+use axum::{
+    body::Body,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use thiserror::Error;
-use axum::{http::{StatusCode}, body::Body, response::{IntoResponse,Response}};
 
 #[derive(Error, Debug)]
-pub enum DatabaseError{
+pub enum DatabaseError {
     #[error("Could not initialize the database")]
     DatabaseInitializationFailure,
 
@@ -58,8 +62,7 @@ pub enum DatabaseError{
     OperationCommitFailure,
 }
 
-
-impl IntoResponse for DatabaseError{
+impl IntoResponse for DatabaseError {
     fn into_response(self) -> Response<Body> {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -70,7 +73,7 @@ impl IntoResponse for DatabaseError{
 }
 
 #[derive(Error, Debug)]
-pub enum FolderScannerError{
+pub enum FolderScannerError {
     #[error("File type not recognized")]
     FileTypeNotRecognized,
 
@@ -107,7 +110,6 @@ pub enum FolderScannerError{
 
 #[derive(Error, Debug)]
 pub enum CoverImageError {
-
     #[error("File not found")]
     FileNotFound,
 
@@ -123,7 +125,7 @@ pub enum CoverImageError {
     #[error("failed creating the cover")]
     CoverCreationFailed,
 
-     #[error("Invalid File Name")]
+    #[error("Invalid File Name")]
     InvalidFileName,
 
     #[error("File Already Exists")]
@@ -151,18 +153,18 @@ pub enum CoverImageError {
     PdfToDocumentError,
 }
 
-#[derive(Error,Debug,Clone)]
-pub enum StreamReaderErrors{
+#[derive(Error, Debug, Clone)]
+pub enum StreamReaderErrors {
     #[error("File Not Found")]
     FileNotFound,
-    
+
     #[error("Could not extract the string to str")]
     FileSizeConversionFailed,
 
     #[error("The range header that was provided is not valid")]
     InvalidRangeHeader,
 
-     #[error("No file type found in the metadata")]
+    #[error("No file type found in the metadata")]
     NoFileTypeFound,
 
     #[error("Could not create the server response!")]
@@ -170,4 +172,13 @@ pub enum StreamReaderErrors{
 
     #[error("Could not create the body component!")]
     BodyCreationFailed,
+}
+
+#[derive(Error, Debug)]
+pub enum RequestErrors {
+    #[error("Failed to authorize the user, so the request couldn't be completed")]
+    AuthorizationFailed,
+
+    #[error("Request failed to retrieve the desired data")]
+    RequestFailed,
 }
