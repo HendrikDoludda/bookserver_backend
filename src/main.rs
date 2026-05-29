@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    extract::Path,
+    extract::{Path, State},
     http::{Request, Response},
     routing::get,
     Json, Router,
@@ -12,9 +12,10 @@ use bookserver_backend::folder_scanner::scan_all_folders;
 use bookserver_backend::models::BookMetadata;
 use bookserver_backend::stream_reader::streaming_file;
 use serde::Serialize;
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tracing::info;
+use tracing_subscriber::registry::Data;
 
 //TODO: Create the database access for every api call that gets made. Forgot what exactly it was
 //that way the database does not require new database pool creations.
@@ -24,12 +25,15 @@ use tracing::info;
 async fn main() {
     tracing_subscriber::fmt::init();
 
+    let db = Arc::new(Database::new().unwrap());
+
     let app = Router::new()
         .route("/health", get(get_health))
         .route("/info", get(info))
         .route("/setup_db", get(setup_db))
         .route("/scan_all_directories", get(initiate_folder_scanner))
-        .route("/book/{id}", get(get_book));
+        .route("/book/{id}", get(get_book))
+        .with_state(db);
     //.route("/scan", get(scan));
 
     let port = get_port();
@@ -81,16 +85,16 @@ async fn setup_db() -> &'static str {
     "Database setup complete!"
 }
 
-async fn initiate_folder_scanner() -> &'static str {
-    scan_all_folders().await.unwrap();
+async fn initiate_folder_scanner(State(db): State<Arc<Database>>) -> &'static str {
+    scan_all_folders(db).await.unwrap();
     "Folder scanning initiated!"
 }
 
 async fn get_book(
+    State(db): State<Arc<Database>>,
     Path(id): Path<i64>,
     request: Request<Body>,
 ) -> Result<Response<Body>, DatabaseError> {
-    let db = Database::new()?;
     let metadata = db.get_entry::<BookMetadata>(id)?;
     //let db = Database::new().unwrap();
     //let metadata = db.get_entry(db_type, id);

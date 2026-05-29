@@ -1,10 +1,11 @@
 use crate::config;
-use crate::scanner::cover_image_retriever::get_cover_image;
 use crate::db::Database;
 use crate::error_types::{DatabaseError, FolderScannerError};
 use crate::models::{
-    BookDatabaseColumns, BookFormat, BookMetadata, BookSeriesMetadata, ColumnSelector, DatabaseTypes, FileExtractedMetadata, LibraryMetadata, ParsedName, SeriesLibraryConnection
+    BookDatabaseColumns, BookFormat, BookMetadata, BookSeriesMetadata, ColumnSelector,
+    DatabaseTypes, FileExtractedMetadata, LibraryMetadata, ParsedName, SeriesLibraryConnection,
 };
+use crate::scanner::cover_image_retriever::get_cover_image;
 use blake3::Hasher;
 use log::warn;
 use once_cell::sync::Lazy;
@@ -16,6 +17,7 @@ use std::{
     sync::Arc,
 };
 use tokio::{fs, sync::Semaphore};
+use tracing_subscriber::registry::Data;
 
 //preloaded regex expressions that can be used without the need to re-create any
 static VOLUME_REGEX: Lazy<Regex> =
@@ -30,13 +32,12 @@ static PAGE_REGEX: Lazy<Regex> =
 //This function will scan all assigned folders for valid file types
 //creates entries for them in the database
 //should be done async and be able to run multiple in parralel
-pub async fn scan_all_folders() -> anyhow::Result<()> {
+pub async fn scan_all_folders(db: Arc<Database>) -> anyhow::Result<()> {
     let folders = config::get_books_dirs();
-    let db = Arc::new(Database::new()?);
 
     for folder in folders {
         let library_id = get_library_id(folder.clone(), &db.clone())?;
-        scan_folder(PathBuf::from(folder), db.clone(),library_id).await?;
+        scan_folder(PathBuf::from(folder), db.clone(), library_id).await?;
     }
 
     Ok(())
@@ -77,9 +78,10 @@ pub async fn scan_folder(
                 tokio::spawn(async move {
                     let _permit = permit;
 
-                    if let Err(e) =
-                        tokio::task::spawn_blocking(move || create_book_entry(&entry_path, &db,library_id))
-                            .await
+                    if let Err(e) = tokio::task::spawn_blocking(move || {
+                        create_book_entry(&entry_path, &db, library_id)
+                    })
+                    .await
                     {
                         eprintln!("Task join error: {e}");
                     }
@@ -92,7 +94,11 @@ pub async fn scan_folder(
 }
 
 //This function will be run when a valid file type has been found
-fn create_book_entry(path: &Path, db: &Database, library_id: i64) -> anyhow::Result<(), FolderScannerError> {
+fn create_book_entry(
+    path: &Path,
+    db: &Database,
+    library_id: i64,
+) -> anyhow::Result<(), FolderScannerError> {
     if !is_valid_file_type(path) {
         return Ok(());
     }
@@ -149,7 +155,7 @@ fn create_book_entry(path: &Path, db: &Database, library_id: i64) -> anyhow::Res
         file_size: metadata.file_size,
     };
 
-    db.insert( &metadata_entry)
+    db.insert(&metadata_entry)
         .map_err(|_| FolderScannerError::BookInsertionFailed)?;
 
     Ok(())
@@ -293,7 +299,11 @@ fn hash_file(mut file: File) -> io::Result<String> {
     Ok(hasher.finalize().to_hex().to_string())
 }
 
-fn get_series_id(file_name: String, db: &Database, library_id: i64) -> Result<i64, FolderScannerError> {
+fn get_series_id(
+    file_name: String,
+    db: &Database,
+    library_id: i64,
+) -> Result<i64, FolderScannerError> {
     match db.get_id_from_table(
         DatabaseTypes::Series,
         ColumnSelector::Series(crate::models::SeriesDatabaseColumns::Name),
@@ -304,7 +314,11 @@ fn get_series_id(file_name: String, db: &Database, library_id: i64) -> Result<i6
     }
 }
 
-fn create_series_entry(file_name: String, db: &Database, library_id: i64) -> Result<i64, FolderScannerError> {
+fn create_series_entry(
+    file_name: String,
+    db: &Database,
+    library_id: i64,
+) -> Result<i64, FolderScannerError> {
     let series_entry = BookSeriesMetadata {
         name: file_name.to_lowercase(),
         description: None,
@@ -312,14 +326,20 @@ fn create_series_entry(file_name: String, db: &Database, library_id: i64) -> Res
         start_release_year: None,
         end_release_year: None,
     };
-    let id = db.insert(&series_entry)
+    let id = db
+        .insert(&series_entry)
         .map_err(|_| FolderScannerError::SeriesInsertionFailed)?;
-    link_series_to_default_library(id, library_id, db).map_err(|_|FolderScannerError::SeriesInsertionFailed)?;
+    link_series_to_default_library(id, library_id, db)
+        .map_err(|_| FolderScannerError::SeriesInsertionFailed)?;
     Ok(id)
 }
 
-fn link_series_to_default_library(series_id: i64, library_id: i64, db: &Database)->Result<(),DatabaseError>{
-    let linked_series = SeriesLibraryConnection{
+fn link_series_to_default_library(
+    series_id: i64,
+    library_id: i64,
+    db: &Database,
+) -> Result<(), DatabaseError> {
+    let linked_series = SeriesLibraryConnection {
         series_id: series_id,
         library_id: library_id,
     };
@@ -327,18 +347,19 @@ fn link_series_to_default_library(series_id: i64, library_id: i64, db: &Database
     Ok(())
 }
 
-fn get_library_id(name: String, db: &Database)-> Result<i64, DatabaseError>{
-    match db.get_id_from_table(DatabaseTypes::Library,
-         ColumnSelector::Library(crate::models::LibraryDatabaseColumns::Name),
-          &name.to_lowercase())
-          {
-            Ok(Some(result)) => Ok(result),
-            Ok(None)|Err(_) => create_library_entry(name, db)
-         }
+fn get_library_id(name: String, db: &Database) -> Result<i64, DatabaseError> {
+    match db.get_id_from_table(
+        DatabaseTypes::Library,
+        ColumnSelector::Library(crate::models::LibraryDatabaseColumns::Name),
+        &name.to_lowercase(),
+    ) {
+        Ok(Some(result)) => Ok(result),
+        Ok(None) | Err(_) => create_library_entry(name, db),
+    }
 }
 
-fn create_library_entry(name: String, db: &Database) -> Result<i64,DatabaseError>{
-    let library_entry = LibraryMetadata{
+fn create_library_entry(name: String, db: &Database) -> Result<i64, DatabaseError> {
+    let library_entry = LibraryMetadata {
         name: name.to_lowercase(),
         library_type: crate::models::LibraryType::Books,
         cover_image: None,

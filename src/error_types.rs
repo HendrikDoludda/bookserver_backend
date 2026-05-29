@@ -182,3 +182,11 @@ pub enum RequestErrors {
     #[error("Request failed to retrieve the desired data")]
     RequestFailed,
 }
+
+#[derive(Error, Debug)]
+pub enum RoutingErrors {
+    #[error("Failed to start Axum")]
+    AxumInitializationFailed(#[source] std::io::Error),
+    #[error("Creating TcpListener failed")]
+    TcpListenerCreationFailed(#[source] std::io::Error),
+}
