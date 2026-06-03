@@ -2,6 +2,17 @@ use serde::Serialize;
 use std::{path::PathBuf, time::SystemTime};
 use strum_macros::EnumIter;
 
+//============  Row id + metadata wrapper =================
+// Metadata structs don't store their own row id, but list endpoints need it so
+// the client can drill down (e.g. fetch a library's series). This pairs the id
+// with the metadata and flattens both into a single JSON object.
+#[derive(Debug, Clone, Serialize)]
+pub struct WithId<T: Serialize> {
+    pub id: i64,
+    #[serde(flatten)]
+    pub data: T,
+}
+
 // ===========Database models =================
 #[derive(Debug, Clone, Serialize, EnumIter, PartialEq)]
 pub enum DatabaseTypes{

@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::State,
     routing::{delete, get, patch, post, put},
     Router,
 };
@@ -11,8 +10,8 @@ use crate::{
     error_types::RoutingErrors,
     routes::api_caller::{
         delete_library, get_libraries, get_series_children, get_series_in_library,
-        initiate_database, insert_database_entry, ping_server, request_file, scan_all_directories,
-        scan_for_metadata, update_database_entry,
+        initiate_database, insert_database_entry, ping_server, request_file, retrieve_metadata,
+        scan_all_directories, scan_for_metadata, update_database_entry,
     },
 };
 use tokio::net::TcpListener;
@@ -47,8 +46,8 @@ pub fn set_up_routes() -> Router<Arc<Database>> {
     Router::new()
         .route("/health", get(ping_server))
         .route("/get_libraries", get(get_libraries))
-        .route("/get_series_from_library", get(get_series_in_library))
-        .route("/get_series_children", get(get_series_children))
+        .route("/get_series_from_library/:id", get(get_series_in_library))
+        .route("/get_series_children/:id", get(get_series_children))
         .route("/update_entry", put(update_database_entry))
         .route("/insert_entry", post(insert_database_entry))
         .route("/scan_metadata", post(scan_for_metadata))
@@ -56,12 +55,13 @@ pub fn set_up_routes() -> Router<Arc<Database>> {
         .route("/scan_all_directories", post(scan_all_directories))
         .route("/book/:id", get(request_file))
         .route("/delete_library/:id", delete(delete_library))
-        .route("/reading_progress/:id", patch(ping_server))
-        .route("/book_metadata/:id", get(ping_server))
-        .route("/login", get(ping_server))
-    //register
-    //logout
-    //scan single directory
-    //get covers
-    //search
+        .route("/reading_progress/:id", patch(ping_server).get(ping_server))
+        .route("/book_metadata/:id", get(retrieve_metadata))
+        .route("/login", post(ping_server))
+        .route("/register_user", post(ping_server))
+        .route("/log_out", post(ping_server))
+        .route("/scan_directory/:id", post(ping_server))
+        .route("/get_cover/:kind/:id", get(ping_server))
+        .route("/scan/status", get(ping_server))
+        .route("/search", get(ping_server))
 }

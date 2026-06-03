@@ -109,9 +109,34 @@ impl Database {
         T::extract(&conn, id)?.ok_or(DatabaseError::EntryNotFound)
     }
 
-    pub fn get_all_libraries(&self) {
-        //for each library entry convert to metadata format with the extract function and then add it to an array
-        //return said array
+    pub fn get_all_libraries(&self) -> Result<Vec<i64>, DatabaseError> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
+        let mut stmt = conn
+            .prepare("SELECT id FROM library")
+            .map_err(|_| DatabaseError::TaskPreparationFailure)?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, i64>("id"))
+            .map_err(|_| DatabaseError::QueryFailure)?;
+        rows.collect::<Result<Vec<i64>, _>>()
+            .map_err(|_| DatabaseError::NextRowFailure)
+    }
+
+    pub fn get_books_in_series(&self, series_id: i64) -> Result<Vec<i64>, DatabaseError> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
+        let mut stmt = conn
+            .prepare("SELECT id FROM books WHERE series = ?1")
+            .map_err(|_| DatabaseError::TaskPreparationFailure)?;
+        let rows = stmt
+            .query_map(rusqlite::params![series_id], |row| row.get::<_, i64>("id"))
+            .map_err(|_| DatabaseError::QueryFailure)?;
+        rows.collect::<Result<Vec<i64>, _>>()
+            .map_err(|_| DatabaseError::NextRowFailure)
     }
 
     pub fn remove_entry_from_library_elements(

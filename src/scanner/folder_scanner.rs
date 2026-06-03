@@ -17,7 +17,6 @@ use std::{
     sync::Arc,
 };
 use tokio::{fs, sync::Semaphore};
-use tracing_subscriber::registry::Data;
 
 //preloaded regex expressions that can be used without the need to re-create any
 static VOLUME_REGEX: Lazy<Regex> =
