@@ -154,8 +154,6 @@ impl Database {
         Ok(())
     }
 
-    //this function needs another version which checks if the series contain certain information
-    //and then also for the ordering the array should be reversible
     pub fn get_series_entries_in_library(
         &self,
         library_id: i64,
@@ -226,4 +224,3 @@ impl Database {
         Ok(result)
     }
 }
-
