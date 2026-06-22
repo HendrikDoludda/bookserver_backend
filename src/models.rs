@@ -15,7 +15,7 @@ pub struct WithId<T: Serialize> {
 
 // ===========Database models =================
 #[derive(Debug, Clone, Serialize, EnumIter, PartialEq)]
-pub enum DatabaseTypes{
+pub enum DatabaseTypes {
     Books,
     Library,
     LibraryElements,
@@ -23,9 +23,9 @@ pub enum DatabaseTypes{
     Users,
 }
 
-impl DatabaseTypes{
-    pub fn get_table_name(&self) -> &str{
-        match self{
+impl DatabaseTypes {
+    pub fn get_table_name(&self) -> &str {
+        match self {
             DatabaseTypes::Books => "books",
             DatabaseTypes::Library => "library",
             DatabaseTypes::Series => "series",
@@ -34,9 +34,9 @@ impl DatabaseTypes{
         }
     }
 
-    pub fn get_file_path(&self) -> PathBuf{
+    pub fn get_file_path(&self) -> PathBuf {
         let base_path = std::path::Path::new("./data/databases/");
-        if !base_path.exists(){
+        if !base_path.exists() {
             std::fs::create_dir_all(base_path).unwrap();
         }
         base_path.join("app_data.sqlite")
@@ -154,7 +154,6 @@ impl BookLanguage {
     }
 }
 
-
 //============  Book metadata model =================
 #[derive(Debug, Clone, Serialize)]
 pub struct BookMetadata {
@@ -176,7 +175,7 @@ pub struct BookMetadata {
     pub file_size: Option<u64>,
 }
 
-pub enum BookDatabaseColumns{
+pub enum BookDatabaseColumns {
     Title,
     Author,
     CoverImage,
@@ -195,9 +194,9 @@ pub enum BookDatabaseColumns{
     FileSize,
 }
 
-impl AsRef<str> for BookDatabaseColumns{
-    fn as_ref(&self) -> &str{
-        match self{
+impl AsRef<str> for BookDatabaseColumns {
+    fn as_ref(&self) -> &str {
+        match self {
             BookDatabaseColumns::Title => "title",
             BookDatabaseColumns::Author => "author",
             BookDatabaseColumns::CoverImage => "cover_image",
@@ -221,7 +220,7 @@ impl AsRef<str> for BookDatabaseColumns{
 //============  Book series metadata model =================
 
 #[derive(Debug, Clone, Serialize)]
-pub struct BookSeriesMetadata{
+pub struct BookSeriesMetadata {
     pub name: String,
     pub description: Option<String>,
     pub cover_image: Option<String>,
@@ -229,7 +228,7 @@ pub struct BookSeriesMetadata{
     pub end_release_year: Option<i64>,
 }
 
-pub enum SeriesDatabaseColumns{
+pub enum SeriesDatabaseColumns {
     Name,
     Description,
     CoverImage,
@@ -237,9 +236,9 @@ pub enum SeriesDatabaseColumns{
     EndReleaseYear,
 }
 
-impl AsRef<str> for SeriesDatabaseColumns{
-    fn as_ref(&self) -> &str{
-        match self{
+impl AsRef<str> for SeriesDatabaseColumns {
+    fn as_ref(&self) -> &str {
+        match self {
             SeriesDatabaseColumns::Name => "name",
             SeriesDatabaseColumns::Description => "description",
             SeriesDatabaseColumns::CoverImage => "cover_image",
@@ -253,18 +252,18 @@ impl AsRef<str> for SeriesDatabaseColumns{
 #[derive(Debug, Clone, Serialize)]
 pub struct UserMetadata {
     pub username: String,
-    pub passweord_hash: String,
+    pub password_hash: String,
     pub email: Option<String>,
 }
 
-pub enum UserDatabaseColumns{
+pub enum UserDatabaseColumns {
     Username,
     PasswordHash,
     Email,
 }
-impl AsRef<str> for UserDatabaseColumns{
-    fn as_ref(&self) -> &str{
-        match self{
+impl AsRef<str> for UserDatabaseColumns {
+    fn as_ref(&self) -> &str {
+        match self {
             UserDatabaseColumns::Username => "username",
             UserDatabaseColumns::PasswordHash => "password_hash",
             UserDatabaseColumns::Email => "email",
@@ -281,16 +280,16 @@ pub struct LibraryMetadata {
     pub description: Option<String>,
 }
 
-pub enum LibraryDatabaseColumns{
+pub enum LibraryDatabaseColumns {
     Name,
     LibraryType,
     CoverImage,
     Description,
 }
 
-impl AsRef<str> for LibraryDatabaseColumns{
-    fn as_ref(&self) -> &str{
-        match self{
+impl AsRef<str> for LibraryDatabaseColumns {
+    fn as_ref(&self) -> &str {
+        match self {
             LibraryDatabaseColumns::Name => "library_name",
             LibraryDatabaseColumns::LibraryType => "library_type",
             LibraryDatabaseColumns::CoverImage => "cover_image",
@@ -333,19 +332,19 @@ impl From<UserDatabaseColumns> for ColumnSelector {
 
 //============  Series-Library connection model =================
 #[derive(Debug, Clone, Serialize)]
-pub struct SeriesLibraryConnection{
+pub struct SeriesLibraryConnection {
     pub series_id: i64,
     pub library_id: i64,
 }
 
-pub enum SeriesLibraryConnectionDatabaseColumns{
+pub enum SeriesLibraryConnectionDatabaseColumns {
     SeriesId,
     LibraryId,
 }
 
-impl AsRef<str> for SeriesLibraryConnectionDatabaseColumns{
-    fn as_ref(&self) -> &str{
-        match self{
+impl AsRef<str> for SeriesLibraryConnectionDatabaseColumns {
+    fn as_ref(&self) -> &str {
+        match self {
             SeriesLibraryConnectionDatabaseColumns::SeriesId => "series_id",
             SeriesLibraryConnectionDatabaseColumns::LibraryId => "library_id",
         }
@@ -354,15 +353,15 @@ impl AsRef<str> for SeriesLibraryConnectionDatabaseColumns{
 
 //============Parsed Name model =================
 #[derive(Debug, Clone, Serialize)]
-pub struct ParsedName{
+pub struct ParsedName {
     pub title: String,
     pub volume_number: Option<i64>,
     pub chapter_number: Option<i64>,
     pub page_number: Option<i64>,
 }
 
-#[derive(Debug, Clone ,Serialize)]
-pub struct FileExtractedMetadata{
+#[derive(Debug, Clone, Serialize)]
+pub struct FileExtractedMetadata {
     pub file_size: Option<u64>,
     pub modified_date: Option<SystemTime>,
     pub page_number: Option<i32>,
@@ -370,9 +369,9 @@ pub struct FileExtractedMetadata{
     pub author: String,
 }
 
-pub enum DatabaseEntry{
+pub enum DatabaseEntry {
     Book(BookMetadata),
     Library(LibraryMetadata),
     Series(BookSeriesMetadata),
-    User(UserMetadata)
+    User(UserMetadata),
 }

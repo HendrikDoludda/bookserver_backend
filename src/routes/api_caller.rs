@@ -36,14 +36,7 @@ pub async fn get_libraries(
     State(db): State<Arc<Database>>,
 ) -> Result<Json<Vec<WithId<LibraryMetadata>>>, DatabaseError> {
     let ids = db.get_all_libraries()?;
-
-    let mut libraries = Vec::with_capacity(ids.len());
-    for id in ids {
-        libraries.push(WithId {
-            id,
-            data: db.get_entry::<LibraryMetadata>(id)?,
-        });
-    }
+    let libraries = db.get_entries_batch::<LibraryMetadata>(&ids)?;
 
     Ok(Json(libraries))
 }
@@ -54,14 +47,7 @@ pub async fn get_series_in_library(
     Path(library_id): Path<i64>,
 ) -> Result<Json<Vec<WithId<BookSeriesMetadata>>>, DatabaseError> {
     let series_ids = db.get_series_entries_in_library(library_id)?;
-
-    let mut series = Vec::with_capacity(series_ids.len());
-    for id in series_ids {
-        series.push(WithId {
-            id,
-            data: db.get_entry::<BookSeriesMetadata>(id)?,
-        });
-    }
+    let series = db.get_entries_batch::<BookSeriesMetadata>(&series_ids)?;
 
     Ok(Json(series))
 }
@@ -72,14 +58,7 @@ pub async fn get_series_children(
     Path(series_id): Path<i64>,
 ) -> Result<Json<Vec<WithId<BookMetadata>>>, DatabaseError> {
     let book_ids = db.get_books_in_series(series_id)?;
-
-    let mut books = Vec::with_capacity(book_ids.len());
-    for id in book_ids {
-        books.push(WithId {
-            id,
-            data: db.get_entry::<BookMetadata>(id)?,
-        });
-    }
+    let books = db.get_entries_batch::<BookMetadata>(&book_ids)?;
 
     Ok(Json(books))
 }

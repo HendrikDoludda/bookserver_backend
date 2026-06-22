@@ -155,7 +155,7 @@ impl Extract for UserMetadata {
     fn from_row(row: &Row) -> rusqlite::Result<Self> {
         Ok(Self {
             username: row.get(1)?,
-            passweord_hash: row.get(2)?,
+            password_hash: row.get(2)?,
             email: row.get(3)?,
         })
     }

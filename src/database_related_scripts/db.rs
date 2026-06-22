@@ -5,6 +5,8 @@ use crate::database_related_scripts::migrations;
 use crate::error_types::DatabaseError;
 use crate::models::ColumnSelector;
 use crate::models::DatabaseTypes;
+use crate::models::WithId;
+use serde::Serialize;
 use r2d2::{ManageConnection, Pool};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Connection, Result, ToSql};
@@ -107,6 +109,19 @@ impl Database {
             .get()
             .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
         T::extract(&conn, id)?.ok_or(DatabaseError::EntryNotFound)
+    }
+
+    // Fetch many rows by id in a single query, each paired with its id.
+    // Returns an empty Vec for an empty id list (no query is run).
+    pub fn get_entries_batch<T>(&self, ids: &[i64]) -> Result<Vec<WithId<T>>, DatabaseError>
+    where
+        T: Extract + Serialize,
+    {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
+        T::extract_batch(&conn, ids)
     }
 
     pub fn get_all_libraries(&self) -> Result<Vec<i64>, DatabaseError> {

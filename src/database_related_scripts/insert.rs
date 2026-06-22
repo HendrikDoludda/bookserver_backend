@@ -114,7 +114,7 @@ impl Insert for UserMetadata {
 
         let params = params![
             self.username.clone(),
-            self.passweord_hash.clone(),
+            self.password_hash.clone(),
             self.email.clone()
         ];
 
