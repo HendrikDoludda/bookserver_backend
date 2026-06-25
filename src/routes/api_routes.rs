@@ -43,8 +43,7 @@ PUT/PATCH → update
 DELETE → delete
 */
 pub fn set_up_routes() -> Router<Arc<Database>> {
-    Router::new()
-        .route("/health", get(ping_server))
+    let api = Router::new()
         .route("/get_libraries", get(get_libraries))
         .route("/get_series_from_library/:id", get(get_series_in_library))
         .route("/get_series_children/:id", get(get_series_children))
@@ -63,5 +62,9 @@ pub fn set_up_routes() -> Router<Arc<Database>> {
         .route("/scan_directory/:id", post(ping_server))
         .route("/get_cover/:kind/:id", get(ping_server))
         .route("/scan/status", get(ping_server))
-        .route("/search", get(ping_server))
+        .route("/search", get(ping_server));
+
+    Router::new()
+        .route("/health", get(ping_server))
+        .nest("/api/v1", api)
 }

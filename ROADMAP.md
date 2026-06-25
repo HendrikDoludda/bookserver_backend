@@ -18,21 +18,75 @@ broken. Keep business logic in the backend, not in either UI.
 
 ---
 
+## Priority order (build sequence)
+
+Ordered by **dependency**, not feature count — most of the list is blocked behind a
+few foundational pieces.
+
+**Gating rule:** finish *every* item in a tier before moving to the next. One thing in
+front of you at a time; no skipping ahead.
+
+Two parallel tracks, each gated internally:
+- **Backend ladder** — Tiers 0 → 4, in order.
+- **Frontend track** — *opens* once backend Tier 1 is done, then grows as each later
+  backend tier lands (a frontend screen can't precede the API it calls).
+
+### Backend ladder
+
+**Tier 0 — tiny unblockers (each small, high leverage):** ✅ complete
+1. Add `Deserialize` to models (§6) — one derive per struct; unblocks the stubbed
+   `insert_entry` / `update_entry` handlers → unblocks create/edit (§1).
+2. API prefix `/api/v1/...` (§6) — trivial now, painful after the frontend couples to it.
+3. Correct HTTP status codes — `EntryNotFound` → 404 (§6).
+
+**Tier 1 — foundation that gates everything per-user:**
+4. Auth & users (§3) — the keystone. Biggest single piece; unlocks the most.
+   *Dependency note (not tasks here):* read state (§2), uploads (§4), sensitive
+   content (§9) and the admin UI (§5, built in Tier 4) all wait on this.
+5. 2FA (§3a) — *only after #4 works*; it extends the login flow that #4 builds.
+   Learning project; **TOTP** (authenticator app) + recovery codes.
+
+**Tier 2 — complete core CRUD (fulfils the guiding principle):**
+6. Create/update libraries & series (§1) — unblocked by Tier 0 #1.
+7. Scannable-directories table replacing `BOOK_DIRS` (§1).
+
+**Tier 3 — makes it feel like a product:**
+8. Per-user read state + "continue reading" (§2) — needs auth.
+9. Search / FTS5 (§10) — route stub exists; mostly self-contained.
+10. Sorting + pagination (§6) — backend support §10 filters depend on.
+
+**Tier 4 — later:** uploads → admin UI (§5) → theming → metadata enrichment →
+sensitive content. **Phase 2 (video, documents, PDF tooling) is parked — out of focus.**
+
+### Frontend track (opens after backend Tier 1)
+
+- **F1 — Browse & read** (start here): library/series/book browsing + the reader,
+  built against the already-live `get_libraries` / `get_series_*` / `request_file`
+  endpoints, plus the login flow from Tier 1. Read-only — no management screens yet.
+- **F2 — Management** (after backend Tier 2): create/edit libraries & series, manage
+  scannable directories.
+- **F3 — Read-state & discovery** (after backend Tier 3): "continue reading",
+  read/unread indicators, search, sort/filter.
+
+---
+
 ## Phase 1 — Core (v1 "complete")
 
 ### 1. Library & directory management
 - 🟡 Scan a directory for supported files **[BE]** — `scan_all_folders` works; `POST /scan_all_directories` live
 - ⬜ Incremental scanning — skip unchanged files using stored `file_hash` + `last_modified` **[BE]**
 - ⬜ Scannable-directories table to replace the `BOOK_DIRS` env var **[DB][BE]** (code already has a TODO for this)
-- ⬜ Add / remove scannable directories via API **[BE]**
+- ⬜ Add / remove scannable directories via API **[BE]** — `POST /scan_directory/:id` + `GET /scan/status` route stubs exist (placeholder handlers)
 - ⬜ Add / remove directories from the frontend **[FE]**
 - ⬜ Create a library and assign specific series to it **[BE][FE]** (`insert_entry`/`update_entry` currently stubbed)
 - 🟡 Edit / delete libraries & series from both UIs **[BE][FE]** — `DELETE /delete_library/:id` done; create/update pending
 - 🟡 Per-format support (PDF / EPUB / CBZ / images) **[BE]** — scan + cover extraction implemented; **EPUB covers untested**
 - ⬜ Series & library covers user-definable; default to the first entry's image **[BE][FE]**
+- ⬜ Serve cover images via API **[BE]** — `GET /get_cover/:kind/:id` route stub exists (placeholder handler)
 
 ### 2. Reading
 - 🟡 Stream / serve files with HTTP range requests **[BE]** — `stream_reader` + `GET /book/:id` live
+- ✅ Single-book metadata endpoint — `GET /book_metadata/:id` live **[BE]**
 - ⬜ Per-user read state — current page/locator + finished flag **[DB][BE][FE]**
 - ⬜ "Continue reading" surface **[BE][FE]**
 - ⬜ Per-user "plan to read" list **[DB][BE][FE]**
@@ -52,10 +106,63 @@ Tasks:
 - ⬜ Password hashing helpers (argon2) **[BE]**
 - ⬜ Session create / lookup / delete + token generation **[BE]**
 - ⬜ `AuthUser` request extractor (reads token → loads user, or 401) **[BE]**
-- ⬜ Endpoints: login, logout, admin-only create-user **[BE][FE]**
+- ⬜ Endpoints: login, logout, admin-only create-user **[BE][FE]** — route skeletons (`POST /login`, `/log_out`, `/register_user`) already wired to a placeholder handler
 - ⬜ Bootstrap the first admin on startup **[BE]**
 - ⬜ Roles enforced (admin vs member) on protected routes **[BE]**
 - ⬜ Per-user settings **[DB][BE][FE]**
+
+#### 3a. Two-factor auth (2FA) — *learning project; build AFTER core auth above works*
+
+**What kind (DECIDED):** **TOTP** (authenticator-app) on top of normal password auth —
+*not* email/SMS delivery. Chosen because there's no delivery service to run (no SMTP, no
+Twilio, no cost), it works offline, and it's more secure than SMS. The shared secret +
+the current time produce the same 6-digit code on both phone and server independently.
+Rust crate: `totp-rs` (secret generation, `otpauth://` URI + QR, skew-tolerant verify).
+
+**Enrollment flow:**
+1. In settings, user starts enrollment. Backend generates a random secret and returns it
+   as a QR code (`otpauth://` URI); 2FA stays **disabled / pending**.
+2. User scans it into their authenticator app and types back the code it currently shows.
+3. Backend verifies that live code against the secret → on success, store the secret
+   (`authentication` table), set `users.totp_enabled = true`, and issue **recovery codes**.
+4. If they never confirm → the pending secret is discarded; 2FA stays disabled.
+
+**Login flow:** password verified **and** current TOTP code verified in the *same* step
+(no second round-trip — nothing to send). On success, issue the session + refresh tokens.
+A valid **recovery code** can stand in for the TOTP code if the device is lost.
+
+**Data model (schema already drafted in `0001_initial_schema.sql`):**
+- 🟡 `users.totp_enabled` flag **[DB]**
+- 🟡 `authentication` table — holds the per-user TOTP `authentication_secret` **[DB]**
+  *(consider `UNIQUE(user_id)` — one secret per user)*
+- 🟡 `recovery_codes` table — `code_hash`, `used` **[DB]**
+- 🟡 `sessions` table — **access + refresh token split**: `session_token_hashed` (short-lived)
+  + `refresh_token_hashed` (longer-lived, sliding expiry, refreshed on use) **[DB]**
+
+**Tasks:**
+- ⬜ Secret generation + QR/`otpauth` URI (via `totp-rs`) **[BE]**
+- ⬜ Skew-tolerant code verification (±1 time step) **[BE]**
+- ⬜ Recovery-code generation + hashed storage + single-use redemption **[BE]**
+- ⬜ Enrollment endpoints: start (returns QR) + confirm (verify live code) **[BE][FE]**
+- ⬜ Login: verify password + TOTP (or recovery code) together → issue tokens **[BE][FE]**
+- ⬜ Refresh-token endpoint: exchange a valid refresh token for a new session token **[BE]**
+- ⬜ Disable-2FA endpoint (re-auth required) **[BE][FE]**
+- ⬜ Settings UI: enable (QR + confirm) / disable; show recovery codes once **[FE]**
+
+**Security must-haves (the real learning content):**
+- ⬜ **Protect the secret at rest** — a leaked `authentication_secret` lets an attacker
+  generate valid codes forever; it's as sensitive as a password hash. Decide plaintext
+  vs encrypted-at-rest **[BE]**
+- ⬜ **Verify attempt rate-limit** — a 6-digit code is only 1,000,000 combos; throttle/lock
+  after N wrong tries or it's brute-forceable **[BE]**
+- ⬜ **Replay protection (optional)** — track the last-used time step so the same code
+  can't be reused within its 30s window **[BE]**
+- ⬜ **Recovery path** — lose your phone → recovery codes (or admin reset) or you *will*
+  lock yourself out **[BE][FE]**
+
+**Open decisions:**
+- TOTP secret stored plaintext vs encrypted at rest (see above).
+- `authentication` table: add `UNIQUE(user_id)` if it's strictly one secret per user.
 
 ### 4. Uploads / file ingestion
 - ⬜ Upload endpoint that writes the file to the correct series folder on disk **[BE]**
@@ -68,10 +175,10 @@ Tasks:
 - ⬜ Manage libraries / series / directories / users / scans from it **[FE]**
 
 ### 6. Cross-cutting backend polish
-- ⬜ Add `Deserialize` to models so write endpoints can parse request bodies **[BE]**
-- ⬜ Correct HTTP status codes — `EntryNotFound` → 404, not 500 **[BE]**
+- ✅ Add `Deserialize` to models so write endpoints can parse request bodies **[BE]**
+- ✅ Correct HTTP status codes — `EntryNotFound` → 404, not 500 **[BE]** (5xx details logged, generic body to client)
 - ⬜ Sorting + pagination on list endpoints **[BE]**
-- ⬜ API prefix / versioning (`/api/v1/...`) before the frontend couples to it **[BE]**
+- ✅ API prefix / versioning (`/api/v1/...`) before the frontend couples to it **[BE]** — all routes nested under `/api/v1`; `/health` left at root
 - ⬜ Testing strategy — unit-test the DB layer (extract / insert / batch), validate EPUB covers **[BE]** *(new territory — plan to learn Rust testing together, walking through the first few)*
 - ✅ Batched list queries (no N+1) **[BE]**
 - ✅ `main` wired to router with clean error handling **[BE]**
@@ -108,7 +215,7 @@ Admins can mark a library or series as sensitive, which changes its behaviour.
 - ⬜ Extra protections (pick later): hidden from default views / explicit opt-in, optional per-user visibility, blurred covers, optional PIN or re-auth to open **[BE][FE]**
 
 ### 10. Browsing, search & discovery
-- ⬜ Search across titles / authors / tags (SQLite FTS5) **[BE][FE]** — `/search` route stub already exists
+- ⬜ Search across titles / authors / tags (SQLite FTS5) **[BE][FE]** — `GET /search` route stub already exists (placeholder handler)
 - ⬜ A–Z fast-scroll bar — clickable letters/numbers down the side jump to series starting with that character; letters with no matches are greyed out and non-interactable **[FE]** (greying is computable client-side from the series list)
 - ⬜ Filters: completed / not-completed (uses read state §2), by tag, by author **[BE][FE]**
 - ⬜ Sorting controls — title, recently added, volume number, etc. **[BE][FE]** (backend support tracked in §6)
@@ -177,6 +284,7 @@ the *only* thing that would need a CRDT.
 - ⬜ Create new documents in-app **[FE][BE]**
 - ⬜ Escape hatch (only if ever needed): true offline-concurrent / same-node auto-merge → a CRDT lib (`yrs` / `automerge`), or hand-rolled WOOT/RGA-style as a learning exercise **[BE][FE]**
 - ⬜ Later: **Office formats** (docx/xlsx/pptx) — zipped XML trees, so deltas are XML-tree mutations, not text → meaningfully more work **[BE][FE]**
+  - *Idea (not committed):* reuse the v1 op-store as a neutral intermediate model instead of editing the zip in place. Confine XML-tree surgery to two boundaries — **import** (docx → node list, assign ids to paragraphs/runs/cells) and **materialize/export** (replay ops → XML → rezip, only on explicit save). Inserted assets (images) live in the op as a blob and only get wired into `word/media/` + rels + `<w:drawing>` at export. Tradeoff: import/export is **lossy** for formatting the importer doesn't model — "edit a docx" ≠ "round-trip a docx perfectly". Fidelity-preserving overlay (anchor ids onto untouched original XML) is the later escape hatch.
 
 ### PDF tooling
 - ⬜ Comments + highlighting, per user **[DB][BE][FE]**

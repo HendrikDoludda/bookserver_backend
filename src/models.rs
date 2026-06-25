@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, time::SystemTime};
 use strum_macros::EnumIter;
 
@@ -6,7 +6,7 @@ use strum_macros::EnumIter;
 // Metadata structs don't store their own row id, but list endpoints need it so
 // the client can drill down (e.g. fetch a library's series). This pairs the id
 // with the metadata and flattens both into a single JSON object.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WithId<T: Serialize> {
     pub id: i64,
     #[serde(flatten)]
@@ -14,7 +14,7 @@ pub struct WithId<T: Serialize> {
 }
 
 // ===========Database models =================
-#[derive(Debug, Clone, Serialize, EnumIter, PartialEq)]
+#[derive(Debug, Clone, Serialize, EnumIter, PartialEq, Deserialize)]
 pub enum DatabaseTypes {
     Books,
     Library,
@@ -44,7 +44,7 @@ impl DatabaseTypes {
 }
 
 //============  Library model =================
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LibraryType {
     Books,
     Comics,
@@ -75,7 +75,7 @@ impl LibraryType {
 }
 
 //============  Book format model =================
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BookFormat {
     Pdf,
     Epub,
@@ -107,7 +107,7 @@ impl BookFormat {
 
 //============  Book language model =================
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BookLanguage {
     English,
     German,
@@ -155,7 +155,7 @@ impl BookLanguage {
 }
 
 //============  Book metadata model =================
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BookMetadata {
     pub title: String,
     pub author: String,
@@ -219,7 +219,7 @@ impl AsRef<str> for BookDatabaseColumns {
 
 //============  Book series metadata model =================
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BookSeriesMetadata {
     pub name: String,
     pub description: Option<String>,
@@ -249,7 +249,7 @@ impl AsRef<str> for SeriesDatabaseColumns {
 }
 
 //============  User metadata model =================
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserMetadata {
     pub username: String,
     pub password_hash: String,
@@ -272,7 +272,7 @@ impl AsRef<str> for UserDatabaseColumns {
 }
 
 //============  Library metadata model =================
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LibraryMetadata {
     pub name: String,
     pub library_type: LibraryType,
@@ -331,7 +331,7 @@ impl From<UserDatabaseColumns> for ColumnSelector {
 }
 
 //============  Series-Library connection model =================
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeriesLibraryConnection {
     pub series_id: i64,
     pub library_id: i64,
@@ -352,7 +352,7 @@ impl AsRef<str> for SeriesLibraryConnectionDatabaseColumns {
 }
 
 //============Parsed Name model =================
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedName {
     pub title: String,
     pub volume_number: Option<i64>,
@@ -360,7 +360,7 @@ pub struct ParsedName {
     pub page_number: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileExtractedMetadata {
     pub file_size: Option<u64>,
     pub modified_date: Option<SystemTime>,

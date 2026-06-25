@@ -64,11 +64,17 @@ pub enum DatabaseError {
 
 impl IntoResponse for DatabaseError {
     fn into_response(self) -> Response<Body> {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Database error: {:?}", self),
-        )
-            .into_response()
+        let status = match self {
+            DatabaseError::EntryNotFound => StatusCode::NOT_FOUND,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        let body = if status.is_server_error() {
+            tracing::error!("database error: {self}");
+            "Internal server error".to_string()
+        } else {
+            self.to_string()
+        };
+        (status, body).into_response()
     }
 }
 
