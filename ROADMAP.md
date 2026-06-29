@@ -54,15 +54,26 @@ Two parallel tracks, each gated internally:
 8. Per-user read state + "continue reading" (§2) — needs auth.
 9. Search / FTS5 (§10) — route stub exists; mostly self-contained.
 10. Sorting + pagination (§6) — backend support §10 filters depend on.
+11. Metadata enrichment for books / manga / comics (§8) — online providers routed by
+    library type; scaffolding (`scan_metadata` stub + `metadata_fetcher.rs`) already exists.
 
-**Tier 4 — later:** uploads → admin UI (§5) → theming → metadata enrichment →
-sensitive content. **Phase 2 (video, documents, PDF tooling) is parked — out of focus.**
+**Tier 4 — later:** uploads → admin UI (§5) → theming → sensitive content.
+
+**Phase 2 (parked — out of focus):** video, documents, PDF tooling — and, as a *separate*
+item, **video metadata enhancement** (TMDB / TVDB-style enrichment for the video library).
+Kept distinct from #11 because video needs different providers *and* depends on the
+video feature (Phase 2 → Video) existing first.
 
 ### Frontend track (opens after backend Tier 1)
 
+- **F0 — i18n backend (do right after Tier 1, before F1):** build the §12 catalog +
+  `GET /i18n/:locale` (+ section scoping + version/ETag) so the frontend can wire
+  `t("key")` against a *real* endpoint from its first screen. Backend-only; small. **[BE]**
 - **F1 — Browse & read** (start here): library/series/book browsing + the reader,
   built against the already-live `get_libraries` / `get_series_*` / `request_file`
   endpoints, plus the login flow from Tier 1. Read-only — no management screens yet.
+  *Wire i18n from the first screen (§12) — `t("key")` everywhere, even English-only;
+  adding languages later is then just catalog edits, not a rework.*
 - **F2 — Management** (after backend Tier 2): create/edit libraries & series, manage
   scannable directories.
 - **F3 — Read-state & discovery** (after backend Tier 3): "continue reading",
@@ -170,9 +181,67 @@ A valid **recovery code** can stand in for the TOTP code if the device is lost.
 - ⬜ "Where to store this + metadata" dialog on upload **[FE]**
 - ⬜ Post-upload pipeline: create DB entry + extract cover + hash **[BE]** (reuse the scanner pipeline)
 
+**Upload dialog — fields by content type:**
+- **Video** — a *kind* dropdown: `movie` / `series` / `original`.
+  - `movie` and `original`: no extra fields.
+  - `series`: **series**, **season**, **episode** fields.
+- **Books / comics** — **series** field, plus **volume** and **chapter** (chapter only
+  matters when the thing being uploaded is a chapter, not a whole volume).
+
+**Bulk upload (DECIDED — global defaults + per-file override):**
+- ⬜ Accept multiple files and ingest them **sequentially** (one after the other) **[BE][FE]**
+- ⬜ **Global fields at the top** of the batch — series/title, season, starting-episode
+  (books: series, volume, starting-chapter). Each is **optional**. **[FE]**
+- ⬜ **Per-file rows**, each individually editable to override the globals **[FE]**
+- ⬜ **Per-field resolution cascade** (highest wins): **per-file manual edit → global field
+  (only if filled) → value parsed from the filename → empty** **[BE][FE]**
+  - Leaving a global field **empty** = fall through to the filename for that field. So a
+    well-named season folder just needs the series title set (or nothing); its season/episode
+    come straight from the filenames.
+  - Setting a global season + starting-episode **overrides** and **auto-increments** across
+    the batch — files ordered by **natural sort** (`ep2` before `ep10`).
+- ⬜ **Mandatory preview/confirm step** before anything touches disk — show each file's
+  *resolved* season/episode/title **and target path/name** so a wrong global increment or a
+  naming mismatch is caught and fixed inline **[FE]**
+- *"title" by context:* series batch → global title = **series name**, per-file title =
+  **episode name**; movies batch → each file's title = the **movie name**.
+- ⬜ **Collision policy (DECIDED): auto-rename** when a resolved name already exists on
+  disk, and **notify the uploader by email** that the file was renamed **[BE]**
+  - *Reintroduces an email dependency* (SMTP, e.g. Rust `lettre`) — not needed for TOTP
+    auth, but needed here for the rename notification. Sends to the user's `users.email`.
+  - **Rename scheme (DECIDED): timestamp** suffix. Must still parse cleanly back through
+    the scanner's filename regex (see round-trip constraint below).
+- ⬜ **Insufficient-storage policy (DECIDED): pre-flight free-space check** — if the drive
+  can't hold the file, **drop the upload** (don't write a partial file) and **notify the
+  user by email** **[BE]**
+  - Check *before* writing so nothing half-lands. In a bulk batch, drop the offending file
+    and report it; the rest of the batch is unaffected (sequential ingest).
+
+**Library-type drives the default mode:** libraries are typed (series vs movies, books vs
+comics), so the dialog defaults to the right field set. A *movies* library doesn't auto-fill
+series/episode at all — "clear series info" is just an escape hatch, not the common path.
+
+**Series field behaviour (applies to both the video-series and book/comic-series fields):**
+- ⬜ **Auto-complete** against existing series **[BE][FE]** (needs a series-lookup/search endpoint)
+- ⬜ **Create a new series inline** — if the typed name isn't found, offer to create it **[BE][FE]**
+- ⬜ On new-series creation, **ask where it should live** (which scannable root) **[FE]** —
+  depends on the scannable-directories table (§1, Tier 2)
+- ⬜ Backend then **creates the folder in the correct structure + location and names
+  everything per the convention** **[BE]**
+
+> ⚠️ **Round-trip constraint:** the names/paths the uploader generates MUST match what the
+> scanner's filename parser (`folder_scanner.rs` volume/chapter/page regex) expects to read
+> back — otherwise a re-scan won't recognise uploaded files. Treat the naming convention as a
+> single shared spec between upload (write) and scan (read).
+
 ### 5. Backend web view (admin UI)
 - ⬜ Serve an admin web UI from the backend **[BE][FE]**
 - ⬜ Manage libraries / series / directories / users / scans from it **[FE]**
+- ⬜ **Language select in the admin UI too** (§12) — same i18n discipline from the start:
+  wrap text in `t("key")` when this UI is first built, so it's localizable like the main
+  app **[FE]**
+  - *Resolved:* the admin UI fetches from the **same backend-owned catalog** as the main app
+    (§12) — one source of truth, no separate locale files. Both clients just call the i18n API.
 
 ### 6. Cross-cutting backend polish
 - ✅ Add `Deserialize` to models so write endpoints can parse request bodies **[BE]**
@@ -238,6 +307,56 @@ server is ever exposed directly to the open internet.
 - ⬜ File reconciliation — a scan prunes/flags DB rows whose files were moved or deleted on disk **[BE]** (data integrity, not security)
 - ⬜ Deployment / packaging: Windows `.exe`, macOS `.dmg`, Docker image; persistent volume for the SQLite DB + covers **[BE]**
 
+
+### 12. Language options (i18n / localization)
+Goal: users pick a display language; adding a new language never forces a rework.
+
+**Architecture (DECIDED): backend-owned catalog, served over the API.** One catalog lives in
+the backend (single source of truth); both frontends (main app + admin UI §5) fetch strings
+via an API call rather than bundling their own locale files. Fits "changeable from both
+sides" — and since it's *data in the backend*, translations can be edited from the admin UI,
+and the §4 notification **emails localize for free** (backend already has the catalog + the
+user's locale; no separate email catalog needed).
+
+- ⬜ Catalog stored backend-side, keyed by **key** (never by English string), per locale,
+  and grouped into **namespaces/sections** (e.g. `settings`, `library`, `options`, `reader`) **[BE]**
+- ⬜ `GET /i18n/:locale` endpoint returning that locale's strings **[BE]**
+- ⬜ **Section-scoped retrieval** — a screen can request just the namespaces it needs in the
+  chosen language in one call (e.g. `GET /i18n/:locale?sections=settings,library,options`),
+  instead of pulling unrelated strings **[BE]**
+
+**Retrieval strategy (DECIDED):** the **default is to fetch the whole catalog for the chosen
+locale once, cache it locally, and re-check periodically** (e.g. daily, or on app start) via
+the version/ETag below — so normal use is a local lookup with no per-screen round-trips. The
+section-scoped call above is the fallback for the rare case a screen needs strings not yet
+cached.
+- ⬜ A `t("some.key")` lookup used everywhere instead of literal UI text **[FE]**
+- ⬜ **Fallback locale** — a missing key falls back to the default (English), so a
+  half-translated language still works **[BE][FE]**
+- ⬜ **Pluralization + interpolation** handled (`"{count} unread"`; plural rules differ per
+  language) — the two classic i18n gotchas **[FE]**
+- ⬜ **Per-user language preference** stored on the user (ties into §3 "Per-user settings");
+  fall back to browser/OS locale, then default, when not logged in **[DB][BE][FE]**
+
+**Must-haves for the served-catalog approach (the cost of not bundling files):**
+- ⬜ **Client-side cache + bundled fallback** — the app needs strings before first paint and
+  must work offline (§2 offline reading). Cache the fetched catalog locally and ship at least
+  the default language baked in, so a cold/offline start still renders **[FE]**
+- ⬜ **Versioned fetch (ETag / version number)** so clients only re-download when the catalog
+  changed, not on every load **[BE][FE]**
+- ⬜ **Runtime-loadable lookup** — most i18n libs expect files at *build* time; serving at
+  runtime means loading JSON into a map + lookup (or a package that supports remote loading,
+  esp. on Flutter) **[FE]**
+
+> **Timing — start the *structure* at F1, not the translations.** Retrofitting i18n into a
+> frontend full of hardcoded strings is exactly the "complete rework" to avoid. So wrap UI
+> text in `t("key")` from the first screen even while only English exists; adding languages
+> then becomes catalog edits. The *architecture* is a day-one decision; the *translations*
+> are low-priority polish for whenever. (Same lesson as the `/api/v1` prefix.)
+
+> *Scope:* this system translates **UI chrome** ("Continue reading"). Library/series names and
+> descriptions are **user data**, not UI text, so they aren't translated by it.
+
 ---
 
 ## Phase 2 — Future ("complete home-server" ambitions)
@@ -257,6 +376,9 @@ files). Two front doors over HTTP:
 - ⬜ Direct-play video streaming over the REST API (range support) **[BE]**
 - ⬜ Capable in-app video player (e.g. Flutter `media_kit`, bundles ffmpeg) **[FE]**
 - ⬜ WebDAV endpoint exposing the video library for Infuse **[BE]** (basic-auth; protected by Tailscale when remote)
+- ⬜ Video metadata enhancement — TMDB / TVDB-style enrichment (posters, synopsis, cast,
+  episode/season data) **[BE][FE]** — separate from §8 (different providers, movie/show data
+  model); reuse §8's `MetadataProvider` abstraction routed by content type
 - Per-device scope: Apple TV (Infuse) needs **video only** — no document/book reader there.
 - **Out of scope:** server-side transcoding (clients decode on-device); a custom tvOS app (use Infuse instead — Flutter doesn't target tvOS anyway).
 

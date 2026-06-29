@@ -53,10 +53,19 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
+    email_verified BOOLEAN NOT NULL DEFAULT FALSE,
     is_admin BOOLEAN NOT NULL DEFAULT FALSE,
     totp_enabled BOOLEAN DEFAULT FALSE,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_login DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS email_verification (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    email_verification_token TEXT NOT NULL UNIQUE,
+    expire_token DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    invalidated BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 
