@@ -1,10 +1,13 @@
-use crate::{models::{
-    BookDatabaseColumns, BookMetadata, BookSeriesMetadata, LibraryDatabaseColumns, LibraryMetadata, SeriesDatabaseColumns, UserDatabaseColumns, UserMetadata
-}};
-use rusqlite::{Connection, ToSql, params};
 use crate::error_types::DatabaseError;
+use crate::models::{
+    BookDatabaseColumns, BookMetadata, BookSeriesMetadata, EmailVerification,
+    EmailVerificationDatabaseColumns, LibraryDatabaseColumns, LibraryMetadata, RecoveryCodes,
+    RecoveryCodesColumns, SeriesDatabaseColumns, Sessions, SessionsDatabaseColumns,
+    TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, TOTP,
+};
+use rusqlite::{params, Connection, ToSql};
 
-pub trait Update{
+pub trait Update {
     type Column: AsRef<str>;
 
     const TABLE: &'static str;
@@ -15,8 +18,10 @@ pub trait Update{
         column: Self::Column,
         new_value: T,
         id: i64,
-    ) -> Result<(), DatabaseError> 
-    where T: ToSql{
+    ) -> Result<(), DatabaseError>
+    where
+        T: ToSql,
+    {
         let query = format!(
             "UPDATE {} SET {} = ?1 WHERE id = ?2",
             Self::TABLE,
@@ -36,7 +41,7 @@ impl Update for BookMetadata {
 }
 
 impl Update for BookSeriesMetadata {
-   type Column = SeriesDatabaseColumns;
+    type Column = SeriesDatabaseColumns;
     const TABLE: &'static str = "series";
 }
 
@@ -48,4 +53,24 @@ impl Update for LibraryMetadata {
 impl Update for UserMetadata {
     type Column = UserDatabaseColumns;
     const TABLE: &'static str = "users";
+}
+
+impl Update for EmailVerification {
+    type Column = EmailVerificationDatabaseColumns;
+    const TABLE: &'static str = "email_verification";
+}
+
+impl Update for Sessions {
+    type Column = SessionsDatabaseColumns;
+    const TABLE: &'static str = "sessions";
+}
+
+impl Update for RecoveryCodes {
+    type Column = RecoveryCodesColumns;
+    const TABLE: &'static str = "recovery_codes";
+}
+
+impl Update for TOTP {
+    type Column = TOTPDatabaseColumns;
+    const TABLE: &'static str = "totp";
 }

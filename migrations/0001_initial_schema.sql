@@ -55,17 +55,16 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT NOT NULL UNIQUE,
     email_verified BOOLEAN NOT NULL DEFAULT FALSE,
     is_admin BOOLEAN NOT NULL DEFAULT FALSE,
-    totp_enabled BOOLEAN DEFAULT FALSE,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_login DATETIME
 );
 
 CREATE TABLE IF NOT EXISTS email_verification (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
+    user_id INTEGER PRIMARY KEY,
     email_verification_token TEXT NOT NULL UNIQUE,
-    expire_token DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    invalidated BOOLEAN NOT NULL DEFAULT FALSE
+    expires_at DATETIME NOT NULL,
+    invalidated BOOLEAN NOT NULL DEFAULT FALSE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 
@@ -74,7 +73,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_id INTEGER NOT NULL,
     refresh_token_hashed TEXT NOT NULL UNIQUE,
     refresh_token_valid_until DATETIME NOT NULL,
-    session_token_hashed TEXT NOT NULL UNIQUE,
+    session_token_hashed TEXT NOT NULL,
     session_token_valid_until DATETIME NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_used_at DATETIME,
@@ -89,9 +88,8 @@ CREATE TABLE IF NOT EXISTS recovery_codes (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS authentication (
-    authentication_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
+CREATE TABLE IF NOT EXISTS totp (
+    user_id INTEGER PRIMARY KEY,
     authentication_secret TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE

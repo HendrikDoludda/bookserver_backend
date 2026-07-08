@@ -1,8 +1,10 @@
 use crate::error_types::DatabaseError;
 use crate::models::{
-    BookMetadata, BookSeriesMetadata, LibraryMetadata, SeriesLibraryConnection, UserMetadata,
+    BookMetadata, BookSeriesMetadata, EmailVerification, LibraryMetadata, RecoveryCodes,
+    SeriesLibraryConnection, Sessions, UserMetadata, TOTP,
 };
 use rusqlite::{params, Connection};
+use std::time::SystemTime;
 
 pub trait Insert {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError>;
@@ -43,8 +45,7 @@ impl Insert for BookMetadata {
             self.chapter_number,
             self.page_number,
             self.file_hash.clone(),
-            self.last_modified
-                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64),
+            convert_system_time_to_unix_time(self.last_modified.unwrap()),
             self.file_size.map(|size| size as i64),
             self.series
         ];
@@ -139,4 +140,81 @@ impl Insert for SeriesLibraryConnection {
         let id = conn.last_insert_rowid();
         Ok(id)
     }
+}
+
+impl Insert for EmailVerification {
+    fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
+        let query = "INSERT INTO email_verification (user_id, email_verification_token, expires_at, invalidated) VALUES (?1, ?2, ?3, ?4)";
+        let expired_time = convert_system_time_to_unix_time(self.expiration_date);
+        let params = params![
+            self.user_id,
+            self.verification_token.clone(),
+            expired_time,
+            self.invalidated
+        ];
+
+        conn.execute(query, params)
+            .map_err(|_| DatabaseError::InsertionFailure)?;
+        let id = conn.last_insert_rowid();
+        Ok(id)
+    }
+}
+
+impl Insert for Sessions {
+    fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
+        let query = "INSERT INTO sessions (user_id, refresh_token_hashed, refresh_token_valid_until, session_token_hashed, session_token_valid_until, created_at, last_used_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+        let refresh_valid_until =
+            convert_system_time_to_unix_time(self.refresh_token_expiration_date);
+        let session_valid_until =
+            convert_system_time_to_unix_time(self.session_token_expiration_date);
+        let created_at = convert_system_time_to_unix_time(self.created_at);
+        let last_used = convert_system_time_to_unix_time(self.last_used_at);
+        let params = params![
+            self.user_id,
+            self.refresh_token,
+            refresh_valid_until,
+            self.session_token,
+            session_valid_until,
+            created_at,
+            last_used,
+        ];
+        conn.execute(query, params)
+            .map_err(|_| DatabaseError::InsertionFailure)?;
+        let id = conn.last_insert_rowid();
+        Ok(id)
+    }
+}
+
+impl Insert for TOTP {
+    fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
+        let query =
+            "INSERT INTO totp (user_id, authentication_secret, created_at) VALUES (?1, ?2, ?3)";
+
+        let created_at = convert_system_time_to_unix_time(self.created_at);
+
+        let params = params![self.user_id, self.authentication_secret, created_at];
+
+        conn.execute(query, params)
+            .map_err(|_| DatabaseError::InsertionFailure)?;
+        let id = conn.last_insert_rowid();
+        Ok(id)
+    }
+}
+
+impl Insert for RecoveryCodes {
+    fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
+        let query = "INSERT INTO recovery_codes (user_id, code_hash, used) VALUES (?1, ?2, ?3)";
+
+        let params = params![self.user_id, self.code_hashed, self.used];
+        conn.execute(query, params)
+            .map_err(|_| DatabaseError::InsertionFailure)?;
+        let id = conn.last_insert_rowid();
+        Ok(id)
+    }
+}
+
+fn convert_system_time_to_unix_time(time: SystemTime) -> i64 {
+    Some(time)
+        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64)
+        .unwrap()
 }

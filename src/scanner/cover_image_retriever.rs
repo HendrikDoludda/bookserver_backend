@@ -49,7 +49,7 @@ fn get_cbz_cover_image(path: &PathBuf, _hash: &str) -> Result<PathBuf, CoverImag
                 None
             }
         })
-        .min_by(|a,b| a.0.cmp(&b.0))
+        .min_by(|a, b| a.0.cmp(&b.0))
         .map(|(_, original)| original.to_string())
         .ok_or(CoverImageError::SortingFailed)?;
 
@@ -61,12 +61,9 @@ fn get_cbz_cover_image(path: &PathBuf, _hash: &str) -> Result<PathBuf, CoverImag
     file.read_to_end(&mut image_data)
         .map_err(|_| CoverImageError::PageToImageConversionFailed)?;
 
-    let format = image::guess_format(&image_data).map_err(|_| CoverImageError::ImageFormatFailed)?;
-    let extension = format
-    .extensions_str()
-    .first()
-    .copied()
-    .unwrap_or("png");
+    let format =
+        image::guess_format(&image_data).map_err(|_| CoverImageError::ImageFormatFailed)?;
+    let extension = format.extensions_str().first().copied().unwrap_or("png");
 
     let final_path = get_cover_output_path(_hash, extension)?;
 
@@ -102,7 +99,10 @@ fn get_pdf_cover_image(
         .render_with_config(&render_config)
         .map_err(|_| CoverImageError::PageToImageConversionFailed)?;
 
-    let image = bitmap.as_image().into_rgb8();
+    let image = bitmap
+        .as_image()
+        .map_err(|_| CoverImageError::CoverCreationFailed)?
+        .into_rgb8();
 
     let extension = "jpg";
     let final_path = get_cover_output_path(_hash, &extension)?;
@@ -153,7 +153,7 @@ fn get_image_comic_cover_image(path: &PathBuf, _hash: &str) -> Result<PathBuf, C
             )
         })
         .ok_or(CoverImageError::FileNotFound)?;
-    
+
     let extension = first
         .extension()
         .and_then(|ext| ext.to_str())

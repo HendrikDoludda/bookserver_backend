@@ -121,6 +121,14 @@ Tasks:
 - ⬜ Bootstrap the first admin on startup **[BE]**
 - ⬜ Roles enforced (admin vs member) on protected routes **[BE]**
 - ⬜ Per-user settings **[DB][BE][FE]**
+- ⬜ **HTTPS / TLS in-app (DECIDED — part of the auth step)** — serve over TLS with
+  `axum-server` (`tls-rustls`): `RustlsConfig::from_pem_file(cert, key)` + `bind_rustls`.
+  Rationale: login sends password **and** TOTP code, so encrypt the transport even on LAN
+  (defense-in-depth) and unlock browser secure-context features. **[BE]**
+  - *Cert source:* `tailscale cert` (real, trusted for the tailnet, fits the network model)
+    or long-lived self-signed (simplest; trust warnings). **Not** Let's Encrypt unless public.
+  - *Only ongoing piece is renewal* — `axum-server` supports hot cert reload
+    (`RustlsConfig::reload_from_pem_file`), so no restart needed. Serving itself is trivial.
 
 #### 3a. Two-factor auth (2FA) — *learning project; build AFTER core auth above works*
 
@@ -301,7 +309,10 @@ multi-user separation). Items marked *(public only)* become urgent only if the
 server is ever exposed directly to the open internet.
 
 - ⬜ Path-traversal protection — validate served file paths stay inside known library/cover dirs **[BE]** (safe today since serving is by id; becomes real with uploads §4)
-- ⬜ TLS / HTTPS **[BE]** *(public only)* — WireGuard already encrypts the Tailscale case; needed only if directly exposed (reverse proxy like Caddy is the easy route; or `tailscale cert`)
+- 🟡 TLS / HTTPS **[BE]** — **moved into the auth step (§3)** and done **in-app** via
+  `axum-server` (`tls-rustls`), *not* deferred to "public only" anymore: it protects the
+  login credential + TOTP handshake even on the LAN and enables browser secure-context
+  features. Reverse proxy (Caddy) remains a valid alternative if in-app renewal ever annoys.
 - ⬜ Login rate-limiting (brute-force protection) **[BE]** *(public only)*
 - ⬜ CORS configuration **[BE]** — only once a browser client (web frontend / backend web view) calls the API
 - ⬜ File reconciliation — a scan prunes/flags DB rows whose files were moved or deleted on disk **[BE]** (data integrity, not security)

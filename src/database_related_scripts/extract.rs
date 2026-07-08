@@ -1,8 +1,8 @@
 use crate::{
     error_types::DatabaseError,
     models::{
-        BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, LibraryMetadata, LibraryType,
-        UserMetadata, WithId,
+        BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, EmailVerification,
+        LibraryMetadata, LibraryType, RecoveryCodes, Sessions, UserMetadata, WithId, TOTP,
     },
 };
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
@@ -86,9 +86,7 @@ impl Extract for BookMetadata {
 
         let file_size: Option<u64> = row.get::<_, Option<i64>>(15)?.map(|size| size as u64);
 
-        let time: Option<SystemTime> = row
-            .get::<_, Option<i64>>(14)?
-            .map(|secs| UNIX_EPOCH + Duration::from_secs(secs as u64));
+        let time = Some(convert_to_system_time(row, 14)?);
 
         let tags: Vec<String> = row
             .get::<_, String>(7)?
@@ -150,13 +148,96 @@ impl Extract for LibraryMetadata {
 
 impl Extract for UserMetadata {
     const TABLE: &'static str = "users";
-    const COLUMNS: &'static str = "id, username, password_hash, email";
-
+    const COLUMNS: &'static str =
+        "id, username, password_hash, email, email_verified, is_admin, created_at, last_login";
     fn from_row(row: &Row) -> rusqlite::Result<Self> {
+        let created_at = convert_to_system_time(row, 6)?;
+        let last_login = convert_to_system_time(row, 7)?;
         Ok(Self {
             username: row.get(1)?,
             password_hash: row.get(2)?,
             email: row.get(3)?,
+            email_verified: row.get(4)?,
+            is_admin: row.get(5)?,
+            created_at: created_at,
+            last_login: last_login,
         })
     }
+}
+
+impl Extract for TOTP {
+    const TABLE: &'static str = "totp";
+    const COLUMNS: &'static str = "user_id, authentication_secret, created_at";
+
+    fn from_row(row: &Row) -> rusqlite::Result<Self> {
+        let created_at = convert_to_system_time(row, 2)?;
+        Ok(Self {
+            user_id: row.get(0)?,
+            authentication_secret: row.get(1)?,
+            created_at: created_at,
+        })
+    }
+}
+
+impl Extract for RecoveryCodes {
+    const TABLE: &'static str = "recovery_codes";
+    const COLUMNS: &'static str = "recovery_id, user_id, code_hash, used";
+
+    fn from_row(row: &Row) -> rusqlite::Result<Self> {
+        Ok(Self {
+            recovery_id: row.get(0)?,
+            user_id: row.get(1)?,
+            code_hashed: row.get(2)?,
+            used: row.get(3)?,
+        })
+    }
+}
+
+impl Extract for Sessions {
+    const TABLE: &'static str = "sessions";
+    const COLUMNS: &'static str =
+        "session_id, user_id, refresh_token_hashed, refresh_token_valid_until, session_token_hashed, session_token_valid_until, created_at, last_used_at";
+
+    fn from_row(row: &Row) -> rusqlite::Result<Self> {
+        let refresh_token_valid_until = convert_to_system_time(row, 3)?;
+        let session_token_valid_until = convert_to_system_time(row, 5)?;
+        let created_at = convert_to_system_time(row, 6)?;
+        let last_used_at = convert_to_system_time(row, 7)?;
+
+        Ok(Self {
+            session_id: row.get(0)?,
+            user_id: row.get(1)?,
+            refresh_token: row.get(2)?,
+            refresh_token_expiration_date: refresh_token_valid_until,
+            session_token: row.get(4)?,
+            session_token_expiration_date: session_token_valid_until,
+            created_at: created_at,
+            last_used_at: last_used_at,
+        })
+    }
+}
+
+impl Extract for EmailVerification {
+    const TABLE: &'static str = "email_verification";
+    const COLUMNS: &'static str = "user_id, email_verification_token, expires_at, invalidated";
+
+    fn from_row(row: &Row) -> rusqlite::Result<Self> {
+        let expires_at = convert_to_system_time(row, 2)?;
+        Ok(Self {
+            user_id: row.get(0)?,
+            verification_token: row.get(1)?,
+            expiration_date: expires_at,
+            invalidated: row.get(3)?,
+        })
+    }
+}
+
+fn convert_to_system_time(row: &Row, index: usize) -> Result<SystemTime, rusqlite::Error> {
+    let secs: Option<i64> = row.get(index)?;
+    secs.map(|s| UNIX_EPOCH + Duration::from_secs(s as u64))
+        .ok_or(rusqlite::Error::InvalidColumnType(
+            index,
+            "timestamp".into(),
+            rusqlite::types::Type::Null,
+        ))
 }
