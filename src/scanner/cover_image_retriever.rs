@@ -8,7 +8,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use zip::ZipArchive;
 
-use crate::{error_types::CoverImageError, models::BookFormat};
+use crate::{data_models::models::BookFormat, error_types::CoverImageError};
 
 const COVER_DIR: &str = "./cover_images/";
 const DEFAULT_IMAGE: &str = "example-cover.png";

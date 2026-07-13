@@ -60,6 +60,9 @@ pub enum DatabaseError {
 
     #[error("Failed to commit the created operation to the transaction")]
     OperationCommitFailure,
+
+    #[error("number of paramaters did not match the number of columns")]
+    InvalidParameters,
 }
 
 impl IntoResponse for DatabaseError {
@@ -195,4 +198,28 @@ pub enum RoutingErrors {
     AxumInitializationFailed(#[source] std::io::Error),
     #[error("Creating TcpListener failed")]
     TcpListenerCreationFailed(#[source] std::io::Error),
+}
+
+#[derive(Error, Debug)]
+pub enum AuthenticationError {
+    #[error("Username already taken")]
+    UsernameTaken,
+    #[error("Email already taken")]
+    EmailTaken,
+    #[error("Wrong email/username or password")]
+    IncorrectCredentials,
+    #[error("Expired Session and Refresh Token")]
+    ExpiredSession,
+    #[error("Unautherized Session")]
+    UnautherizedSession,
+    #[error("Expired authentication code")]
+    ExpiredAuthenticationCode,
+    #[error("Invalid validation code")]
+    InvalidValidationCode,
+    #[error("Searching the database produced an error")]
+    DatabaseSearchFailure,
+    #[error("Mismatching passwords")]
+    MismatchingPasswords,
+    #[error("Failed to hash the password")]
+    PasswordHashingFailure,
 }

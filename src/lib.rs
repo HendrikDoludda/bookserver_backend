@@ -1,11 +1,12 @@
 pub mod config;
-pub mod utils;
-pub mod models;
-pub mod error_types;
-pub mod stream_reader;
+pub mod data_models;
 pub mod database_related_scripts;
+pub mod error_types;
+pub use data_models::models;
+pub mod stream_reader;
+pub mod utils;
 pub use database_related_scripts::db;
 pub mod scanner;
-pub use scanner::folder_scanner;
 pub use scanner::cover_image_retriever;
+pub use scanner::folder_scanner;
 pub mod routes;

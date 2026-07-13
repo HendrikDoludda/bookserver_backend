@@ -412,23 +412,31 @@ impl AsRef<str> for EmailVerificationDatabaseColumns {
 pub struct Sessions {
     pub session_id: i64,
     pub user_id: i64,
-    pub refresh_token: String,
-    pub session_token: String,
+    pub device_id: String,
+    pub device_name: String,
+    pub platform: String,
+    pub refresh_token: String, //rename to hashed
+    pub session_token: String, // rename to hashed
     pub refresh_token_expiration_date: SystemTime,
     pub session_token_expiration_date: SystemTime,
     pub created_at: SystemTime,
     pub last_used_at: SystemTime,
+    pub authentication_completed: bool,
 }
 
 pub enum SessionsDatabaseColumns {
     SessionId,
     UserId,
+    DeviceId,
+    DeviceName,
+    Platform,
     RefreshToken,
     SessionToken,
     RefreshTokenExpirationDate,
     SessionTokenExpirationDate,
     CreatedAt,
     LastUsedAt,
+    AuthenticationCompleted,
 }
 
 impl AsRef<str> for SessionsDatabaseColumns {
@@ -436,12 +444,16 @@ impl AsRef<str> for SessionsDatabaseColumns {
         match self {
             SessionsDatabaseColumns::SessionId => "session_id",
             SessionsDatabaseColumns::UserId => "user_id",
+            SessionsDatabaseColumns::DeviceId => "device_id",
+            SessionsDatabaseColumns::DeviceName => "device_name",
+            SessionsDatabaseColumns::Platform => "platform",
             SessionsDatabaseColumns::RefreshToken => "refresh_token_hashed",
             SessionsDatabaseColumns::SessionToken => "session_token_hashed",
             SessionsDatabaseColumns::RefreshTokenExpirationDate => "refresh_token_valid_until",
             SessionsDatabaseColumns::SessionTokenExpirationDate => "session_token_valid_until",
             SessionsDatabaseColumns::CreatedAt => "created_at",
             SessionsDatabaseColumns::LastUsedAt => "last_used_at",
+            SessionsDatabaseColumns::AuthenticationCompleted => "authentication_completed",
         }
     }
 }

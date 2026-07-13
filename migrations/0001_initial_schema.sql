@@ -71,12 +71,16 @@ CREATE TABLE IF NOT EXISTS email_verification (
 CREATE TABLE IF NOT EXISTS sessions (
     session_id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
+    device_id BINARY(16) NOT NULL UNIQUE,
+    device_name TEXT NOT NULL,
+    platform TEXT,
     refresh_token_hashed TEXT NOT NULL UNIQUE,
     refresh_token_valid_until DATETIME NOT NULL,
     session_token_hashed TEXT NOT NULL,
     session_token_valid_until DATETIME NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_used_at DATETIME,
+    authentication_completed BOOLEAN NOT NULL DEFAULT FALSE,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 ); --automatically refresh the refresh token when it get's used
 

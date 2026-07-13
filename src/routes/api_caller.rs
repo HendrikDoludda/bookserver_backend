@@ -12,13 +12,20 @@ use axum::{
 };
 use std::sync::Arc;
 
+use crate::data_models::models::{
+    BookMetadata, BookSeriesMetadata, DatabaseTypes, LibraryMetadata, WithId,
+};
 use crate::db::Database;
 use crate::error_types::{DatabaseError, RequestErrors};
 use crate::folder_scanner::scan_all_folders;
-use crate::models::{BookMetadata, BookSeriesMetadata, DatabaseTypes, LibraryMetadata, WithId};
+use crate::routes::auth;
 use crate::stream_reader::streaming_file;
+use crate::{data_models::authentication_model::UserCreationRequest, routes::auth::create_user};
 
 fn authorized() -> Result<(), RequestErrors> {
+    //check the session token
+    //check the expiration date
+    //check authentication complete (to see if it completed the final log in step)
     Ok(())
 }
 
@@ -133,3 +140,73 @@ pub async fn scan_for_metadata() -> impl IntoResponse {
 fn failed_getting_response() -> Response<Body> {
     return Response::new("Failed to get response".into());
 }
+
+/*pub async fn sign_up(
+    State(db): State<Arc<Database>>,
+    Json(request): Json<UserCreationRequest>,
+) -> Response<Body> {
+    // Create the user (validation has already happened)
+    let user = match create_user(&db, request).await {
+        Ok(user) => user,
+        Err(error) => return error.into_response(),
+    };
+
+    // Create a short-lived JWT
+    let access_token = match create_access_token(user.id) {
+        Ok(token) => token,
+        Err(error) => return error.into_response(),
+    };
+
+    // Create a long-lived refresh token
+    let refresh_token = generate_refresh_token();
+
+    // Store the refresh token hash in the database
+    if let Err(error) = create_session(
+        &db,
+        user.id,
+        &refresh_token,
+        /* device info */
+    )
+    .await
+    {
+        return error.into_response();
+    }
+
+    Json(AuthResponse {
+        access_token,
+        refresh_token,
+    })
+    .into_response()
+} */
+pub async fn sign_up(
+    State(db): State<Arc<Database>>,
+    Json(request): Json<UserCreationRequest>,
+) -> Response<Body> {
+    let user = create_user(db, request).await;
+    if authorized().is_ok() {}
+    return failed_getting_response();
+}
+
+pub async fn sign_in() -> Response<Body> {}
+
+pub async fn verify_email() -> Response<Body> {}
+
+pub async fn log_out() -> Response<Body> {}
+
+pub async fn change_password() -> Response<Body> {}
+
+pub async fn change_username() -> Response<Body> {}
+
+pub async fn change_email() -> Response<Body> {}
+
+pub async fn reset_password() -> Response<Body> {}
+
+pub async fn totp_start_set_up() -> Response<Body> {}
+
+pub async fn finalize_totp_set_up() -> Response<Body> {}
+
+pub async fn disable_totp() -> Response<Body> {}
+
+pub async fn sign_in_totp_with_recovery_code() -> Response<Body> {}
+
+pub async fn sign_in_totp() -> Response<Body> {}

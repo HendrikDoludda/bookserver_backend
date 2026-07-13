@@ -1,10 +1,10 @@
-use crate::error_types::DatabaseError;
-use crate::models::{
+use crate::data_models::models::{
     BookDatabaseColumns, BookMetadata, BookSeriesMetadata, EmailVerification,
     EmailVerificationDatabaseColumns, LibraryDatabaseColumns, LibraryMetadata, RecoveryCodes,
     RecoveryCodesColumns, SeriesDatabaseColumns, Sessions, SessionsDatabaseColumns,
     TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, TOTP,
 };
+use crate::error_types::DatabaseError;
 use rusqlite::{params, Connection, ToSql};
 
 pub trait Update {

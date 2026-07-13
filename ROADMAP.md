@@ -86,6 +86,7 @@ video feature (Phase 2 → Video) existing first.
 ### 1. Library & directory management
 - 🟡 Scan a directory for supported files **[BE]** — `scan_all_folders` works; `POST /scan_all_directories` live
 - ⬜ Incremental scanning — skip unchanged files using stored `file_hash` + `last_modified` **[BE]**
+- ⬜ Watch scannable directories for changes — filesystem notifications on file add/remove, debounced, then re-scan only the modified folders **[BE]** (builds on incremental scanning; `notify` crate is the usual approach)
 - ⬜ Scannable-directories table to replace the `BOOK_DIRS` env var **[DB][BE]** (code already has a TODO for this)
 - ⬜ Add / remove scannable directories via API **[BE]** — `POST /scan_directory/:id` + `GET /scan/status` route stubs exist (placeholder handlers)
 - ⬜ Add / remove directories from the frontend **[FE]**

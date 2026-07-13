@@ -1,8 +1,8 @@
-use crate::error_types::DatabaseError;
-use crate::models::{
+use crate::data_models::models::{
     BookMetadata, BookSeriesMetadata, EmailVerification, LibraryMetadata, RecoveryCodes,
     SeriesLibraryConnection, Sessions, UserMetadata, TOTP,
 };
+use crate::error_types::DatabaseError;
 use rusqlite::{params, Connection};
 use std::time::SystemTime;
 
@@ -162,7 +162,7 @@ impl Insert for EmailVerification {
 
 impl Insert for Sessions {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
-        let query = "INSERT INTO sessions (user_id, refresh_token_hashed, refresh_token_valid_until, session_token_hashed, session_token_valid_until, created_at, last_used_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+        let query = "INSERT INTO sessions (user_id, device_id, device_name, platform, refresh_token_hashed, refresh_token_valid_until, session_token_hashed, session_token_valid_until, created_at, last_used_at, authentication_completed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,?9,?10,?11)";
         let refresh_valid_until =
             convert_system_time_to_unix_time(self.refresh_token_expiration_date);
         let session_valid_until =
@@ -171,12 +171,16 @@ impl Insert for Sessions {
         let last_used = convert_system_time_to_unix_time(self.last_used_at);
         let params = params![
             self.user_id,
+            self.device_id,
+            self.device_name,
+            self.platform,
             self.refresh_token,
             refresh_valid_until,
             self.session_token,
             session_valid_until,
             created_at,
             last_used,
+            self.authentication_completed,
         ];
         conn.execute(query, params)
             .map_err(|_| DatabaseError::InsertionFailure)?;

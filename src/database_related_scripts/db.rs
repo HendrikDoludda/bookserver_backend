@@ -1,15 +1,16 @@
+use crate::data_models::models::ColumnSelector;
+use crate::data_models::models::DatabaseTypes;
+use crate::data_models::models::WithId;
+use crate::database_related_scripts::db_search::Search;
 use crate::database_related_scripts::db_update::Update;
 use crate::database_related_scripts::extract::Extract;
 use crate::database_related_scripts::insert::Insert;
 use crate::database_related_scripts::migrations;
 use crate::error_types::DatabaseError;
-use crate::models::ColumnSelector;
-use crate::models::DatabaseTypes;
-use crate::models::WithId;
-use serde::Serialize;
 use r2d2::{ManageConnection, Pool};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Connection, Result, ToSql};
+use serde::Serialize;
 use std::path::Path;
 //TODO: Check if the filtering should happen in the backend or the frontend. I think both are valid but I imagine that backend is better
 //So probably pass in filtering options with the request and then filter somewhere here
@@ -122,6 +123,36 @@ impl Database {
             .get()
             .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
         T::extract_batch(&conn, ids)
+    }
+
+    pub fn search_for_single_row<T>(
+        &self,
+        columns: &[T::Column],
+        values: &[&dyn ToSql],
+    ) -> Result<Option<T>, DatabaseError>
+    where
+        T: Search,
+    {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
+        T::search_for_row(&conn, columns, values)
+    }
+
+    pub fn search_for_multiple_rows<T>(
+        &self,
+        columns: &[T::Column],
+        values: &[&dyn ToSql],
+    ) -> Result<Vec<T>, DatabaseError>
+    where
+        T: Search,
+    {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
+        T::search_for_multiple_rows(&conn, columns, values)
     }
 
     pub fn get_all_libraries(&self) -> Result<Vec<i64>, DatabaseError> {

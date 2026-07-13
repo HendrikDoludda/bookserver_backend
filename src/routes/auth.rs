@@ -1,12 +1,84 @@
+use argon2::password_hash::{PasswordHasher, SaltString};
+use argon2::Argon2;
+
+use crate::database_related_scripts::db::Database;
+use crate::error_types::AuthenticationError;
+use crate::{
+    data_models::authentication_model::UserCreationRequest,
+    models::{DatabaseEntry, UserDatabaseColumns, UserMetadata},
+};
+use std::sync::Arc;
+use std::time::SystemTime;
+
+use rand::rngs::SysRng; // the OS CSPRNG (was `OsRng` before rand 0.10)
+use rand::TryRng; // brings `try_fill_bytes` into scope for SysRng
+
 //set up
-pub fn create_user() {
-    //user submits an email, username and password (two times typed)
-    //checks to see if the email/username already have an account
+pub async fn create_user(
+    db: Arc<Database>,
+    request: UserCreationRequest,
+) -> Result<UserMetadata, AuthenticationError> {
+    check_create_user_request_validity(db, request.clone())?;
+
+    // Salt: 16 cryptographically-secure random bytes straight from the OS CSPRNG.
+    // We can't use `SaltString::generate(rng)` here — it wants a rand_core 0.6 RNG
+    // (via password-hash), but our `rand` 0.10 speaks rand_core 0.10, so we fill the
+    // bytes ourselves and encode them instead.
+    let mut salt_bytes = [0u8; 16]; // Salt::RECOMMENDED_LENGTH
+    SysRng
+        .try_fill_bytes(&mut salt_bytes)
+        .map_err(|_| AuthenticationError::PasswordHashingFailure)?;
+    let salt = SaltString::encode_b64(&salt_bytes)
+        .map_err(|_| AuthenticationError::PasswordHashingFailure)?;
+
+    // Hash the password with Argon2 using that salt. The returned PHC string already
+    // embeds the salt + parameters, so this single string is what gets stored.
+    let hash = Argon2::default()
+        .hash_password(request.password.as_bytes(), &salt)
+        .map_err(|_| AuthenticationError::PasswordHashingFailure)?
+        .to_string();
+    let user = UserMetadata {
+        username: request.username,
+        password_hash: hash,
+        email: Some(request.email),
+        email_verified: false,
+        is_admin: false, //needs to check for exisitng users and then if not make the first user an admin
+        created_at: SystemTime::now(),
+        last_login: SystemTime::now(),
+    };
+
+    Ok(user)
     //if not create user
     //send success message
     //show verify using email
     //send verification email
     //if yes send already has an account. or username already taken
+}
+
+fn check_create_user_request_validity(
+    db: Arc<Database>,
+    request: UserCreationRequest,
+) -> Result<(), AuthenticationError> {
+    let email_search_result = db
+        .search_for_single_row::<UserMetadata>(&[UserDatabaseColumns::Email], &[&request.email])
+        .map_err(|_| AuthenticationError::DatabaseSearchFailure)?;
+    if (email_search_result.is_none()) {
+        return Err(AuthenticationError::EmailTaken);
+    }
+    let username_search_result = db
+        .search_for_single_row::<UserMetadata>(
+            &[UserDatabaseColumns::Username],
+            &[&request.username],
+        )
+        .map_err(|_| AuthenticationError::DatabaseSearchFailure)?;
+    if (username_search_result.is_none()) {
+        return Err(AuthenticationError::UsernameTaken);
+    }
+    if (request.password != request.password_repeat) {
+        return Err(AuthenticationError::MismatchingPasswords);
+    }
+
+    Ok(())
 }
 
 pub fn verify_email() {
@@ -94,3 +166,17 @@ pub fn log_out() {
     //delete the session and refresh token entry to inactive
     //return success
 }
+
+pub fn create_session_token() {}
+
+pub fn create_refresh_token() {}
+
+/*One additional recommendation for your stack:
+Passwords: argon2
+Random values (refresh tokens, salts, etc.): rand (using the OS RNG)
+General hashing: blake3
+UUIDs: uuid
+JWTs: jsonwebtoken or another well-maintained JWT crate
+
+
+*/

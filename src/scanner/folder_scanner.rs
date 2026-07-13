@@ -1,10 +1,10 @@
 use crate::config;
-use crate::db::Database;
-use crate::error_types::{DatabaseError, FolderScannerError};
-use crate::models::{
+use crate::data_models::models::{
     BookDatabaseColumns, BookFormat, BookMetadata, BookSeriesMetadata, ColumnSelector,
     DatabaseTypes, FileExtractedMetadata, LibraryMetadata, ParsedName, SeriesLibraryConnection,
 };
+use crate::db::Database;
+use crate::error_types::{DatabaseError, FolderScannerError};
 use crate::scanner::cover_image_retriever::get_cover_image;
 use blake3::Hasher;
 use log::warn;
@@ -189,7 +189,7 @@ fn get_file_metadata(file: &File, path: &Path) -> FileExtractedMetadata {
             file_size: Some(file_size),
             modified_date: modified_time,
             page_number: None,
-            language_code: crate::models::BookLanguage::Other("Unkown".to_string()),
+            language_code: crate::data_models::models::BookLanguage::Other("Unkown".to_string()),
             author: "Unknown Author".to_string(),
         }
     } else {
@@ -197,7 +197,7 @@ fn get_file_metadata(file: &File, path: &Path) -> FileExtractedMetadata {
             file_size: None,
             modified_date: None,
             page_number: None,
-            language_code: crate::models::BookLanguage::Other("Unkown".to_string()),
+            language_code: crate::data_models::models::BookLanguage::Other("Unkown".to_string()),
             author: "Unknown Author".to_string(),
         }
     }
@@ -305,7 +305,7 @@ fn get_series_id(
 ) -> Result<i64, FolderScannerError> {
     match db.get_id_from_table(
         DatabaseTypes::Series,
-        ColumnSelector::Series(crate::models::SeriesDatabaseColumns::Name),
+        ColumnSelector::Series(crate::data_models::models::SeriesDatabaseColumns::Name),
         &file_name.to_lowercase(),
     ) {
         Ok(Some(id)) => Ok(id), // found an existing series
@@ -349,7 +349,7 @@ fn link_series_to_default_library(
 fn get_library_id(name: String, db: &Database) -> Result<i64, DatabaseError> {
     match db.get_id_from_table(
         DatabaseTypes::Library,
-        ColumnSelector::Library(crate::models::LibraryDatabaseColumns::Name),
+        ColumnSelector::Library(crate::data_models::models::LibraryDatabaseColumns::Name),
         &name.to_lowercase(),
     ) {
         Ok(Some(result)) => Ok(result),
@@ -360,7 +360,7 @@ fn get_library_id(name: String, db: &Database) -> Result<i64, DatabaseError> {
 fn create_library_entry(name: String, db: &Database) -> Result<i64, DatabaseError> {
     let library_entry = LibraryMetadata {
         name: name.to_lowercase(),
-        library_type: crate::models::LibraryType::Books,
+        library_type: crate::data_models::models::LibraryType::Books,
         cover_image: None,
         description: None,
     };
