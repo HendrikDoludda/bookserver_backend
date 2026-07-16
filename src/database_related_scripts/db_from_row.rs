@@ -81,6 +81,7 @@ impl FromRow for UserMetadata {
         let created_at = convert_to_system_time(row, "created_at", 6)?;
         let last_login = convert_to_system_time(row, "last_login", 7)?;
         Ok(Self {
+            user_id: row.get("id")?,
             username: row.get("username")?,
             password_hash: row.get("password_hash")?,
             email: row.get("email")?,

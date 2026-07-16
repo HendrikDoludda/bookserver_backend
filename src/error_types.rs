@@ -222,4 +222,34 @@ pub enum AuthenticationError {
     MismatchingPasswords,
     #[error("Failed to hash the password")]
     PasswordHashingFailure,
+    #[error("Failed to store data properly")]
+    FailedDataStoring,
+    #[error("Failed to create a new randomly generated value")]
+    RngCreatorFailed,
+    #[error("Hashing sensitive data failed")]
+    ErrorHashingData,
+    #[error("Failed to create the salt")]
+    ErrorCreatingSalt,
+    #[error("Failed to calculate the lifetime for tokens")]
+    TokenLifetimeCalculationFailed,
+}
+
+#[derive(Error, Debug)]
+pub enum EmailErrors {
+    #[error("Email is not set up")]
+    EmailSetUpNotFound,
+    #[error("Could not set up the smtp connection")]
+    SMTPConnectionFailed,
+    #[error("Could not create a smtp client builder")]
+    ClientBuilderFailed,
+    #[error("Failed to send the email")]
+    SendingFailure,
+    #[error("Failed to adjust the current time.")]
+    TimeAdjustmentFailure,
+    #[error("Failed to insert entry into database")]
+    DatabaseInsertionFailed,
+    #[error("No email was attached to the user")]
+    MissingEmail,
+    #[error("Failed to send the email due to no config information")]
+    SentFailedDueToNoConfig { code: String },
 }

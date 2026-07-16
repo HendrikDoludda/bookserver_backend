@@ -1,3 +1,5 @@
+use std::fmt::Binary;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Clone)]
@@ -11,12 +13,18 @@ pub struct UserCreationRequest {
 #[derive(Debug, Deserialize, Clone)]
 pub struct VerifyEmailRequest {
     pub email_verification_token: String,
+    pub device_name: String,
+    pub device_id: String,
+    pub platform: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct LoginRequest {
     pub username_or_email: String,
     pub password: String,
+    pub device_name: String,
+    pub device_id: String,
+    pub platform: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]

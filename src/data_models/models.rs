@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, time::SystemTime};
 use strum_macros::EnumIter;
 
+use crate::error_types::EmailErrors;
+
 //============  Row id + metadata wrapper =================
 // Metadata structs don't store their own row id, but list endpoints need it so
 // the client can drill down (e.g. fetch a library's series). This pairs the id
@@ -21,6 +23,7 @@ pub enum DatabaseTypes {
     LibraryElements,
     Series,
     Users,
+    EmailVerificationType,
 }
 
 impl DatabaseTypes {
@@ -31,6 +34,7 @@ impl DatabaseTypes {
             DatabaseTypes::Series => "series",
             DatabaseTypes::Users => "users",
             DatabaseTypes::LibraryElements => "library_elements",
+            DatabaseTypes::EmailVerificationType => "email_verification",
         }
     }
 
@@ -251,6 +255,7 @@ impl AsRef<str> for SeriesDatabaseColumns {
 //============  User metadata model =================
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserMetadata {
+    pub user_id: i64,
     pub username: String,
     pub password_hash: String,
     pub email: Option<String>,
@@ -507,4 +512,14 @@ impl AsRef<str> for TOTPDatabaseColumns {
             TOTPDatabaseColumns::CreatedAt => "created_at",
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct EmailConfig {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub password: String,
+    pub from: String,
+    pub from_name: String,
 }

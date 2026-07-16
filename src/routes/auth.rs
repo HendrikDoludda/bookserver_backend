@@ -2,44 +2,31 @@ use argon2::password_hash::{PasswordHasher, SaltString};
 use argon2::Argon2;
 
 use crate::database_related_scripts::db::Database;
-use crate::error_types::AuthenticationError;
+use crate::error_types::{AuthenticationError, EmailErrors};
+use crate::models::{DatabaseTypes, EmailVerification, Sessions};
+use crate::routes::email_helper::{create_new_email, EmailInformation};
 use crate::{
     data_models::authentication_model::UserCreationRequest,
-    models::{DatabaseEntry, UserDatabaseColumns, UserMetadata},
+    models::{UserDatabaseColumns, UserMetadata},
 };
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use rand::rngs::SysRng; // the OS CSPRNG (was `OsRng` before rand 0.10)
-use rand::TryRng; // brings `try_fill_bytes` into scope for SysRng
+use rand::{RngExt, TryRng}; // brings `try_fill_bytes` into scope for SysRng
 
 //set up
 pub async fn create_user(
-    db: Arc<Database>,
+    db: &Arc<Database>,
     request: UserCreationRequest,
 ) -> Result<UserMetadata, AuthenticationError> {
-    check_create_user_request_validity(db, request.clone())?;
+    check_create_user_request_validity(db.clone(), request.clone())?;
 
-    // Salt: 16 cryptographically-secure random bytes straight from the OS CSPRNG.
-    // We can't use `SaltString::generate(rng)` here — it wants a rand_core 0.6 RNG
-    // (via password-hash), but our `rand` 0.10 speaks rand_core 0.10, so we fill the
-    // bytes ourselves and encode them instead.
-    let mut salt_bytes = [0u8; 16]; // Salt::RECOMMENDED_LENGTH
-    SysRng
-        .try_fill_bytes(&mut salt_bytes)
-        .map_err(|_| AuthenticationError::PasswordHashingFailure)?;
-    let salt = SaltString::encode_b64(&salt_bytes)
-        .map_err(|_| AuthenticationError::PasswordHashingFailure)?;
-
-    // Hash the password with Argon2 using that salt. The returned PHC string already
-    // embeds the salt + parameters, so this single string is what gets stored.
-    let hash = Argon2::default()
-        .hash_password(request.password.as_bytes(), &salt)
-        .map_err(|_| AuthenticationError::PasswordHashingFailure)?
-        .to_string();
+    let hashed_password = hash_string_securely(request.password)?;
     let user = UserMetadata {
+        user_id: 0,
         username: request.username,
-        password_hash: hash,
+        password_hash: hashed_password.hashed_string,
         email: Some(request.email),
         email_verified: false,
         is_admin: false, //needs to check for exisitng users and then if not make the first user an admin
@@ -81,22 +68,64 @@ fn check_create_user_request_validity(
     Ok(())
 }
 
-pub fn verify_email() {
-    //when user clicks on link from email it should route them to this call
-    //here we will check if the link is valid.
-    //the email verification table contains the expiration time as well as the code
-    //if the token in inactive also fail the verification process
-}
+pub async fn send_verification_email(
+    user: UserMetadata,
+    db: &Arc<Database>,
+) -> Result<(), EmailErrors> {
+    db.remove_entry(DatabaseTypes::EmailVerificationType, user.user_id);
+    let mut rng = rand::rng();
+    let code = rng.random_range(0..=999_999);
+    let verification_code = format!("{:06}", code);
+    let expiration_date = SystemTime::now()
+        .checked_add(Duration::from_mins(15))
+        .ok_or(EmailErrors::TimeAdjustmentFailure)?;
 
-pub fn resend_verify_email() {
-    //if called re-sends a verification email with a new token
-}
-
-fn send_verification_email() {
+    let email_verification = EmailVerification {
+        user_id: user.user_id,
+        verification_token: blake3::hash(verification_code.as_bytes())
+            .to_hex()
+            .to_string(),
+        expiration_date,
+        invalidated: false,
+    };
+    db.insert(&email_verification).map_err(|e| {
+        log::error!("Failed insertion into database: {e}");
+        EmailErrors::DatabaseInsertionFailed
+    })?;
+    create_verification_email(verification_code.clone(), user)
+        .await
+        .map_err(|err| match err {
+            EmailErrors::EmailSetUpNotFound => EmailErrors::SentFailedDueToNoConfig {
+                code: verification_code,
+            },
+            err => err,
+        })
     //set previous token for user to inactive
     //create link
     //create email body
     //use the email_helper script to send an email
+}
+
+//TODO: Text must be replaced with the i18n text which I will create after the authentication
+pub async fn create_verification_email(
+    code: String,
+    user: UserMetadata,
+) -> Result<(), EmailErrors> {
+    //if called re-sends a verification email with a new token
+    let body = format!("Dear {}, \n The verify the account please enter the following code in the application.\n Code: {} \n Best regards,\n{}",user.username,code,"Server Team");
+    let subject = format!("Verify Book Server Account");
+
+    let mail_info = EmailInformation {
+        username: user.username,
+        email: user.email.ok_or(EmailErrors::MissingEmail)?,
+        body,
+        subject,
+    };
+
+    match create_new_email(mail_info).await {
+        Ok(()) => Ok(()),
+        Err(err) => return Err(err),
+    }
 }
 
 //authentication
@@ -109,13 +138,6 @@ pub fn log_in() {
     //otherwise continue
     //if totp is enabled first start the totp log in process and then create a new session
     //if successful you return the refresh token and the session token.
-}
-
-fn create_new_session() {
-    //generate session token
-    //generate refresh token
-    //store tokens
-    //return tokens
 }
 
 pub fn refresh_session_token() {
@@ -167,9 +189,84 @@ pub fn log_out() {
     //return success
 }
 
-pub fn create_session_token() {}
+pub fn create_new_session(
+    db: Arc<Database>,
+    user_id: i64,
+) -> Result<CreatedTokensReadable, AuthenticationError> {
+    let session_token = create_new_token()?;
+    let refresh_token = create_new_token()?;
+    let hours_refresh_token_is_valid = 24 * 30; //24 for hours in a day and 30 for valid duration of refresh token,
+    let current_time = SystemTime::now();
+    let refresh_token_expiration_date = current_time
+        .checked_add(Duration::from_hours(hours_refresh_token_is_valid))
+        .ok_or(AuthenticationError::TokenLifetimeCalculationFailed)?;
+    let session_token_expiration_date = current_time
+        .checked_add(Duration::from_mins(15))
+        .ok_or(AuthenticationError::TokenLifetimeCalculationFailed)?;
+    let session = Sessions {
+        session_id: 0, //will get assigned when entered into the db
+        user_id,
+        device_id: "".to_string(),
+        device_name: "".to_string(),
+        platform: "".to_string(),
+        refresh_token: refresh_token.hashed_string,
+        session_token: session_token.hashed_string,
+        refresh_token_expiration_date,
+        session_token_expiration_date,
+        created_at: current_time,
+        last_used_at: current_time,
+        authentication_completed: false,
+    };
+    db.insert(&session)
+        .map_err(|_| AuthenticationError::FailedDataStoring)?;
+    Ok(CreatedTokensReadable {
+        session_token: session_token.normal_string,
+        refresh_token: refresh_token.normal_string,
+        refresh_token_valid_until: refresh_token_expiration_date,
+        session_token_valid_until: session_token_expiration_date,
+    })
+}
 
-pub fn create_refresh_token() {}
+pub fn create_new_token() -> Result<HashedString, AuthenticationError> {
+    let mut token = [0u8; 32];
+    SysRng
+        .try_fill_bytes(&mut token)
+        .map_err(|_| AuthenticationError::RngCreatorFailed)?;
+    let final_token = hex::encode(token);
+    let hashed_token = blake3::hash(final_token.as_bytes()).to_hex().to_string();
+    Ok(HashedString {
+        normal_string: final_token,
+        hashed_string: hashed_token,
+    })
+}
+
+struct HashedString {
+    normal_string: String, //to send to front end
+    hashed_string: String, //to store
+}
+
+struct CreatedTokensReadable {
+    session_token: String,
+    refresh_token: String,
+    session_token_valid_until: SystemTime,
+    refresh_token_valid_until: SystemTime,
+}
+
+fn hash_string_securely(to_hash: String) -> Result<HashedString, AuthenticationError> {
+    let mut salt_bytes = [0u8; 16];
+    SysRng
+        .try_fill_bytes(&mut salt_bytes)
+        .map_err(|_| AuthenticationError::RngCreatorFailed)?;
+    let salt =
+        SaltString::encode_b64(&salt_bytes).map_err(|_| AuthenticationError::ErrorCreatingSalt)?;
+    let hash = Argon2::default()
+        .hash_password(to_hash.as_bytes(), &salt)
+        .map_err(|_| AuthenticationError::ErrorHashingData)?;
+    Ok(HashedString {
+        normal_string: to_hash,
+        hashed_string: hash.to_string(),
+    })
+}
 
 /*One additional recommendation for your stack:
 Passwords: argon2
