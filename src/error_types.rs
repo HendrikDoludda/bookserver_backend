@@ -4,6 +4,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use thiserror::Error;
+use tokio::sync::broadcast::error;
 
 #[derive(Error, Debug)]
 pub enum DatabaseError {
@@ -232,6 +233,14 @@ pub enum AuthenticationError {
     ErrorCreatingSalt,
     #[error("Failed to calculate the lifetime for tokens")]
     TokenLifetimeCalculationFailed,
+    #[error("User was not found")]
+    UserNotFound,
+    #[error("Email verification code for user was not found")]
+    EmailVerificationNotFound,
+    #[error("Failed to convert string into PasswordHash type")]
+    StringToPasswordHashConversionFailed,
+    #[error("Failed to update a database entry")]
+    DatabaseUpdateFailed,
 }
 
 #[derive(Error, Debug)]
@@ -252,4 +261,6 @@ pub enum EmailErrors {
     MissingEmail,
     #[error("Failed to send the email due to no config information")]
     SentFailedDueToNoConfig { code: String },
+    #[error("Failed to create a hash from code")]
+    HashingFailed,
 }

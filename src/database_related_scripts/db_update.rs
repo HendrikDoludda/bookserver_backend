@@ -12,16 +12,12 @@ pub trait Update {
 
     const TABLE: &'static str;
 
-    fn update<T>(
-        &self,
+    fn update(
         conn: &Connection,
         column: Self::Column,
-        new_value: T,
+        new_value: &dyn ToSql,
         id: i64,
-    ) -> Result<(), DatabaseError>
-    where
-        T: ToSql,
-    {
+    ) -> Result<(), DatabaseError> {
         let query = format!(
             "UPDATE {} SET {} = ?1 WHERE id = ?2",
             Self::TABLE,

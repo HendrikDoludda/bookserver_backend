@@ -67,32 +67,50 @@ impl Database {
         Ok(id)
     }
 
-    pub fn update_value<U, T>(
+    pub fn update_value<U>(
         &self,
         column: U::Column,
-        new_value: T,
+        new_value: &dyn ToSql,
         id: i64,
-        updater: U,
     ) -> Result<(), DatabaseError>
     where
         U: Update,
-        T: ToSql,
     {
         let conn = self
             .pool
             .get()
             .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
-        updater.update(&conn, column, new_value, id)
+        Self::update_value_with_connection::<U>(&conn, column, new_value, id)
+    }
+
+    pub fn update_value_with_connection<U>(
+        conn: &Connection,
+        column: U::Column,
+        new_value: &dyn ToSql,
+        id: i64,
+    ) -> Result<(), DatabaseError>
+    where
+        U: Update,
+    {
+        U::update(&conn, column, new_value, id)
     }
 
     pub fn remove_entry(&self, db_type: DatabaseTypes, id: i64) -> Result<(), DatabaseError> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
+        Self::remove_entry_with_connection(&conn, db_type, id)
+    }
+
+    pub fn remove_entry_with_connection(
+        conn: &Connection,
+        db_type: DatabaseTypes,
+        id: i64,
+    ) -> Result<(), DatabaseError> {
         if db_type == DatabaseTypes::LibraryElements {
             return Err(DatabaseError::LibrarySeriesException); // Prevent direct deletion from junction table
         } else {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
             let table_name = db_type.get_table_name();
             let query = format!("DELETE FROM {} WHERE id = ?1", table_name);
             conn.execute(&query, rusqlite::params![id])
@@ -109,6 +127,13 @@ impl Database {
             .pool
             .get()
             .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
+        Self::get_entry_with_connection::<T>(&conn, id)
+    }
+
+    pub fn get_entry_with_connection<T>(conn: &Connection, id: i64) -> Result<T, DatabaseError>
+    where
+        T: Extract,
+    {
         T::extract(&conn, id)?.ok_or(DatabaseError::EntryNotFound)
     }
 
@@ -122,7 +147,17 @@ impl Database {
             .pool
             .get()
             .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
-        T::extract_batch(&conn, ids)
+        Self::get_entries_batch_with_connection::<T>(&conn, ids)
+    }
+
+    pub fn get_entries_batch_with_connection<T>(
+        conn: &Connection,
+        ids: &[i64],
+    ) -> Result<Vec<WithId<T>>, DatabaseError>
+    where
+        T: Extract + Serialize,
+    {
+        T::extract_batch(conn, ids)
     }
 
     pub fn search_for_single_row<T>(
@@ -137,6 +172,17 @@ impl Database {
             .pool
             .get()
             .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
+        Self::search_for_single_row_with_connection::<T>(&conn, columns, values)
+    }
+
+    pub fn search_for_single_row_with_connection<T>(
+        conn: &Connection,
+        columns: &[T::Column],
+        values: &[&dyn ToSql],
+    ) -> Result<Option<T>, DatabaseError>
+    where
+        T: Search,
+    {
         T::search_for_row(&conn, columns, values)
     }
 
@@ -152,6 +198,17 @@ impl Database {
             .pool
             .get()
             .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
+        Self::search_for_multiple_rows_with_connection::<T>(&conn, columns, values)
+    }
+
+    pub fn search_for_multiple_rows_with_connection<T>(
+        conn: &Connection,
+        columns: &[T::Column],
+        values: &[&dyn ToSql],
+    ) -> Result<Vec<T>, DatabaseError>
+    where
+        T: Search,
+    {
         T::search_for_multiple_rows(&conn, columns, values)
     }
 
@@ -194,6 +251,14 @@ impl Database {
             .pool
             .get()
             .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
+        Self::remove_entry_from_library_elements_with_connection(&conn, series_id, library_id)
+    }
+
+    pub fn remove_entry_from_library_elements_with_connection(
+        conn: &Connection,
+        series_id: i64,
+        library_id: i64,
+    ) -> Result<(), DatabaseError> {
         let query = "DELETE FROM library_elements WHERE series_id = ?1 AND library_id = ?2";
         conn.execute(&query, rusqlite::params![series_id, library_id])
             .map_err(|_| DatabaseError::ConnectionExecutableFailure)?;
@@ -208,6 +273,13 @@ impl Database {
             .pool
             .get()
             .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
+        Self::get_series_entries_in_library_with_connection(&conn, library_id)
+    }
+
+    pub fn get_series_entries_in_library_with_connection(
+        conn: &Connection,
+        library_id: i64,
+    ) -> Result<Vec<i64>, DatabaseError> {
         let mut stmt = conn
             .prepare("SELECT series_id FROM library_elements WHERE library_id = ?1")
             .map_err(|_| DatabaseError::OperationFailure)?;
@@ -221,6 +293,7 @@ impl Database {
     }
 
     pub fn get_id_from_table(
+        //should not be used
         &self,
         db_type: DatabaseTypes,
         column: impl Into<ColumnSelector>,
@@ -255,18 +328,24 @@ impl Database {
 
     pub fn setup_new_transaction<F, T>(&self, operation: F) -> Result<T, DatabaseError>
     where
-        F: FnOnce(&Connection) -> Result<T>,
+        F: FnOnce(&Connection) -> Result<T, DatabaseError>,
     {
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| DatabaseError::TransactionFailure)?;
-        let result = operation(&tx).map_err(|_| DatabaseError::OperationFailure)?;
-        tx.commit()
-            .map_err(|_| DatabaseError::OperationCommitFailure)?;
+        let mut conn = self.pool.get().map_err(|err| {
+            log::error!("Got an error when trying to set up a new connection: {err}");
+            DatabaseError::PoolConnectionRetrievalFailure
+        })?;
+        let tx = conn.transaction().map_err(|err| {
+            log::error!("Failed to set up a transaction: {err}");
+            DatabaseError::TransactionFailure
+        })?;
+        let result = operation(&tx).map_err(|err| {
+            log::error!("Failure while executing the transaction: {err}");
+            DatabaseError::OperationFailure
+        })?;
+        tx.commit().map_err(|err| {
+            log::error!("Failure while commiting the transaction: {err}");
+            DatabaseError::OperationCommitFailure
+        })?;
         Ok(result)
     }
 }

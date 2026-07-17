@@ -6,26 +6,28 @@
 use axum::{
     body::Body,
     extract::{Path, State},
-    http::{Request, StatusCode},
-    response::{IntoResponse, Response},
+    http::{Request, Response, StatusCode},
+    response::IntoResponse,
     Json,
 };
 use std::sync::Arc;
 
-use crate::error_types::{DatabaseError, RequestErrors};
 use crate::folder_scanner::scan_all_folders;
-use crate::routes::auth;
 use crate::stream_reader::streaming_file;
 use crate::{data_models::authentication_model::UserCreationRequest, routes::auth::create_user};
+use crate::{
+    data_models::authentication_model::VerifyEmailRequest,
+    error_types::{DatabaseError, RequestErrors},
+};
 use crate::{
     data_models::models::{
         BookMetadata, BookSeriesMetadata, DatabaseTypes, LibraryMetadata, WithId,
     },
-    routes::auth::send_verification_email,
+    routes::auth::{send_verification_email, verify_verification_code},
 };
 use crate::{
     db::Database,
-    error_types::EmailErrors::{self, EmailSetUpNotFound},
+    error_types::EmailErrors::{self},
 };
 
 fn authorized() -> Result<(), RequestErrors> {
@@ -188,7 +190,7 @@ pub async fn sign_up(
     State(db): State<Arc<Database>>,
     Json(request): Json<UserCreationRequest>,
 ) -> Response<Body> {
-    let user = match create_user(&db, request).await {
+    let user = match create_user(&db, request.clone()).await {
         Ok(user) => user,
         Err(err) => {
             return Response::builder()
@@ -215,22 +217,47 @@ pub async fn sign_up(
                 .body("Created a user and sent a verification email.".into())
                 .unwrap()
         }
-        Err(EmailErrors::SentFailedDueToNoConfig { code }) => { /*verify email automatically */ }
+        Err(EmailErrors::SentFailedDueToNoConfig { code }) => {
+            auto_verify_account(request.email, code, &db).await
+        }
         Err(err) => {
-            return Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(
-                    format!(
-                        "Failed to send verification email due to: {}",
-                        err.to_string()
-                    )
-                    .into(),
-                )
-                .unwrap()
+            return create_internal_server_error_response(format!(
+                "Failed to send verification email due to: {}",
+                err.to_string()
+            ));
         }
     }
-    if authorized().is_ok() {}
-    return failed_getting_response();
+}
+
+async fn auto_verify_account(email: String, code: String, db: &Arc<Database>) -> Response<Body> {
+    let verify_email_request = VerifyEmailRequest {
+        email_verification_token: code,
+        email,
+        device_name: "Unknown".to_string(),
+        device_id: "Unknown".to_string(),
+        platform: "Unknown".to_string(),
+    };
+    match verify_verification_code(verify_email_request, &db).await {
+        Ok(()) => {}
+        Err(err) => {
+            log::error!("could not auto verify the account due to: {err}");
+            return create_internal_server_error_response(format!(
+                "Failed to automatically verify your user account: {}",
+                err.to_string()
+            ));
+        }
+    };
+    return Response::builder()
+                .status(StatusCode::ACCEPTED)
+                .body("Your user account has been verified. The servers email address needs to be set up so that actual verification can take place".into())
+                .unwrap();
+}
+
+fn create_internal_server_error_response(body: String) -> Response<Body> {
+    return Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .body(body.into())
+        .unwrap();
 }
 
 pub async fn sign_in() -> Response<Body> {}

@@ -13,6 +13,7 @@ pub struct UserCreationRequest {
 #[derive(Debug, Deserialize, Clone)]
 pub struct VerifyEmailRequest {
     pub email_verification_token: String,
+    pub email: String,
     pub device_name: String,
     pub device_id: String,
     pub platform: String,

@@ -269,6 +269,9 @@ pub enum UserDatabaseColumns {
     Username,
     PasswordHash,
     Email,
+    EmailVerified,
+    IsAdmin,
+    LastLogin,
 }
 impl AsRef<str> for UserDatabaseColumns {
     fn as_ref(&self) -> &str {
@@ -276,6 +279,9 @@ impl AsRef<str> for UserDatabaseColumns {
             UserDatabaseColumns::Username => "username",
             UserDatabaseColumns::PasswordHash => "password_hash",
             UserDatabaseColumns::Email => "email",
+            UserDatabaseColumns::EmailVerified => "email_verified",
+            UserDatabaseColumns::IsAdmin => "is_admin",
+            UserDatabaseColumns::LastLogin => "last_login",
         }
     }
 }
