@@ -1,15 +1,26 @@
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
+use mail_send::mail_auth::Dkim2Result::Pass;
+use rusqlite::{Connection, ToSql};
+use serde_json::error::Category::Data;
 
-use crate::data_models::authentication_model::VerifyEmailRequest;
+use crate::data_models::authentication_model::{
+    DeviceInformation, LoginRequest, VerifyEmailRequest,
+};
 use crate::database_related_scripts::db::Database;
-use crate::error_types::{AuthenticationError, EmailErrors};
-use crate::models::{DatabaseTypes, EmailVerification, EmailVerificationDatabaseColumns, Sessions};
+use crate::db::convert_system_time_to_unix_time;
+use crate::error_types::{AppErrors, AuthenticationError, DatabaseError, EmailErrors};
+use crate::models::{
+    DatabaseTypes, EmailVerification, EmailVerificationDatabaseColumns, QuerySeparator,
+    SelectionMethod, Sessions, SessionsDatabaseColumns, TOTPDatabaseColumns, TOTP,
+};
 use crate::routes::email_helper::{create_new_email, EmailInformation};
 use crate::{
     data_models::authentication_model::UserCreationRequest,
     models::{UserDatabaseColumns, UserMetadata},
 };
+use std::alloc::System;
+use std::default;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -17,13 +28,11 @@ use rand::distr::{Alphanumeric, SampleString};
 use rand::rngs::SysRng; // the OS CSPRNG (was `OsRng` before rand 0.10)
 use rand::TryRng; // brings `try_fill_bytes` into scope for SysRng
 
-//set up
-pub async fn create_user(
-    db: &Arc<Database>,
+pub fn create_new_user(
+    conn: &Connection,
+    first_user: UserCreationChecks,
     request: UserCreationRequest,
-) -> Result<UserMetadata, AuthenticationError> {
-    check_create_user_request_validity(db.clone(), request.clone())?;
-
+) -> Result<i64, AuthenticationError> {
     let hashed_password = hash_string_securely(request.password)?;
     let user = UserMetadata {
         user_id: 0,
@@ -31,91 +40,148 @@ pub async fn create_user(
         password_hash: hashed_password.hashed_string,
         email: Some(request.email),
         email_verified: false,
-        is_admin: false, //needs to check for exisitng users and then if not make the first user an admin
+        is_admin: first_user.make_admin,
         created_at: SystemTime::now(),
         last_login: SystemTime::now(),
     };
 
-    Ok(user)
+    let id = Database::insert_with_connection(conn, &user).map_err(|err| {
+        log::error!("failed to insert the new user into the database: {err}");
+        AuthenticationError::DatabaseInsertFailed
+    })?;
+    Ok(id)
 }
 
-fn check_create_user_request_validity(
-    db: Arc<Database>,
+struct UserCreationChecks {
+    pub make_admin: bool,
+}
+struct VerificationEmailInformation {
+    pub code: String,
+    pub user: UserMetadata,
+}
+pub struct HashedString {
+    pub normal_string: String, //to send to front end
+    pub hashed_string: String, //to store
+}
+
+pub struct CreatedTokensReadable {
+    pub session_token: String,
+    pub refresh_token: String,
+    pub session_token_valid_until: SystemTime,
+    pub refresh_token_valid_until: SystemTime,
+}
+
+pub struct NewSessionTokenData {
+    pub session_token: String,
+    pub session_token_hashed: String,
+    pub refresh_token: String,
+    pub refresh_token_hashed: String,
+    pub session_token_valid_until: SystemTime,
+    pub refresh_token_valid_until: SystemTime,
+}
+
+pub struct UserTotpEnabledResult {
+    pub user_has_totp_enabled: bool,
+}
+
+pub fn validate_new_user(
+    conn: &Connection,
     request: UserCreationRequest,
-) -> Result<(), AuthenticationError> {
-    let email_search_result = db
-        .search_for_single_row::<UserMetadata>(&[UserDatabaseColumns::Email], &[&request.email])
-        .map_err(|_| AuthenticationError::DatabaseSearchFailure)?;
-    if email_search_result.is_none() {
-        return Err(AuthenticationError::EmailTaken);
-    }
-    let username_search_result = db
-        .search_for_single_row::<UserMetadata>(
-            &[UserDatabaseColumns::Username],
-            &[&request.username],
-        )
-        .map_err(|_| AuthenticationError::DatabaseSearchFailure)?;
-    if username_search_result.is_none() {
-        return Err(AuthenticationError::UsernameTaken);
-    }
+) -> Result<UserCreationChecks, AuthenticationError> {
     if request.password != request.password_repeat {
         return Err(AuthenticationError::MismatchingPasswords);
     }
-
-    Ok(())
+    let existing_user = Database::search_for_single_row_with_connection::<UserMetadata>(
+        conn,
+        &[UserDatabaseColumns::Email, UserDatabaseColumns::Username],
+        &[&request.email, &request.username],
+        QuerySeparator::Or,
+        crate::models::SelectionMethod::PassedInColumns,
+    )
+    .map_err(|_| AuthenticationError::DatabaseSearchFailure)?;
+    if let Some(user) = existing_user {
+        if user.email == Some(request.email) {
+            return Err(AuthenticationError::EmailTaken);
+        }
+        if user.username == request.username {
+            return Err(AuthenticationError::UsernameTaken);
+        }
+    }
+    let existing_admin = Database::search_for_single_row_with_connection::<UserMetadata>(
+        conn,
+        &[UserDatabaseColumns::IsAdmin],
+        &[&true],
+        QuerySeparator::And,
+        SelectionMethod::PassedInColumns,
+    )
+    .map_err(|_| AuthenticationError::DatabaseSearchFailure)?;
+    Ok(UserCreationChecks {
+        make_admin: existing_admin.is_none(),
+    })
 }
 
 fn create_crypto_code(code_length: usize) -> String {
     Alphanumeric.sample_string(&mut rand::rng(), code_length)
 }
 
-pub async fn send_verification_email(
-    user: UserMetadata,
-    db: &Arc<Database>,
-) -> Result<(), EmailErrors> {
-    db.remove_entry(DatabaseTypes::EmailVerificationType, user.user_id);
+pub fn send_verification_email(
+    conn: &Connection,
+    user_id: i64,
+) -> Result<VerificationEmailInformation, EmailErrors> {
+    Database::remove_entry_with_connection(conn, DatabaseTypes::EmailVerificationType, user_id)
+        .map_err(|_| EmailErrors::VerificationTokenRemovalFailure)?;
     let crypto_code = create_crypto_code(8);
     let verification_code = hash_string_securely(crypto_code).map_err(|e| {
         log::error!("failed to hash code: {e}");
         EmailErrors::HashingFailed
     })?;
+    let user = Database::search_for_single_row_with_connection::<UserMetadata>(
+        conn,
+        &[UserDatabaseColumns::UserId],
+        &[&user_id],
+        QuerySeparator::And,
+        SelectionMethod::Everything,
+    )
+    .map_err(|_| EmailErrors::FailedToRetrieveUserEntry)?
+    .ok_or(EmailErrors::UserEntryNotFound)?;
 
     let expiration_date = SystemTime::now()
         .checked_add(Duration::from_mins(15))
         .ok_or(EmailErrors::TimeAdjustmentFailure)?;
 
     let email_verification = EmailVerification {
-        user_id: user.user_id,
+        user_id: user_id,
         verification_token: verification_code.hashed_string,
         expiration_date,
         invalidated: false,
     };
-    db.insert(&email_verification).map_err(|e| {
+
+    Database::insert_with_connection(conn, &email_verification).map_err(|e| {
         log::error!("Failed insertion into database: {e}");
         EmailErrors::DatabaseInsertionFailed
     })?;
-    create_verification_email(verification_code.normal_string.clone(), user)
-        .await
-        .map_err(|err| match err {
-            EmailErrors::EmailSetUpNotFound => EmailErrors::SentFailedDueToNoConfig {
-                code: verification_code.normal_string,
-            },
-            err => err,
-        })
+    let response = VerificationEmailInformation {
+        code: verification_code.normal_string.clone(),
+        user: user,
+    };
+    Ok(response)
 }
 
 //TODO: Text must be replaced with the i18n text which I will create after the authentication
 pub async fn create_verification_email(
-    code: String,
-    user: UserMetadata,
+    information: &VerificationEmailInformation,
 ) -> Result<(), EmailErrors> {
     //if called re-sends a verification email with a new token
-    let body = format!("Dear {}, \n The verify the account please enter the following code in the application.\n Code: {} \n Best regards,\n{}",user.username,code,"Server Team");
+    let body = format!("Dear {}, \n The verify the account please enter the following code in the application.\n Code: {} \n Best regards,\n{}",&information.user.username,information.code,"Server Team");
     let subject = format!("Verify Book Server Account");
 
-    let mail_info = EmailInformation {
-        username: user.username,
-        email: user.email.ok_or(EmailErrors::MissingEmail)?,
+    let mail_info: EmailInformation = EmailInformation {
+        username: information.user.username.clone(),
+        email: information
+            .user
+            .email
+            .clone()
+            .ok_or(EmailErrors::MissingEmail)?,
         body,
         subject,
     };
@@ -126,93 +192,120 @@ pub async fn create_verification_email(
     }
 }
 
-pub async fn verify_verification_code(
-    request: VerifyEmailRequest,
-    db: &Arc<Database>,
-) -> Result<(), AuthenticationError> {
-    let stored_user = db
-        .search_for_single_row::<UserMetadata>(&[UserDatabaseColumns::Email], &[&request.email])
-        .map_err(|e| {
-            log::error!("Database returned error: {e}");
-            AuthenticationError::DatabaseSearchFailure
-        })?
-        .ok_or(AuthenticationError::UserNotFound)?;
+pub fn search_for_user_using_email_or_username(
+    conn: &Connection,
+    username_or_email: &String,
+) -> Result<UserMetadata, AppErrors> {
+    let stored_user = Database::search_for_single_row_with_connection::<UserMetadata>(
+        conn,
+        &[UserDatabaseColumns::Email, UserDatabaseColumns::Username],
+        &[&username_or_email, &username_or_email],
+        QuerySeparator::Or,
+        SelectionMethod::Everything,
+    )
+    .map_err(|e| {
+        log::error!("Database returned error: {e}");
+        AuthenticationError::DatabaseSearchFailure
+    })?
+    .ok_or(AuthenticationError::IncorrectCredentials)?;
+    Ok(stored_user)
+}
 
-    let verification_token = db
-        .search_for_single_row::<EmailVerification>(
-            &[
-                EmailVerificationDatabaseColumns::UserId,
-                EmailVerificationDatabaseColumns::Invalidated,
-            ],
-            &[&stored_user.user_id, &false],
-        )
-        .map_err(|e| {
-            log::error!("Database returned error: {e}");
-            AuthenticationError::DatabaseSearchFailure
-        })?
-        .ok_or(AuthenticationError::EmailVerificationNotFound)?;
+pub fn verify_verification_code(
+    conn: &Connection,
+    request: &VerifyEmailRequest,
+    user_id: i64,
+) -> Result<(), AppErrors> {
+    let verification_token = Database::search_for_single_row_with_connection::<EmailVerification>(
+        conn,
+        &[
+            EmailVerificationDatabaseColumns::UserId,
+            EmailVerificationDatabaseColumns::Invalidated,
+        ],
+        &[&user_id, &false],
+        QuerySeparator::And,
+        SelectionMethod::Everything,
+    )
+    .map_err(|e| {
+        log::error!("Database returned error: {e}");
+        AuthenticationError::DatabaseSearchFailure
+    })?
+    .ok_or(AuthenticationError::EmailVerificationNotFound)?;
 
     let hashed_token = PasswordHash::new(&verification_token.verification_token).map_err(|e| {
         log::error!("PasswordHash::new failed to convert string to PasswordHash: {e}");
         AuthenticationError::StringToPasswordHashConversionFailed
     })?;
     evaluate_verification_token(
-        stored_user.user_id,
+        conn,
+        user_id,
         request.email_verification_token.as_bytes(),
         hashed_token,
-        db,
     )
 }
 
 fn evaluate_verification_token(
+    conn: &Connection,
     user_id: i64,
     password: &[u8],
     stored_password: PasswordHash<'_>,
-    db: &Arc<Database>,
-) -> Result<(), AuthenticationError> {
+) -> Result<(), AppErrors> {
     if Argon2::default()
         .verify_password(password, &stored_password)
         .is_ok()
     {
-        db.setup_new_transaction(|conn| {
-            Database::update_value_with_connection::<UserMetadata>(
-                conn,
-                UserDatabaseColumns::EmailVerified,
-                &true,
-                user_id,
-            )?;
+        Database::update_value_with_connection::<UserMetadata>(
+            conn,
+            UserDatabaseColumns::EmailVerified,
+            &true,
+            user_id,
+        )?;
 
-            Database::update_value_with_connection::<EmailVerification>(
-                conn,
-                EmailVerificationDatabaseColumns::Invalidated,
-                &true,
-                user_id,
-            )?;
+        Database::update_value_with_connection::<EmailVerification>(
+            conn,
+            EmailVerificationDatabaseColumns::Invalidated,
+            &true,
+            user_id,
+        )?;
 
-            Ok(())
-        })
-        .map_err(|err| {
-            log::error!(
-                "Failed a transaction updating both the user and the email verification: {err}"
-            );
-            AuthenticationError::DatabaseUpdateFailed
-        })?;
         Ok(())
     } else {
-        return Err(AuthenticationError::IncorrectCredentials);
+        return Err(AppErrors::Authentication(
+            AuthenticationError::IncorrectCredentials,
+        ));
     }
 }
 
 //authentication
-pub fn log_in() {
-    //user submits a password and username
-    //retrieve stored password from db for user
-    //using argon2 you verify the password if it matches the stored one
-    //has a built in verification function which should be used
-    //if not verified give the option to send verification email and stop here
-    //otherwise continue
-    //if totp is enabled first start the totp log in process and then create a new session
-    //if successful you return the refresh token and the session token.
+pub fn log_in(
+    request: &LoginRequest,
+    conn: &Connection,
+    user: &UserMetadata,
+) -> Result<UserTotpEnabledResult, AuthenticationError> {
+    let password_hash = PasswordHash::new(&user.password_hash).map_err(|err| {
+        log::error!("Failed to hash password: {err}");
+        AuthenticationError::StringToPasswordHashConversionFailed
+    })?;
+    if Argon2::default()
+        .verify_password(request.password.as_bytes(), &password_hash)
+        .is_err()
+    {
+        return Err(AuthenticationError::IncorrectCredentials);
+    }
+    let user_totp_settings = Database::search_for_single_row_with_connection::<TOTP>(
+        conn,
+        &[TOTPDatabaseColumns::UserId],
+        &[&user.user_id],
+        QuerySeparator::And,
+        SelectionMethod::Everything,
+    )
+    .map_err(|err| {
+        log::error!("search request failed: {err}");
+        AuthenticationError::DatabaseSearchFailure
+    })?;
+    Ok(UserTotpEnabledResult {
+        user_has_totp_enabled: user_totp_settings.is_some(),
+    })
 }
 
 pub fn refresh_session_token() {
@@ -264,10 +357,79 @@ pub fn log_out() {
     //return success
 }
 
-pub fn create_new_session(
-    db: Arc<Database>,
-    user_id: i64,
+pub fn update_existing_session(
+    conn: &Connection,
+    session: Sessions,
 ) -> Result<CreatedTokensReadable, AuthenticationError> {
+    let tokens = create_token_pair()?;
+    let columns = [
+        SessionsDatabaseColumns::RefreshToken,
+        SessionsDatabaseColumns::SessionToken,
+        SessionsDatabaseColumns::RefreshTokenExpirationDate,
+        SessionsDatabaseColumns::SessionTokenExpirationDate,
+        SessionsDatabaseColumns::LastUsedAt,
+    ];
+    let refresh_expirtation = convert_system_time_to_unix_time(tokens.refresh_token_valid_until);
+    let session_expiration = convert_system_time_to_unix_time(tokens.session_token_valid_until);
+    let now = convert_system_time_to_unix_time(SystemTime::now());
+    let values: &[&dyn ToSql] = &[
+        &tokens.refresh_token,
+        &tokens.session_token,
+        &refresh_expirtation,
+        &session_expiration,
+        &now,
+    ];
+    Database::update_multiple_values_with_connection::<Sessions>(
+        conn,
+        &columns,
+        values,
+        session.session_id,
+    )
+    .map_err(|err| {
+        log::error!("Failed the updating of the refresh token: {err}");
+        AuthenticationError::DatabaseUpdateFailed
+    })?;
+    Ok(CreatedTokensReadable {
+        session_token: tokens.session_token,
+        refresh_token: tokens.refresh_token,
+        refresh_token_valid_until: tokens.refresh_token_valid_until,
+        session_token_valid_until: tokens.session_token_valid_until,
+    })
+}
+
+pub fn create_new_session(
+    conn: &Connection,
+    user_id: i64,
+    device_information: DeviceInformation,
+    user_totp_settings: UserTotpEnabledResult,
+) -> Result<CreatedTokensReadable, AuthenticationError> {
+    let tokens = create_token_pair()?;
+    let authentication_complete = !user_totp_settings.user_has_totp_enabled;
+    let session = Sessions {
+        session_id: 0, //will get assigned when entered into the db
+        user_id,
+        device_id: device_information.device_id.to_string(),
+        device_name: device_information.device_name.to_string(),
+        platform: device_information.platform.to_string(),
+        refresh_token: tokens.refresh_token_hashed,
+        session_token: tokens.session_token_hashed,
+        refresh_token_expiration_date: tokens.refresh_token_valid_until,
+        session_token_expiration_date: tokens.session_token_valid_until,
+        created_at: SystemTime::now(),
+        last_used_at: SystemTime::now(),
+        authentication_completed: authentication_complete, //will be changed on log in when the user has totp authentication is enabled.
+    };
+    Database::insert_with_connection(conn, &session)
+        .map_err(|_| AuthenticationError::FailedDataStoring)?;
+    Ok(CreatedTokensReadable {
+        session_token: tokens.session_token,
+        refresh_token: tokens.refresh_token,
+        refresh_token_valid_until: tokens.refresh_token_valid_until,
+        session_token_valid_until: tokens.session_token_valid_until,
+    })
+}
+
+fn create_token_pair() -> Result<NewSessionTokenData, AuthenticationError> {
     let session_token = create_new_token()?;
     let refresh_token = create_new_token()?;
     let hours_refresh_token_is_valid = 24 * 30; //24 for hours in a day and 30 for valid duration of refresh token,
@@ -278,27 +440,13 @@ pub fn create_new_session(
     let session_token_expiration_date = current_time
         .checked_add(Duration::from_mins(15))
         .ok_or(AuthenticationError::TokenLifetimeCalculationFailed)?;
-    let session = Sessions {
-        session_id: 0, //will get assigned when entered into the db
-        user_id,
-        device_id: "".to_string(),
-        device_name: "".to_string(),
-        platform: "".to_string(),
-        refresh_token: refresh_token.hashed_string,
-        session_token: session_token.hashed_string,
-        refresh_token_expiration_date,
-        session_token_expiration_date,
-        created_at: current_time,
-        last_used_at: current_time,
-        authentication_completed: false,
-    };
-    db.insert(&session)
-        .map_err(|_| AuthenticationError::FailedDataStoring)?;
-    Ok(CreatedTokensReadable {
+    Ok(NewSessionTokenData {
         session_token: session_token.normal_string,
+        session_token_hashed: session_token.hashed_string,
         refresh_token: refresh_token.normal_string,
-        refresh_token_valid_until: refresh_token_expiration_date,
+        refresh_token_hashed: refresh_token.hashed_string,
         session_token_valid_until: session_token_expiration_date,
+        refresh_token_valid_until: refresh_token_expiration_date,
     })
 }
 
@@ -313,18 +461,6 @@ pub fn create_new_token() -> Result<HashedString, AuthenticationError> {
         normal_string: final_token,
         hashed_string: hashed_token,
     })
-}
-
-struct HashedString {
-    normal_string: String, //to send to front end
-    hashed_string: String, //to store
-}
-
-struct CreatedTokensReadable {
-    session_token: String,
-    refresh_token: String,
-    session_token_valid_until: SystemTime,
-    refresh_token_valid_until: SystemTime,
 }
 
 fn hash_string_securely(to_hash: String) -> Result<HashedString, AuthenticationError> {
@@ -350,24 +486,20 @@ General hashing: blake3
 UUIDs: uuid
 JWTs: jsonwebtoken or another well-maintained JWT crate
 
-Your flow would look something like this:
-Validate username/email.
-Create and insert the user.
-Mark the user as verified = false.
-Generate and store a verification token.
-Try to send the email.
-Success → return "check your email."
-Email server not configured → auto-verify.
-Other email error → tell the user the account was created but the verification email couldn't be sent.
-User can log in at any time.
-If verified == false, redirect them to the verification flow.
-Allow resending the verification email with a cooldown.
-Periodically delete accounts that have remained unverified for 30 days.
-A few things I'd recommend as you continue:
-Store when the last verification email was sent. That makes enforcing a cooldown straightforward and avoids generating unnecessary tokens.
-Invalidate previous verification codes when issuing a new one (it looks like you're already removing the previous entry).
-Don't reveal whether an email address exists on the resend endpoint. It's usually better to always respond with something like:
-"If an account requiring verification exists, a new verification email has been sent."
-This prevents someone from probing which email addresses are registered.
-Let users request another verification email after logging in. Since they can already authenticate, it's convenient to have a "Resend verification email" button on the verification page.
+
+On first run:
+Generate a 256-bit random key.
+Store it in a protected secrets file.
+Use that key for:
+keyed BLAKE3 hashing of refresh tokens
+encrypting sensitive configuration values
+signing internal data (if appropriate)
+The database then contains only encrypted or hashed values, while the secrets file contains the key needed to use them.
+One recommendation
+I would avoid inventing your own encryption format. Rust has excellent, well-reviewed libraries for authenticated encryption, such as those implementing AES-GCM or ChaCha20-Poly1305. These provide both confidentiality and integrity, reducing the chance of subtle security mistakes.
+For your application, a clean architecture would be:
+Database: application data, sessions, encrypted secrets.
+Secrets file: one randomly generated 256-bit master key (and possibly a few deployment-specific secrets).
+Application: loads the master key at startup and uses it for keyed hashing and encryption/decryption as needed.
+That gives you a good separation of concerns without making deployment overly complicated.
 */

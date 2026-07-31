@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, time::SystemTime};
 use strum_macros::EnumIter;
 
-use crate::error_types::EmailErrors;
+use crate::{error_types::EmailErrors, models::ColumnSelector::User};
 
 //============  Row id + metadata wrapper =================
 // Metadata structs don't store their own row id, but list endpoints need it so
@@ -24,6 +24,7 @@ pub enum DatabaseTypes {
     Series,
     Users,
     EmailVerificationType,
+    Session,
 }
 
 impl DatabaseTypes {
@@ -35,6 +36,7 @@ impl DatabaseTypes {
             DatabaseTypes::Users => "users",
             DatabaseTypes::LibraryElements => "library_elements",
             DatabaseTypes::EmailVerificationType => "email_verification",
+            DatabaseTypes::Session => "session",
         }
     }
 
@@ -266,6 +268,7 @@ pub struct UserMetadata {
 }
 
 pub enum UserDatabaseColumns {
+    UserId,
     Username,
     PasswordHash,
     Email,
@@ -276,6 +279,7 @@ pub enum UserDatabaseColumns {
 impl AsRef<str> for UserDatabaseColumns {
     fn as_ref(&self) -> &str {
         match self {
+            UserDatabaseColumns::UserId => "user_id",
             UserDatabaseColumns::Username => "username",
             UserDatabaseColumns::PasswordHash => "password_hash",
             UserDatabaseColumns::Email => "email",
@@ -528,4 +532,23 @@ pub struct EmailConfig {
     pub password: String,
     pub from: String,
     pub from_name: String,
+}
+
+pub enum QuerySeparator {
+    And,
+    Or,
+}
+
+impl QuerySeparator {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            QuerySeparator::And => " AND ",
+            QuerySeparator::Or => " OR ",
+        }
+    }
+}
+
+pub enum SelectionMethod {
+    Everything,
+    PassedInColumns,
 }

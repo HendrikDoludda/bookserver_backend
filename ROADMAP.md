@@ -318,6 +318,40 @@ server is ever exposed directly to the open internet.
 - ⬜ CORS configuration **[BE]** — only once a browser client (web frontend / backend web view) calls the API
 - ⬜ File reconciliation — a scan prunes/flags DB rows whose files were moved or deleted on disk **[BE]** (data integrity, not security)
 - ⬜ Deployment / packaging: Windows `.exe`, macOS `.dmg`, Docker image; persistent volume for the SQLite DB + covers **[BE]**
+- 🟡 **Signing key — decide its job or drop it** **[BE]** — `config.rs` generates a 256-bit
+  key into `secrets.toml`, but nothing uses it yet. Sessions are **opaque DB-backed tokens**
+  (random value → BLAKE3 hash stored, revoke = delete row), *not* signed JWTs, so the key adds
+  **nothing** to token storage (the tokens are already high-entropy). Its one concrete use here is
+  **encrypting the TOTP secret at rest** (§3a open decision) via an AEAD (`chacha20poly1305` /
+  `aes-gcm`). If nothing consumes it, remove it rather than carry unused crypto. The
+  `previous_token_signing_key` rotation scaffolding only matters *once the key is actually used*.
+
+**Application-level auth hardening** *(from a security-checklist review; scoped to a LAN + Tailscale,
+few-user, admin-registration home server. JWT-specific items — signing access tokens, `jti`
+blocklists, signing-key rotation — are deliberately **excluded**: sessions are opaque DB tokens, so
+revocation is a row delete and there is no signature to manage. Also excluded as over-engineering for
+this threat model: suspicious-login/anomaly detection, account lockout (itself a DoS vector),
+hardware-backed key storage, and blanket encryption-at-rest.)*
+- ⬜ **Restrict file permissions to owner-only (`0600`)** on the secrets file (TODO already in
+  `config.rs`) and on the SQLite DB file — a leaked signing key or DB is the whole ballgame **[BE]**
+- ⬜ **Generic error bodies to the client** — handlers currently return `err.to_string()` in the
+  response body (`create_internal_server_error_response`), which can leak internal detail; log the
+  detail server-side, send the client only a status + generic message **[BE]**
+- ⬜ **Derive `user_id` from the session token, never from the request body** — the single rule that
+  prevents acting as another user; get it right when the `AuthUser` extractor (§3) lands **[BE]**
+- ⬜ **Session revocation + "active sessions" management** — logout deletes the session row; add an
+  endpoint to list a user's sessions (device/platform already stored) and revoke any one **[BE][FE]**
+- ⬜ **Invalidate all of a user's sessions on password change / reset** — the `password_changed()`
+  stub already intends this **[BE]**
+- ⬜ **Minimal security audit log** — record failed logins, password changes, and session revocations
+  via `tracing`; never log passwords, tokens, or the signing key **[BE]**
+- ⬜ **Password-hash upgrade-on-login** — if a verified password's stored Argon2 params are older than
+  current, re-hash and store, so cost params can be raised later without a migration (low priority) **[BE]**
+- ⬜ **`cargo audit`** in the dev workflow (later CI) to catch vulnerable dependencies — cheap **[BE]**
+- ⬜ **TOTP verify rate-limit is the priority throttle** (tracked in §3a) — a 6-digit code is only 1M
+  combos, so it's brute-forceable even behind Tailscale; ordinary login rate-limiting stays *(public
+  only)* since there's no anonymous attacker on the tailnet **[BE]**
+
 
 
 ### 12. Language options (i18n / localization)
@@ -330,8 +364,35 @@ sides" — and since it's *data in the backend*, translations can be edited from
 and the §4 notification **emails localize for free** (backend already has the catalog + the
 user's locale; no separate email catalog needed).
 
-- ⬜ Catalog stored backend-side, keyed by **key** (never by English string), per locale,
-  and grouped into **namespaces/sections** (e.g. `settings`, `library`, `options`, `reader`) **[BE]**
+**Key ownership (DECIDED): code owns keys, admins own values.** A "line" (key) exists because
+the frontend calls `t("namespace.key")`, so keys live in version control next to that code;
+developers add a line when they add UI text. The **admin panel adds *languages* and fills in
+*values*** — it does not invent or delete keys, so the catalog can never drift out of sync with
+what the code actually references. Adding a language is therefore pure data entry, never a code
+change or a hand-written JSON file (the original goal).
+
+**Admin management (DECIDED): the admin UI (§5) edits the catalog directly.** Layout mirrors the
+data model below: pick/add a **language** (display name + **icon**, enabled flag, default flag,
+sort order); **tabs = namespaces**; each tab lists its **keys as input boxes**. An untranslated
+box shows the default-language (English) text as placeholder for context, and the same
+`LEFT JOIN` that powers that gives a free "N/M translated" progress view per language. Every save
+bumps the catalog version (below).
+
+- ⬜ **Data model — three tables**, fitting the existing conventions **[DB]**:
+  - `locales` — the languages an admin manages: `code` (BCP-47, e.g. `de`, `pt-BR`), `display_name`,
+    `icon`, `is_default`, `enabled`, `sort_order`.
+  - `translation_keys` — the canonical, code-owned key list = the tabs + lines: `namespace`, `key`,
+    optional `description` (translator hint); `UNIQUE (namespace, key)`.
+  - `translations` — the filled-in values: `(locale_code, key_id) → value`. A **junction table**
+    (composite PK, **no `id`**), so like `library_elements` it does *not* implement `Extract`; it
+    gets dedicated `Database` methods (fetch-by-locale, upsert-one) instead.
+- ⬜ Catalog is keyed by **key** (never by English string), per locale, grouped into
+  **namespaces/sections** (e.g. `common`, `settings`, `library`, `options`, `reader`) **[BE]**
+- ⬜ **English base (keys + English text) is a developer artifact** seeded from the repo (a seeder
+  or, during early dev, the initial migration); every other language is pure DB data added/edited
+  only through the admin UI **[BE][DB]**
+- ⬜ **Language icon** stored on `locales` — start simple (an emoji flag, or a short id the frontend
+  maps to a bundled icon); optionally later reuse the `cover_images` upload path for custom art **[BE][FE]**
 - ⬜ `GET /i18n/:locale` endpoint returning that locale's strings **[BE]**
 - ⬜ **Section-scoped retrieval** — a screen can request just the namespaces it needs in the
   chosen language in one call (e.g. `GET /i18n/:locale?sections=settings,library,options`),
@@ -344,7 +405,7 @@ section-scoped call above is the fallback for the rare case a screen needs strin
 cached.
 - ⬜ A `t("some.key")` lookup used everywhere instead of literal UI text **[FE]**
 - ⬜ **Fallback locale** — a missing key falls back to the default (English), so a
-  half-translated language still works **[BE][FE]**
+  half-translated language still works. The fields when emptied will fall back to the english entry on save so there will be no empty boxes in the application.**[BE][FE]**
 - ⬜ **Pluralization + interpolation** handled (`"{count} unread"`; plural rules differ per
   language) — the two classic i18n gotchas **[FE]**
 - ⬜ **Per-user language preference** stored on the user (ties into §3 "Per-user settings");

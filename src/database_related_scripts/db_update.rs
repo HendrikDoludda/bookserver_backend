@@ -5,7 +5,8 @@ use crate::data_models::models::{
     TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, TOTP,
 };
 use crate::error_types::DatabaseError;
-use rusqlite::{params, Connection, ToSql};
+use rusqlite::{params, params_from_iter, Connection, ToSql};
+use tracing_subscriber::registry::Data;
 
 pub trait Update {
     type Column: AsRef<str>;
@@ -27,6 +28,36 @@ pub trait Update {
         conn.execute(&query, params![new_value, id])
             .map_err(|_| DatabaseError::UpdatingFailure)?;
 
+        Ok(())
+    }
+
+    fn update_multiple(
+        conn: &Connection,
+        columns: &[Self::Column],
+        values: &[&dyn ToSql],
+        id: i64,
+    ) -> Result<(), DatabaseError> {
+        if columns.len() != values.len() {
+            return Err(DatabaseError::InvalidParameters);
+        }
+
+        let assignments = columns
+            .iter()
+            .enumerate()
+            .map(|(i, column)| format!("{} = ?{}", column.as_ref(), i + 1))
+            .collect::<Vec<String>>()
+            .join(", ");
+        let id_placeholder = values.len() + 1;
+        let query = format!(
+            "UPDATE {} SET {} WHERE id = ?{}",
+            Self::TABLE,
+            assignments,
+            id_placeholder
+        );
+        let mut bound: Vec<&dyn ToSql> = values.to_vec();
+        bound.push(&id);
+        conn.execute(&query, params_from_iter(bound))
+            .map_err(|_| DatabaseError::UpdatingFailure)?;
         Ok(())
     }
 }

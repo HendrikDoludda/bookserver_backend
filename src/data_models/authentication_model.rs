@@ -1,4 +1,4 @@
-use std::fmt::Binary;
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +28,13 @@ pub struct LoginRequest {
     pub platform: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct DeviceInformation<'a> {
+    pub device_name: &'a str,
+    pub device_id: &'a str,
+    pub platform: &'a str,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct ChangeEmailRequest {
     pub new_email: String,
@@ -47,8 +54,11 @@ pub struct ChangePasswordRequest {
 
 #[derive(Serialize)]
 pub struct AuthResponse {
-    pub access_token: String,
+    pub message: String,
+    pub session_token: String,
     pub refresh_token: String,
+    pub session_token_expiration: SystemTime,
+    pub refresh_token_expiration_time: SystemTime,
 }
 
 //for the authentication use the axum extractors auth: AuthSession or something like that

@@ -5,36 +5,177 @@
 
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{FromRequestParts, Path, State},
     http::{Request, Response, StatusCode},
     response::IntoResponse,
     Json,
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::SystemTime};
+use tracing_subscriber::{fmt::format, registry::Data};
 
-use crate::folder_scanner::scan_all_folders;
-use crate::stream_reader::streaming_file;
-use crate::{data_models::authentication_model::UserCreationRequest, routes::auth::create_user};
+use crate::{
+    data_models::authentication_model::AuthResponse,
+    folder_scanner::scan_all_folders,
+    routes::auth::{
+        create_new_user, create_verification_email, search_for_user_using_email_or_username,
+        validate_new_user,
+    },
+};
 use crate::{
     data_models::authentication_model::VerifyEmailRequest,
     error_types::{DatabaseError, RequestErrors},
 };
 use crate::{
+    data_models::authentication_model::{DeviceInformation, LoginRequest, UserCreationRequest},
+    routes::auth::{update_existing_session, UserTotpEnabledResult},
+};
+use crate::{
     data_models::models::{
         BookMetadata, BookSeriesMetadata, DatabaseTypes, LibraryMetadata, WithId,
     },
-    routes::auth::{send_verification_email, verify_verification_code},
+    routes::auth::{
+        create_new_session, log_in, send_verification_email, verify_verification_code,
+        CreatedTokensReadable,
+    },
 };
 use crate::{
     db::Database,
     error_types::EmailErrors::{self},
 };
+use crate::{
+    error_types::{
+        AppErrors,
+        AuthenticationError::{ExpiredSession, UnautherizedSession},
+    },
+    models::{Sessions, SessionsDatabaseColumns, UserMetadata},
+    routes::auth::create_new_token,
+    stream_reader::streaming_file,
+};
 
-fn authorized() -> Result<(), RequestErrors> {
-    //check the session token
-    //check the expiration date
-    //check authentication complete (to see if it completed the final log in step)
-    Ok(())
+use tower_cookies::{Cookie, Cookies};
+
+pub struct AdminSession(pub Sessions);
+
+impl FromRequestParts<Arc<Database>> for AdminSession {
+    type Rejection = RequestErrors;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        db: &Arc<Database>,
+    ) -> Result<Self, Self::Rejection> {
+        let AuthSession(session) = AuthSession::from_request_parts(parts, db).await?;
+        let user = db
+            .get_entry::<UserMetadata>(session.user_id)
+            .map_err(|_| RequestErrors::RequestFailed)?;
+        if !user.is_admin {
+            return Err(RequestErrors::Forbidden);
+        }
+        Ok(AdminSession(session))
+    }
+}
+
+pub struct AuthSession(pub Sessions);
+
+impl FromRequestParts<Arc<Database>> for AuthSession {
+    type Rejection = RequestErrors;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        db: &Arc<Database>,
+    ) -> Result<Self, Self::Rejection> {
+        let cookies = Cookies::from_request_parts(parts, db)
+            .await
+            .map_err(|_| RequestErrors::RequestFailed)?;
+        let session = authorized(cookies, db)?;
+        Ok(AuthSession(session))
+    }
+}
+
+fn authorized(cookies: Cookies, db: &Arc<Database>) -> Result<Sessions, RequestErrors> {
+    let session_token_cookie = cookies
+        .get("session_token")
+        .ok_or(RequestErrors::AuthorizationFailed)?;
+    let hashed_session_token = blake3::hash(session_token_cookie.value().as_bytes())
+        .to_hex()
+        .to_string();
+    let session: Sessions = db
+        .setup_new_transaction(|conn| {
+            let session = Database::search_for_single_row_with_connection::<Sessions>(
+                conn,
+                &[SessionsDatabaseColumns::SessionToken],
+                &[&hashed_session_token],
+                crate::models::QuerySeparator::And,
+                crate::models::SelectionMethod::Everything,
+            )?
+            .ok_or(AppErrors::Authentication(UnautherizedSession))?;
+            if session.session_token_expiration_date < SystemTime::now() {
+                return Err(AppErrors::Authentication(ExpiredSession));
+            }
+            if !session.authentication_completed {
+                return Err(AppErrors::Authentication(UnautherizedSession));
+            }
+            Ok(session)
+        })
+        .map_err(|err| match err {
+            AppErrors::Authentication(_) => RequestErrors::AuthorizationFailed, // 401
+            other => {
+                log::error!("authorization transaction failed: {other}");
+                RequestErrors::RequestFailed // 500
+            }
+        })?;
+    Ok(session)
+}
+
+pub struct AuthRefreshSession(pub Sessions);
+
+impl FromRequestParts<Arc<Database>> for AuthRefreshSession{
+    type Rejection = RequestErrors;
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        db: &Arc<Database>,
+    ) -> Result<Self, Self::Rejection>>
+    {
+        let cookies = Cookies::from_request_parts(parts, db)
+            .await
+            .map_err(|_| RequestErrors::RequestFailed)?;
+        let session = refresh_authorized(cookies, db)?;
+        Ok(AuthRefreshSession(session))
+    }
+}
+
+fn refresh_authorized(cookies: Cookies, db: &Arc<Database>)->Result<Sessions, RequestErrors>{
+    let refresh_token_cookie = cookies
+        .get("refresh_token")
+        .ok_or(RequestErrors::AuthorizationFailed)?;
+    let hashed_refresh_token = blake3::hash(refresh_token_cookie.value().as_bytes())
+        .to_hex()
+        .to_string();
+    let session: Sessions = db
+        .setup_new_transaction(|conn| {
+            let session = Database::search_for_single_row_with_connection::<Sessions>(
+                conn,
+                &[SessionsDatabaseColumns::RefreshToken],
+                &[&hashed_refresh_token],
+                crate::models::QuerySeparator::And,
+                crate::models::SelectionMethod::Everything,
+            )?
+            .ok_or(AppErrors::Authentication(UnautherizedSession))?;
+            if session.refresh_token_expiration_date < SystemTime::now() {
+                return Err(AppErrors::Authentication(ExpiredSession));
+            }
+            if !session.authentication_completed {
+                return Err(AppErrors::Authentication(UnautherizedSession));
+            }
+            Ok(session)
+        })
+        .map_err(|err| match err {
+            AppErrors::Authentication(_) => RequestErrors::AuthorizationFailed, // 401
+            other => {
+                log::error!("authorization transaction failed: {other}");
+                RequestErrors::RequestFailed // 500
+            }
+        })?;
+    Ok(session)
 }
 
 // Simple liveness check. Also used as the placeholder handler for routes
@@ -149,67 +290,34 @@ fn failed_getting_response() -> Response<Body> {
     return Response::new("Failed to get response".into());
 }
 
-/*pub async fn sign_up(
-    State(db): State<Arc<Database>>,
-    Json(request): Json<UserCreationRequest>,
-) -> Response<Body> {
-    // Create the user (validation has already happened)
-    let user = match create_user(&db, request).await {
-        Ok(user) => user,
-        Err(error) => return error.into_response(),
-    };
-
-    // Create a short-lived JWT
-    let access_token = match create_access_token(user.id) {
-        Ok(token) => token,
-        Err(error) => return error.into_response(),
-    };
-
-    // Create a long-lived refresh token
-    let refresh_token = generate_refresh_token();
-
-    // Store the refresh token hash in the database
-    if let Err(error) = create_session(
-        &db,
-        user.id,
-        &refresh_token,
-        /* device info */
-    )
-    .await
-    {
-        return error.into_response();
-    }
-
-    Json(AuthResponse {
-        access_token,
-        refresh_token,
-    })
-    .into_response()
-} */
 pub async fn sign_up(
     State(db): State<Arc<Database>>,
     Json(request): Json<UserCreationRequest>,
 ) -> Response<Body> {
-    let user = match create_user(&db, request.clone()).await {
-        Ok(user) => user,
+    let email_info = match db.setup_new_transaction(|conn| {
+        let validated_user = validate_new_user(conn, request.clone())?;
+        let user_id = create_new_user(conn, validated_user, request.clone())?;
+        let result = send_verification_email(conn, user_id)?;
+        Ok(result)
+    }) {
+        Ok(information) => information,
         Err(err) => {
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(format!("Failed Creating User: {}", err.to_string()).into())
-                .unwrap()
-        }
-    };
-    let id = match db.insert(&user) {
-        Ok(id) => id,
-        Err(err) => {
-            return Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(format!("Failed inserting user: {}", err.to_string()).into())
-                .unwrap()
+            log::error!("Failed the sign up procedure with error: {err}");
+            return create_internal_server_error_response(format!(
+                "Could not create a user due to: {}",
+                err.to_string()
+            ));
         }
     };
 
-    let result = send_verification_email(user, &db).await;
+    let result = create_verification_email(&email_info)
+        .await
+        .map_err(|err| match err {
+            EmailErrors::EmailSetUpNotFound => EmailErrors::SentFailedDueToNoConfig {
+                code: email_info.code,
+            },
+            err => err,
+        });
     match result {
         Ok(()) => {
             return Response::builder()
@@ -218,7 +326,7 @@ pub async fn sign_up(
                 .unwrap()
         }
         Err(EmailErrors::SentFailedDueToNoConfig { code }) => {
-            auto_verify_account(request.email, code, &db).await
+            auto_verify_account(request.email, code, &db, email_info.user.user_id).await
         }
         Err(err) => {
             return create_internal_server_error_response(format!(
@@ -229,7 +337,12 @@ pub async fn sign_up(
     }
 }
 
-async fn auto_verify_account(email: String, code: String, db: &Arc<Database>) -> Response<Body> {
+async fn auto_verify_account(
+    email: String,
+    code: String,
+    db: &Arc<Database>,
+    user_id: i64,
+) -> Response<Body> {
     let verify_email_request = VerifyEmailRequest {
         email_verification_token: code,
         email,
@@ -237,34 +350,108 @@ async fn auto_verify_account(email: String, code: String, db: &Arc<Database>) ->
         device_id: "Unknown".to_string(),
         platform: "Unknown".to_string(),
     };
-    match verify_verification_code(verify_email_request, &db).await {
-        Ok(()) => {}
+    verify_email_logic(verify_email_request, db, user_id)
+}
+
+pub async fn sign_in(State(db): State<Arc<Database>>, request: LoginRequest) -> Response<Body> {
+    let tokens: CreatedTokensReadable = match db.setup_new_transaction(|conn| {
+        let user = search_for_user_using_email_or_username(conn, &request.username_or_email)?;
+        let user_totp_settings = log_in(&request, conn, &user)?;
+        let device_information = DeviceInformation {
+            device_id: &request.device_id,
+            device_name: &request.device_name,
+            platform: &request.platform,
+        };
+        let token_info =
+            create_new_session(conn, user.user_id, device_information, user_totp_settings)?;
+        Ok(token_info)
+    }) {
+        Ok(tokens) => tokens,
         Err(err) => {
-            log::error!("could not auto verify the account due to: {err}");
+            log::error!("Failed with log in transaction at: {err}");
             return create_internal_server_error_response(format!(
-                "Failed to automatically verify your user account: {}",
+                "Failed to sign in due to: {}",
                 err.to_string()
             ));
         }
     };
-    return Response::builder()
-                .status(StatusCode::ACCEPTED)
-                .body("Your user account has been verified. The servers email address needs to be set up so that actual verification can take place".into())
-                .unwrap();
+    create_auth_response("Your user account has been logged in", tokens)
 }
 
-fn create_internal_server_error_response(body: String) -> Response<Body> {
-    return Response::builder()
-        .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .body(body.into())
-        .unwrap();
+pub async fn verify_email(
+    request: VerifyEmailRequest,
+    State(db): State<Arc<Database>>,
+) -> Response<Body> {
+    let user = match db.setup_new_transaction(|conn| {
+        let found_user = search_for_user_using_email_or_username(conn, &request.email)?;
+        Ok(found_user)
+    }) {
+        Ok(user) => user,
+        Err(err) => {
+            log::error!("Failed the transaction for auto verifying an account: {err}");
+            return create_internal_server_error_response(format!("failed retrieving user: {err}"));
+        }
+    };
+    verify_email_logic(request, &db, user.user_id)
 }
 
-pub async fn sign_in() -> Response<Body> {}
+fn verify_email_logic(
+    request: VerifyEmailRequest,
+    db: &Arc<Database>,
+    user_id: i64,
+) -> Response<Body> {
+    let session_information = match db.setup_new_transaction(|conn| {
+        verify_verification_code(conn, &request, user_id)?;
+        let device_information = DeviceInformation {
+            device_id: &request.device_id,
+            device_name: &request.device_name,
+            platform: &request.platform,
+        };
+        let default_totp_settings = UserTotpEnabledResult {
+            user_has_totp_enabled: false,
+        };
+        let session = create_new_session(conn, user_id, device_information, default_totp_settings)?;
+        Ok(session)
+    }) {
+        Ok(session) => session,
+        Err(err) => {
+            log::error!("Failed the transaction for auto verifying an account: {err}");
+            return create_internal_server_error_response(format!(
+                "failed creating a new session: {err}"
+            ));
+        }
+    };
+    create_auth_response("Your user account has been verified. The servers email address needs to be set up so that actual verification can take place", session_information)
+}
 
-pub async fn verify_email() -> Response<Body> {}
+pub async fn log_out(session: AuthSession, State(db): State<Arc<Database>>) -> Response<Body> {
+    match db.remove_entry(DatabaseTypes::Session, session.0.session_id) {
+        Ok(()) => (StatusCode::ACCEPTED, format!("Successfully logged out!")).into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to log out properly due to: {err}"),
+        )
+            .into_response(),
+    }
+}
 
-pub async fn log_out() -> Response<Body> {}
+pub async fn refresh_session(
+    session: AuthRefreshSession,
+    State(db): State<Arc<Database>>,
+) -> Response<Body> {
+    let tokens: CreatedTokensReadable = match db.setup_new_transaction(|conn| {
+        let tokens = update_existing_session(conn, session.0)?;
+        Ok(tokens)
+    }) {
+        Ok(new_tokens) => new_tokens,
+        Err(err) => {
+            return create_internal_server_error_response(format!(
+                "Failed the transaction due to: {err}"
+            ));
+        }
+    };
+    create_auth_response("refreshed session", tokens)
+}
 
 pub async fn change_password() -> Response<Body> {}
 
@@ -283,3 +470,36 @@ pub async fn disable_totp() -> Response<Body> {}
 pub async fn sign_in_totp_with_recovery_code() -> Response<Body> {}
 
 pub async fn sign_in_totp() -> Response<Body> {}
+
+//-------------------------Authentication Helpers----------------------------------//
+
+fn create_internal_server_error_response(body: String) -> Response<Body> {
+    return Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .body(body.into())
+        .unwrap();
+}
+
+fn create_unautherized_error_response(body: String) -> Response<Body> {
+    return Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .body(body.into())
+        .unwrap();
+}
+
+fn create_auth_response(
+    message: impl Into<String>,
+    tokens: CreatedTokensReadable,
+) -> Response<Body> {
+    (
+        StatusCode::ACCEPTED,
+        Json(AuthResponse {
+            message: message.into(),
+            session_token: tokens.session_token,
+            refresh_token: tokens.refresh_token,
+            session_token_expiration: tokens.session_token_valid_until,
+            refresh_token_expiration_time: tokens.refresh_token_valid_until,
+        }),
+    )
+        .into_response()
+}

@@ -2,9 +2,9 @@ use crate::data_models::models::{
     BookMetadata, BookSeriesMetadata, EmailVerification, LibraryMetadata, RecoveryCodes,
     SeriesLibraryConnection, Sessions, UserMetadata, TOTP,
 };
+use crate::database_related_scripts::db::convert_system_time_to_unix_time;
 use crate::error_types::DatabaseError;
 use rusqlite::{params, Connection};
-use std::time::SystemTime;
 
 pub trait Insert {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError>;
@@ -215,10 +215,4 @@ impl Insert for RecoveryCodes {
         let id = conn.last_insert_rowid();
         Ok(id)
     }
-}
-
-fn convert_system_time_to_unix_time(time: SystemTime) -> i64 {
-    Some(time)
-        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64)
-        .unwrap()
 }

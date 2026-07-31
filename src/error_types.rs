@@ -64,6 +64,12 @@ pub enum DatabaseError {
 
     #[error("number of paramaters did not match the number of columns")]
     InvalidParameters,
+    #[error("The search result does not match the expected result")]
+    UnexpectedSearchResult,
+    #[error("Email already exists in users")]
+    EmailAlreadyExists,
+    #[error("Username already exists in users")]
+    UsernameAlreadyExists,
 }
 
 impl IntoResponse for DatabaseError {
@@ -191,6 +197,25 @@ pub enum RequestErrors {
 
     #[error("Request failed to retrieve the desired data")]
     RequestFailed,
+    #[error("You do not have permission to perform this action")]
+    Forbidden,
+}
+
+impl IntoResponse for RequestErrors {
+    fn into_response(self) -> Response<Body> {
+        let status = match self {
+            RequestErrors::AuthorizationFailed => StatusCode::UNAUTHORIZED,
+            RequestErrors::Forbidden => StatusCode::FORBIDDEN,
+            RequestErrors::RequestFailed => StatusCode::BAD_REQUEST,
+        };
+        let body = if status.is_server_error() {
+            log::error!("Request Error: {self}");
+            "Failed request".to_string()
+        } else {
+            self.to_string()
+        };
+        (status, body).into_response()
+    }
 }
 
 #[derive(Error, Debug)]
@@ -207,6 +232,8 @@ pub enum AuthenticationError {
     UsernameTaken,
     #[error("Email already taken")]
     EmailTaken,
+    #[error("Either username or email address is already taken")]
+    AccountAlreadyExists,
     #[error("Wrong email/username or password")]
     IncorrectCredentials,
     #[error("Expired Session and Refresh Token")]
@@ -241,6 +268,8 @@ pub enum AuthenticationError {
     StringToPasswordHashConversionFailed,
     #[error("Failed to update a database entry")]
     DatabaseUpdateFailed,
+    #[error("Failed to insert a database entry")]
+    DatabaseInsertFailed,
 }
 
 #[derive(Error, Debug)]
@@ -263,4 +292,43 @@ pub enum EmailErrors {
     SentFailedDueToNoConfig { code: String },
     #[error("Failed to create a hash from code")]
     HashingFailed,
+    #[error("Failed to remove an existing Verification Token")]
+    VerificationTokenRemovalFailure,
+
+    #[error("Failed to retrieve the users entry from the database")]
+    FailedToRetrieveUserEntry,
+    #[error("Failed to find the user entry")]
+    UserEntryNotFound,
+}
+
+#[derive(Debug, Error)]
+pub enum AppErrors {
+    #[error(transparent)]
+    Database(#[from] DatabaseError),
+    #[error(transparent)]
+    Authentication(#[from] AuthenticationError),
+    #[error(transparent)]
+    Email(#[from] EmailErrors),
+}
+
+#[derive(Error, Debug)]
+pub enum ApplicationSetUpErrors {
+    #[error("Failed creating directory")]
+    DirectoryCreationFailure,
+    #[error("Failed filling bytes")]
+    SysRngFailure,
+    #[error("Failed encoding key")]
+    KeyEncodingFailure,
+    #[error("Failed to convert secrets to toml string")]
+    SecretConversionFailure,
+    #[error("Failed to write to document")]
+    DocumentWritingFailure,
+    #[error("Failed to read from document")]
+    DocumentReadingFailure,
+    #[error("Deserializing the secret has failed")]
+    SecretDeserializingError,
+    #[error("No Config folder found for this system")]
+    NoConfigDirectory,
+    #[error("Renaming file failed")]
+    RenamingFileFailure,
 }

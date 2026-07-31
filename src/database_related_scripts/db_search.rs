@@ -1,8 +1,8 @@
 use crate::data_models::models::{
     BookDatabaseColumns, BookMetadata, BookSeriesMetadata, EmailVerification,
-    EmailVerificationDatabaseColumns, LibraryDatabaseColumns, LibraryMetadata, RecoveryCodes,
-    RecoveryCodesColumns, SeriesDatabaseColumns, Sessions, SessionsDatabaseColumns,
-    TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, TOTP,
+    EmailVerificationDatabaseColumns, LibraryDatabaseColumns, LibraryMetadata, QuerySeparator,
+    RecoveryCodes, RecoveryCodesColumns, SelectionMethod, SeriesDatabaseColumns, Sessions,
+    SessionsDatabaseColumns, TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, TOTP,
 };
 use crate::database_related_scripts::db_from_row::FromRow;
 use crate::error_types::DatabaseError;
@@ -16,6 +16,8 @@ pub trait Search: FromRow {
         conn: &Connection,
         columns: &[Self::Column],
         values: &[&dyn ToSql],
+        query_separator: QuerySeparator,
+        selection_method: SelectionMethod,
     ) -> Result<Option<Self>, DatabaseError> {
         if columns.len() != values.len() {
             return Err(DatabaseError::InvalidParameters);
@@ -24,9 +26,18 @@ pub trait Search: FromRow {
             .iter()
             .map(|column| format!("{} = ?", column.as_ref()))
             .collect::<Vec<String>>()
-            .join(" AND ");
+            .join(query_separator.as_str());
+        let selection = match selection_method {
+            SelectionMethod::Everything => " * ".to_string(),
+            SelectionMethod::PassedInColumns => columns
+                .iter()
+                .map(|column| column.as_ref())
+                .collect::<Vec<_>>()
+                .join(", "),
+        };
         let query = format!(
-            "SELECT * FROM {} WHERE {} LIMIT 1",
+            "SELECT {} FROM {} WHERE {} LIMIT 1",
+            selection,
             Self::TABLE,
             values_to_check
         );
@@ -42,6 +53,8 @@ pub trait Search: FromRow {
         conn: &Connection,
         columns: &[Self::Column],
         values: &[&dyn ToSql],
+        query_separator: QuerySeparator,
+        selection_method: SelectionMethod,
     ) -> Result<Vec<Self>, DatabaseError> {
         if columns.len() != values.len() {
             return Err(DatabaseError::InvalidParameters);
@@ -51,9 +64,21 @@ pub trait Search: FromRow {
             .iter()
             .map(|column| format!("{} = ?", column.as_ref()))
             .collect::<Vec<String>>()
-            .join(" AND ");
-
-        let query = format!("SELECT * FROM {} WHERE {}", Self::TABLE, values_to_check);
+            .join(query_separator.as_str());
+        let selection = match selection_method {
+            SelectionMethod::Everything => " * ".to_string(),
+            SelectionMethod::PassedInColumns => columns
+                .iter()
+                .map(|column| column.as_ref())
+                .collect::<Vec<_>>()
+                .join(", "),
+        };
+        let query = format!(
+            "SELECT {} FROM {} WHERE {}",
+            selection,
+            Self::TABLE,
+            values_to_check
+        );
 
         let mut stmt = conn
             .prepare(&query)

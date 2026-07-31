@@ -6,12 +6,16 @@ use crate::database_related_scripts::db_update::Update;
 use crate::database_related_scripts::extract::Extract;
 use crate::database_related_scripts::insert::Insert;
 use crate::database_related_scripts::migrations;
+use crate::error_types::AppErrors;
 use crate::error_types::DatabaseError;
+use crate::models::QuerySeparator;
+use crate::models::SelectionMethod;
 use r2d2::{ManageConnection, Pool};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Connection, Result, ToSql};
 use serde::Serialize;
 use std::path::Path;
+use std::time::SystemTime;
 //TODO: Check if the filtering should happen in the backend or the frontend. I think both are valid but I imagine that backend is better
 //So probably pass in filtering options with the request and then filter somewhere here
 pub struct Database {
@@ -63,6 +67,13 @@ impl Database {
             .pool
             .get()
             .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
+        Self::insert_with_connection(&conn, data)
+    }
+
+    pub fn insert_with_connection(
+        conn: &Connection,
+        data: &impl Insert,
+    ) -> Result<i64, DatabaseError> {
         let id: i64 = data.insert(&conn)?;
         Ok(id)
     }
@@ -93,6 +104,34 @@ impl Database {
         U: Update,
     {
         U::update(&conn, column, new_value, id)
+    }
+
+    pub fn update_multiple_values<U>(
+        &self,
+        columns: &[U::Column],
+        new_values: &[&dyn ToSql],
+        id: i64,
+    ) -> Result<(), DatabaseError>
+    where
+        U: Update,
+    {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
+        Self::update_multiple_values_with_connection::<U>(&conn, columns, new_values, id)
+    }
+
+    pub fn update_multiple_values_with_connection<U>(
+        conn: &Connection,
+        columns: &[U::Column],
+        new_values: &[&dyn ToSql],
+        id: i64,
+    ) -> Result<(), DatabaseError>
+    where
+        U: Update,
+    {
+        U::update_multiple(&conn, columns, new_values, id)
     }
 
     pub fn remove_entry(&self, db_type: DatabaseTypes, id: i64) -> Result<(), DatabaseError> {
@@ -164,6 +203,8 @@ impl Database {
         &self,
         columns: &[T::Column],
         values: &[&dyn ToSql],
+        query_separator: QuerySeparator,
+        selection_method: SelectionMethod,
     ) -> Result<Option<T>, DatabaseError>
     where
         T: Search,
@@ -172,24 +213,34 @@ impl Database {
             .pool
             .get()
             .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
-        Self::search_for_single_row_with_connection::<T>(&conn, columns, values)
+        Self::search_for_single_row_with_connection::<T>(
+            &conn,
+            columns,
+            values,
+            query_separator,
+            selection_method,
+        )
     }
 
     pub fn search_for_single_row_with_connection<T>(
         conn: &Connection,
         columns: &[T::Column],
         values: &[&dyn ToSql],
+        query_separator: QuerySeparator,
+        selection_method: SelectionMethod,
     ) -> Result<Option<T>, DatabaseError>
     where
         T: Search,
     {
-        T::search_for_row(&conn, columns, values)
+        T::search_for_row(&conn, columns, values, query_separator, selection_method)
     }
 
     pub fn search_for_multiple_rows<T>(
         &self,
         columns: &[T::Column],
         values: &[&dyn ToSql],
+        query_separator: QuerySeparator,
+        selection_method: SelectionMethod,
     ) -> Result<Vec<T>, DatabaseError>
     where
         T: Search,
@@ -198,18 +249,26 @@ impl Database {
             .pool
             .get()
             .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
-        Self::search_for_multiple_rows_with_connection::<T>(&conn, columns, values)
+        Self::search_for_multiple_rows_with_connection::<T>(
+            &conn,
+            columns,
+            values,
+            query_separator,
+            selection_method,
+        )
     }
 
     pub fn search_for_multiple_rows_with_connection<T>(
         conn: &Connection,
         columns: &[T::Column],
         values: &[&dyn ToSql],
+        query_separator: QuerySeparator,
+        selection_method: SelectionMethod,
     ) -> Result<Vec<T>, DatabaseError>
     where
         T: Search,
     {
-        T::search_for_multiple_rows(&conn, columns, values)
+        T::search_for_multiple_rows(&conn, columns, values, query_separator, selection_method)
     }
 
     pub fn get_all_libraries(&self) -> Result<Vec<i64>, DatabaseError> {
@@ -326,9 +385,9 @@ impl Database {
         }
     }
 
-    pub fn setup_new_transaction<F, T>(&self, operation: F) -> Result<T, DatabaseError>
+    pub fn setup_new_transaction<F, T>(&self, operation: F) -> Result<T, AppErrors>
     where
-        F: FnOnce(&Connection) -> Result<T, DatabaseError>,
+        F: FnOnce(&Connection) -> Result<T, AppErrors>,
     {
         let mut conn = self.pool.get().map_err(|err| {
             log::error!("Got an error when trying to set up a new connection: {err}");
@@ -348,4 +407,10 @@ impl Database {
         })?;
         Ok(result)
     }
+}
+
+pub fn convert_system_time_to_unix_time(time: SystemTime) -> i64 {
+    Some(time)
+        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64)
+        .unwrap()
 }
