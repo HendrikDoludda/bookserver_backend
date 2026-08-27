@@ -11,19 +11,22 @@ use axum::{
     Json,
 };
 use std::{sync::Arc, time::SystemTime};
-use tracing_subscriber::{fmt::format, registry::Data};
 
 use crate::{
-    data_models::authentication_model::AuthResponse,
+    data_models::authentication_model::{
+        AuthResponse, ChangeEmailRequest, ChangePasswordRequest, RequestPasswordResetLinkRequest,
+    },
     folder_scanner::scan_all_folders,
+    models::UserDatabaseColumns,
     routes::auth::{
         create_new_user, create_verification_email, search_for_user_using_email_or_username,
         validate_new_user,
     },
 };
 use crate::{
-    data_models::authentication_model::VerifyEmailRequest,
+    data_models::authentication_model::{ChangeUserNameRequest, VerifyEmailRequest},
     error_types::{DatabaseError, RequestErrors},
+    routes::auth::{update_password_to_new_password, validate_submitted_password},
 };
 use crate::{
     data_models::authentication_model::{DeviceInformation, LoginRequest, UserCreationRequest},
@@ -48,11 +51,10 @@ use crate::{
         AuthenticationError::{ExpiredSession, UnautherizedSession},
     },
     models::{Sessions, SessionsDatabaseColumns, UserMetadata},
-    routes::auth::create_new_token,
     stream_reader::streaming_file,
 };
 
-use tower_cookies::{Cookie, Cookies};
+use tower_cookies::{cookie, Cookies};
 
 pub struct AdminSession(pub Sessions);
 
@@ -126,15 +128,68 @@ fn authorized(cookies: Cookies, db: &Arc<Database>) -> Result<Sessions, RequestE
     Ok(session)
 }
 
-pub struct AuthRefreshSession(pub Sessions);
+pub struct AuthTOTPLoginSession(pub Sessions);
 
-impl FromRequestParts<Arc<Database>> for AuthRefreshSession{
+impl FromRequestParts<Arc<Database>> for AuthTOTPLoginSession {
     type Rejection = RequestErrors;
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
         db: &Arc<Database>,
-    ) -> Result<Self, Self::Rejection>>
-    {
+    ) -> Result<Self, Self::Rejection> {
+        let cookies = Cookies::from_request_parts(parts, db)
+            .await
+            .map_err(|_| RequestErrors::RequestFailed)?;
+        let session = validate_totp_login_session(cookies, db)?;
+        Ok(AuthTOTPLoginSession(session))
+    }
+}
+
+fn validate_totp_login_session(
+    cookies: Cookies,
+    db: &Arc<Database>,
+) -> Result<Sessions, RequestErrors> {
+    let session_token_cookie = cookies
+        .get("session_token")
+        .ok_or(RequestErrors::AuthorizationFailed)?;
+    let hashed_session_token = blake3::hash(session_token_cookie.value().as_bytes())
+        .to_hex()
+        .to_string();
+    let session: Sessions = db
+        .setup_new_transaction(|conn| {
+            let session = Database::search_for_single_row_with_connection::<Sessions>(
+                conn,
+                &[SessionsDatabaseColumns::SessionToken],
+                &[&hashed_session_token],
+                crate::models::QuerySeparator::And,
+                crate::models::SelectionMethod::Everything,
+            )?
+            .ok_or(AppErrors::Authentication(UnautherizedSession))?;
+            if session.session_token_expiration_date < SystemTime::now() {
+                return Err(AppErrors::Authentication(ExpiredSession));
+            }
+            if session.authentication_completed {
+                return Err(AppErrors::Authentication(UnautherizedSession));
+            }
+            Ok(session)
+        })
+        .map_err(|err| match err {
+            AppErrors::Authentication(_) => RequestErrors::AuthorizationFailed, // 401
+            other => {
+                log::error!("authorization transaction failed: {other}");
+                RequestErrors::RequestFailed // 500
+            }
+        })?;
+    Ok(session)
+}
+
+pub struct AuthRefreshSession(pub Sessions);
+
+impl FromRequestParts<Arc<Database>> for AuthRefreshSession {
+    type Rejection = RequestErrors;
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        db: &Arc<Database>,
+    ) -> Result<Self, Self::Rejection> {
         let cookies = Cookies::from_request_parts(parts, db)
             .await
             .map_err(|_| RequestErrors::RequestFailed)?;
@@ -143,7 +198,7 @@ impl FromRequestParts<Arc<Database>> for AuthRefreshSession{
     }
 }
 
-fn refresh_authorized(cookies: Cookies, db: &Arc<Database>)->Result<Sessions, RequestErrors>{
+fn refresh_authorized(cookies: Cookies, db: &Arc<Database>) -> Result<Sessions, RequestErrors> {
     let refresh_token_cookie = cookies
         .get("refresh_token")
         .ok_or(RequestErrors::AuthorizationFailed)?;
@@ -269,20 +324,17 @@ pub async fn delete_library(
 
 // === Not yet implementable — waiting on backing functionality ===============
 
-pub async fn update_database_entry() -> impl IntoResponse {
+pub async fn update_database_entry(session: AuthSession) -> impl IntoResponse {
     // Blocked: models don't derive Deserialize, and the request shape is undecided.
-    if authorized().is_ok() {}
     return failed_getting_response();
 }
 
-pub async fn insert_database_entry() -> impl IntoResponse {
+pub async fn insert_database_entry(session: AuthSession) -> impl IntoResponse {
     // Blocked: models don't derive Deserialize, and the request shape is undecided.
-    if authorized().is_ok() {}
     return failed_getting_response();
 }
 
-pub async fn scan_for_metadata() -> impl IntoResponse {
-    if authorized().is_ok() {}
+pub async fn scan_for_metadata(session: AuthSession) -> impl IntoResponse {
     return failed_getting_response();
 }
 
@@ -453,23 +505,120 @@ pub async fn refresh_session(
     create_auth_response("refreshed session", tokens)
 }
 
-pub async fn change_password() -> Response<Body> {}
+pub async fn change_password(
+    session: AuthSession,
+    State(db): State<Arc<Database>>,
+    request: ChangePasswordRequest,
+) -> Response<Body> {
+    if request.new_password != request.new_password_repeat {
+        return create_internal_server_error_response(format!("Password mismatch"));
+    }
+    match db.setup_new_transaction(|conn| {
+        let user = Database::get_entry_with_connection::<UserMetadata>(conn, session.0.user_id)?;
+        validate_submitted_password(&user, &request.current_password)?;
+        update_password_to_new_password(conn, request, user.user_id)?;
+        Ok(())
+    }) {
+        Ok(()) => (),
+        Err(err) => {
+            return create_internal_server_error_response(format!(
+                "Failed to change the password for the following reason: {err}"
+            ))
+        }
+    };
+    (StatusCode::ACCEPTED, "Password has been changed").into_response()
+}
 
-pub async fn change_username() -> Response<Body> {}
+pub async fn change_username(
+    session: AuthSession,
+    State(db): State<Arc<Database>>,
+    request: ChangeUserNameRequest,
+) -> Response<Body> {
+    match db.setup_new_transaction(|conn| {
+        Database::update_value_with_connection::<UserMetadata>(
+            conn,
+            UserDatabaseColumns::Username,
+            &request.new_username,
+            session.0.user_id,
+        )?;
+        Ok(())
+    }) {
+        Ok(()) => (),
+        Err(err) => {
+            return create_internal_server_error_response(format!(
+                "Failed to update username due to: {err}"
+            ))
+        }
+    };
 
-pub async fn change_email() -> Response<Body> {}
+    (StatusCode::ACCEPTED, "Username has been changed").into_response()
+}
 
-pub async fn reset_password() -> Response<Body> {}
+pub async fn change_email(
+    session: AuthSession,
+    State(db): State<Arc<Database>>,
+    request: ChangeEmailRequest,
+) -> Response<Body> {
+    match db.setup_new_transaction(|conn| {
+        Database::update_value_with_connection::<UserMetadata>(
+            conn,
+            UserDatabaseColumns::Email,
+            &request.new_email,
+            session.0.user_id,
+        )?;
+        Ok(())
+    }) {
+        Ok(()) => (),
+        Err(err) => {
+            return create_internal_server_error_response(format!(
+                "Failed to update email due to: {err}"
+            ))
+        }
+    };
 
-pub async fn totp_start_set_up() -> Response<Body> {}
+    (StatusCode::ACCEPTED, "Email has been changed").into_response()
+}
 
-pub async fn finalize_totp_set_up() -> Response<Body> {}
+pub async fn reset_password() -> Response<Body> {
+    (
+        //verify new password and verify the code same as on the verification email.
+        //assign new password
+        //redirect user to log in screen if successful
+        StatusCode::NOT_IMPLEMENTED,
+        "Needs the front end structure in place first so this can match the structure",
+    )
+        .into_response()
+}
 
-pub async fn disable_totp() -> Response<Body> {}
+pub async fn request_reset_password_link(
+    request: RequestPasswordResetLinkRequest,
+    State(db): State<Arc<Database>>,
+) -> Response<Body> {
+    match db.setup_new_transaction(|conn| {
+        let user = search_for_user_using_email_or_username(conn, &request.email)?;
+        //create something similar or the same as the verification email
 
-pub async fn sign_in_totp_with_recovery_code() -> Response<Body> {}
+        Ok(())
+    }) {
+        Ok(()) => (),
+        Err(err) => {
+            return create_internal_server_error_response(format!(
+                "Could not create reset password link due to: {err}"
+            ))
+        }
+    }
+    (StatusCode::ACCEPTED, "Email has been sent").into_response()
+}
 
-pub async fn sign_in_totp() -> Response<Body> {}
+pub async fn totp_start_set_up() -> Response<Body> {} //needs the normal autherization
+
+pub async fn finalize_totp_set_up() -> Response<Body> {} //normal autherization
+
+pub async fn disable_totp() -> Response<Body> {} //normal autherization
+
+pub async fn sign_in_totp_with_recovery_code() -> Response<Body> {} //totp sign in autherization
+
+pub async fn sign_in_totp() -> Response<Body> {} //totp sign in autherization
 
 //-------------------------Authentication Helpers----------------------------------//
 

@@ -5,7 +5,7 @@ use rusqlite::{Connection, ToSql};
 use serde_json::error::Category::Data;
 
 use crate::data_models::authentication_model::{
-    DeviceInformation, LoginRequest, VerifyEmailRequest,
+    ChangePasswordRequest, DeviceInformation, LoginRequest, VerifyEmailRequest,
 };
 use crate::database_related_scripts::db::Database;
 use crate::db::convert_system_time_to_unix_time;
@@ -282,16 +282,7 @@ pub fn log_in(
     conn: &Connection,
     user: &UserMetadata,
 ) -> Result<UserTotpEnabledResult, AuthenticationError> {
-    let password_hash = PasswordHash::new(&user.password_hash).map_err(|err| {
-        log::error!("Failed to hash password: {err}");
-        AuthenticationError::StringToPasswordHashConversionFailed
-    })?;
-    if Argon2::default()
-        .verify_password(request.password.as_bytes(), &password_hash)
-        .is_err()
-    {
-        return Err(AuthenticationError::IncorrectCredentials);
-    }
+    validate_submitted_password(user, &request.password)?;
     let user_totp_settings = Database::search_for_single_row_with_connection::<TOTP>(
         conn,
         &[TOTPDatabaseColumns::UserId],
@@ -308,12 +299,21 @@ pub fn log_in(
     })
 }
 
-pub fn refresh_session_token() {
-    //if refresh token is valid continue
-    //generate new session token
-    //generate new refresh token
-    //update previous tokens with new ones
-    //return new tokens to user
+pub fn validate_submitted_password(
+    user: &UserMetadata,
+    password: &String,
+) -> Result<(), AuthenticationError> {
+    let password_hash = PasswordHash::new(&user.password_hash).map_err(|err| {
+        log::error!("Failed to hash password: {err}");
+        AuthenticationError::StringToPasswordHashConversionFailed
+    })?;
+    if Argon2::default()
+        .verify_password(password.as_bytes(), &password_hash)
+        .is_err()
+    {
+        return Err(AuthenticationError::IncorrectCredentials);
+    }
+    Ok(())
 }
 
 //modification
@@ -327,11 +327,24 @@ pub fn request_reset_password() {
     //"If email is valid an email has been sent"
 }
 
-pub fn change_password() {
+pub fn update_password_to_new_password(
+    conn: &Connection,
+    request: ChangePasswordRequest,
+    user_id: i64,
+) -> Result<(), AuthenticationError> {
     //requires the old password and the same new password twice
     //if old password passes the argon verification continue
     //verify new password
     //hash and store the new password for the user
+    let password_hash = hash_string_securely(request.new_password)?;
+    Database::update_value_with_connection::<UserMetadata>(
+        conn,
+        UserDatabaseColumns::PasswordHash,
+        &password_hash.hashed_string,
+        user_id,
+    )
+    .map_err(|_| AuthenticationError::DatabaseUpdateFailed)?;
+    Ok(())
 }
 
 pub fn reset_password() {
@@ -379,6 +392,10 @@ pub fn update_existing_session(
         &session_expiration,
         &now,
     ];
+    //For more safety change update to search and update
+    //This will allow for searching for a specific entry and confirming that the token is still the same as before
+    //to prevent racing conditions where the entry will overwrite the token twice
+    //For small applications not necessary but could be improtant later on
     Database::update_multiple_values_with_connection::<Sessions>(
         conn,
         &columns,
