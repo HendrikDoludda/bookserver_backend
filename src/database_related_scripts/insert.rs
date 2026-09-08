@@ -4,6 +4,7 @@ use crate::data_models::models::{
 };
 use crate::database_related_scripts::db::convert_system_time_to_unix_time;
 use crate::error_types::DatabaseError;
+use crate::models::ResetPasswordRequest;
 use rusqlite::{params, Connection};
 
 pub trait Insert {
@@ -149,6 +150,25 @@ impl Insert for EmailVerification {
         let params = params![
             self.user_id,
             self.verification_token.clone(),
+            expired_time,
+            self.invalidated
+        ];
+
+        conn.execute(query, params)
+            .map_err(|_| DatabaseError::InsertionFailure)?;
+        let id = conn.last_insert_rowid();
+        Ok(id)
+    }
+}
+
+impl Insert for ResetPasswordRequest {
+    fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
+        let query = "INSERT INTO reset_password_requests (user_id, reset_token, cancelation_token, expires_at, invalidated) VALUES (?1, ?2, ?3, ?4, ?5)";
+        let expired_time = convert_system_time_to_unix_time(self.expiration_date);
+        let params = params![
+            self.user_id,
+            self.reset_token.clone(),
+            self.cancelation_token.clone(),
             expired_time,
             self.invalidated
         ];

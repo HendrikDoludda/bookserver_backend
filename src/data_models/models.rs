@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, time::SystemTime};
 use strum_macros::EnumIter;
 
-use crate::{error_types::EmailErrors, models::ColumnSelector::User};
-
 //============  Row id + metadata wrapper =================
 // Metadata structs don't store their own row id, but list endpoints need it so
 // the client can drill down (e.g. fetch a library's series). This pairs the id
@@ -551,4 +549,33 @@ impl QuerySeparator {
 pub enum SelectionMethod {
     Everything,
     PassedInColumns,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ResetPasswordRequest {
+    pub user_id: i64,
+    pub reset_token: String,
+    pub cancelation_token: String,
+    pub expiration_date: SystemTime,
+    pub invalidated: bool,
+}
+
+pub enum ResetPasswordRequestColumns {
+    UserID,
+    ResetToken,
+    CancelationToken,
+    ExpirationDate,
+    Invalidated,
+}
+
+impl AsRef<str> for ResetPasswordRequestColumns {
+    fn as_ref(&self) -> &str {
+        match self {
+            ResetPasswordRequestColumns::UserID => "user_id",
+            ResetPasswordRequestColumns::ResetToken => "reset_token",
+            ResetPasswordRequestColumns::CancelationToken => "cancelation_token",
+            ResetPasswordRequestColumns::ExpirationDate => "expires_at",
+            ResetPasswordRequestColumns::Invalidated => "invalidated",
+        }
+    }
 }

@@ -1,12 +1,10 @@
-use std::{env, fs, path::Path, sync::Arc};
+use std::{env, fs, sync::Arc};
 
 use chrono::prelude::*;
-use mail_send::mail_auth::hickory_resolver::proto::dnssec::rdata::key;
 use serde::{Deserialize, Serialize};
 
 use crate::error_types::ApplicationSetUpErrors;
 use crate::models::EmailConfig;
-use argon2::password_hash::SaltString;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use directories::ProjectDirs;
 use rand::rngs::SysRng;

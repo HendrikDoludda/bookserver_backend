@@ -67,6 +67,15 @@ CREATE TABLE IF NOT EXISTS email_verification (
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS reset_password_requests (
+    user_id INTEGER PRIMARY KEY,
+    reset_token TEXT NOT NULL UNIQUE,
+    cancelation_token TEXT NOT NULL UNIQUE,
+    expires_at DATETIME NOT NULL,
+    invalidated BOOLEAN NOT NULL DEFAULT FALSE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 
 CREATE TABLE IF NOT EXISTS sessions (
     session_id INTEGER PRIMARY KEY AUTOINCREMENT,

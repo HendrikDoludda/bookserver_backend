@@ -15,6 +15,7 @@ use std::{sync::Arc, time::SystemTime};
 use crate::{
     data_models::authentication_model::{
         AuthResponse, ChangeEmailRequest, ChangePasswordRequest, RequestPasswordResetLinkRequest,
+        ResettingUsersPassword,
     },
     folder_scanner::scan_all_folders,
     models::UserDatabaseColumns,
@@ -579,7 +580,10 @@ pub async fn change_email(
     (StatusCode::ACCEPTED, "Email has been changed").into_response()
 }
 
-pub async fn reset_password() -> Response<Body> {
+pub async fn reset_password(
+    request: ResettingUsersPassword,
+    State(db): State<Arc<Database>>,
+) -> Response<Body> {
     (
         //verify new password and verify the code same as on the verification email.
         //assign new password

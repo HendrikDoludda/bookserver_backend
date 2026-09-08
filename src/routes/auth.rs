@@ -1,15 +1,14 @@
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier};
 use argon2::Argon2;
-use mail_send::mail_auth::Dkim2Result::Pass;
 use rusqlite::{Connection, ToSql};
-use serde_json::error::Category::Data;
+use url::Url;
 
 use crate::data_models::authentication_model::{
     ChangePasswordRequest, DeviceInformation, LoginRequest, VerifyEmailRequest,
 };
 use crate::database_related_scripts::db::Database;
 use crate::db::convert_system_time_to_unix_time;
-use crate::error_types::{AppErrors, AuthenticationError, DatabaseError, EmailErrors};
+use crate::error_types::{AppErrors, AuthenticationError, EmailErrors};
 use crate::models::{
     DatabaseTypes, EmailVerification, EmailVerificationDatabaseColumns, QuerySeparator,
     SelectionMethod, Sessions, SessionsDatabaseColumns, TOTPDatabaseColumns, TOTP,
@@ -19,9 +18,6 @@ use crate::{
     data_models::authentication_model::UserCreationRequest,
     models::{UserDatabaseColumns, UserMetadata},
 };
-use std::alloc::System;
-use std::default;
-use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use rand::distr::{Alphanumeric, SampleString};
@@ -82,6 +78,11 @@ pub struct NewSessionTokenData {
 
 pub struct UserTotpEnabledResult {
     pub user_has_totp_enabled: bool,
+}
+
+pub struct ResetAndCancelationTokens {
+    pub reset_token_hashed: String,
+    pub cancelation_token_hashed: String,
 }
 
 pub fn validate_new_user(
@@ -248,7 +249,7 @@ fn evaluate_verification_token(
     conn: &Connection,
     user_id: i64,
     password: &[u8],
-    stored_password: PasswordHash<'_>,
+    stored_password: PasswordHash,
 ) -> Result<(), AppErrors> {
     if Argon2::default()
         .verify_password(password, &stored_password)
@@ -317,7 +318,10 @@ pub fn validate_submitted_password(
 }
 
 //modification
-pub fn request_reset_password() {
+pub async fn request_reset_password(
+    server_address: &Url,
+    email: &String,
+) -> Result<ResetAndCancelationTokens, AuthenticationError> {
     //create email body for resetting email
     //create a reset token
     //create link that redirects to reset password
@@ -325,6 +329,51 @@ pub fn request_reset_password() {
     //send to user
     //if email is valid or invalid always display the same message
     //"If email is valid an email has been sent"
+    let reset_token = create_crypto_code(8);
+    let cancelation_token = create_crypto_code(32);
+
+    //send email here with borrowed tokens
+    send_reset_password_email(&reset_token, &cancelation_token, server_address, email)
+        .await
+        .map_err(|_| AuthenticationError::EmailVerificationNotFound)?;
+
+    let reset_token_hashed = hash_string_securely(reset_token)
+        .map_err(|_| AuthenticationError::ErrorHashingData)?
+        .normal_string;
+    let cancelation_token_hashed = hash_string_securely(cancelation_token)
+        .map_err(|_| AuthenticationError::ErrorHashingData)?
+        .normal_string;
+
+    Ok(ResetAndCancelationTokens {
+        reset_token_hashed,
+        cancelation_token_hashed,
+    })
+}
+
+async fn send_reset_password_email(
+    reset_token: &String,
+    cancelation_token: &String,
+    server_address: &Url,
+    email: &String,
+) -> Result<(), EmailErrors> {
+    //must look into getting the server address even if it is just storing the value somewhere
+    let cancelation_link = server_address
+        .join(&format!("/password-reset/cancel?token={cancelation_token}"))
+        .map_err(|_| EmailErrors::MissingEmail)?;
+    let body = format!("Hello,\n You have requested to reset your password. Use this code in the app to apply the new password.\n {}\nIn case you did not request the password reset use this link to invalidate the request: {}",reset_token,cancelation_link);
+    let subject = format!("Password Reset");
+
+    let email_info = EmailInformation {
+        username: "Anonymous".to_string(),
+        email: email.clone(),
+        body,
+        subject,
+    };
+
+    match create_new_email(email_info).await {
+        Ok(()) => Ok(()),
+        Err(err) => return Err(err),
+    }
 }
 
 pub fn update_password_to_new_password(
@@ -481,14 +530,9 @@ pub fn create_new_token() -> Result<HashedString, AuthenticationError> {
 }
 
 fn hash_string_securely(to_hash: String) -> Result<HashedString, AuthenticationError> {
-    let mut salt_bytes = [0u8; 16];
-    SysRng
-        .try_fill_bytes(&mut salt_bytes)
-        .map_err(|_| AuthenticationError::RngCreatorFailed)?;
-    let salt =
-        SaltString::encode_b64(&salt_bytes).map_err(|_| AuthenticationError::ErrorCreatingSalt)?;
-    let hash = Argon2::default()
-        .hash_password(to_hash.as_bytes(), &salt)
+    let hasher = Argon2::default();
+    let hash = hasher
+        .hash_password(to_hash.as_bytes())
         .map_err(|_| AuthenticationError::ErrorHashingData)?;
     Ok(HashedString {
         normal_string: to_hash,

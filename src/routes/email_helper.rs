@@ -1,6 +1,6 @@
 use crate::config::get_email_config;
 use crate::error_types::EmailErrors;
-use mail_send::mail_builder::{self, MessageBuilder};
+use mail_send::mail_builder::MessageBuilder;
 use mail_send::SmtpClientBuilder;
 
 //Eventually I need to change it to use impl with a struct this way we can load the config once on opening the back end.

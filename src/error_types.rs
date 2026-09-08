@@ -4,7 +4,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use thiserror::Error;
-use tokio::sync::broadcast::error;
 
 #[derive(Error, Debug)]
 pub enum DatabaseError {

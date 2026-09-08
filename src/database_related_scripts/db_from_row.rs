@@ -5,7 +5,7 @@ use rusqlite::Row;
 
 use crate::models::{
     BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, EmailVerification, LibraryMetadata,
-    LibraryType, RecoveryCodes, Sessions, UserMetadata, TOTP,
+    LibraryType, RecoveryCodes, ResetPasswordRequest, Sessions, UserMetadata, TOTP,
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -149,6 +149,20 @@ impl FromRow for EmailVerification {
         Ok(Self {
             user_id: row.get("user_id")?,
             verification_token: row.get("email_verification_token")?,
+            expiration_date: expires_at,
+            invalidated: row.get("invalidated")?,
+        })
+    }
+}
+
+impl FromRow for ResetPasswordRequest {
+    fn from_row(row: &Row) -> rusqlite::Result<Self> {
+        let expires_at = convert_to_system_time(row, "expires_at", 2)?;
+
+        Ok(Self {
+            user_id: row.get("user_id")?,
+            reset_token: row.get("reset_token")?,
+            cancelation_token: row.get("cancelation_token")?,
             expiration_date: expires_at,
             invalidated: row.get("invalidated")?,
         })
