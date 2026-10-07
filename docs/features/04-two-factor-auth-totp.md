@@ -26,7 +26,7 @@ Live and working:
 
 Empty comment-only stubs (zero executable statements, no callers):
 - [totp_management.rs](../../src/routes/totp_management.rs) — all six functions: `begin_totp_setup` ([:2](../../src/routes/totp_management.rs#L2)), `confirm_totp_setup` ([:10](../../src/routes/totp_management.rs#L10)), `generate_recovery_codes` ([:19](../../src/routes/totp_management.rs#L19), private, opens with "don't know what is required for this call"), `verify_totp_log_in` ([:29](../../src/routes/totp_management.rs#L29)), `authenticate_using_recovery_code` ([:36](../../src/routes/totp_management.rs#L36)), `disable_totp` ([:45](../../src/routes/totp_management.rs#L45)). The bodies are the plan, written as comments.
-- The five HTTP handlers — [api_caller.rs:617-625](../../src/routes/api_caller.rs#L617): `totp_start_set_up`, `finalize_totp_set_up`, `disable_totp`, `sign_in_totp_with_recovery_code`, `sign_in_totp`. Each is `-> Response<Body> {}` with a trailing comment naming which authorization it needs ("normal autherization" vs "totp sign in autherization").
+- The five HTTP handlers in [api_caller.rs](../../src/routes/api_caller.rs): `totp_start_set_up`, `finalize_totp_set_up`, `disable_totp`, `sign_in_totp_with_recovery_code`, `sign_in_totp`. Each just returns `not_implemented_response()` (HTTP 501), with a doc comment naming which session it needs (`AuthSession` vs `AuthTOTPLoginSession`).
 
 Not started at all:
 - **No routes.** [api_routes.rs:45-70](../../src/routes/api_routes.rs#L45) registers no TOTP path — not even a `ping_server` skeleton.
@@ -42,7 +42,7 @@ Not started at all:
 - The roadmap calls the secret table `authentication`; the migration calls it **`totp`**.
 - The open decision "consider `UNIQUE(user_id)` — one secret per user" is **already settled** by `user_id INTEGER PRIMARY KEY` ([0001_initial_schema.sql:105](../../migrations/0001_initial_schema.sql#L105)).
 - The roadmap's login flow says password and TOTP code are verified "in the *same* step (no second round-trip)". The code has committed to a **two-step half-session flow** instead (`authentication_completed`, `AuthTOTPLoginSession`, and separate `sign_in_totp` / `sign_in_totp_with_recovery_code` endpoints). See Open questions.
-- Every task bullet is ⬜, yet these five empty handlers are the reason `cargo check` **fails for the whole crate** (five `E0308` errors: expected `Response<Body>`, found `()`). So 2FA is simultaneously "not started" and the thing blocking every other build — see Implementation notes for the one-line unblock.
+- Every task bullet is ⬜. These five handlers used to be empty bodies that made `cargo check` fail for the whole crate; they now return HTTP 501, so the build is unblocked — see Implementation notes.
 
 ## Decisions
 
@@ -120,7 +120,7 @@ Not started at all:
 
 ## Implementation notes
 
-**Unblock the build first.** The five empty handlers at [api_caller.rs:617-625](../../src/routes/api_caller.rs#L617) are the whole crate's compile errors. `todo!()` as a body type-checks as any return type (it diverges), so replacing `{}` with `{ todo!() }` gets `cargo check` green without pretending the endpoints work.
+**The build is unblocked.** The five TOTP handlers in [api_caller.rs](../../src/routes/api_caller.rs) were empty `{}` bodies (the crate's only compile errors); they now return `not_implemented_response()` (HTTP 501), which keeps the server honest about the endpoints not working. (`todo!()` would also type-check, since it diverges, but it panics the request task instead of answering.)
 
 **`totp-rs` 6.0.0 shape.** The crate's type is `Totp`, and you get one from a builder rather than a constructor: `Builder::new().with_secret(secret).with_account_name(&user.email).with_issuer(Some("Bookserver")).build()?`. `Builder::new()` already defaults to SHA1, 6 digits, `step_duration: 30` and `skew: 1`, so **the "±1 time step" task is a default you inherit**, not code you write. Verification is `totp.check_current(&submitted_code)`, which returns `Option<u64>` — `None` for a bad code, otherwise the time step that matched (see the replay-protection question).
 

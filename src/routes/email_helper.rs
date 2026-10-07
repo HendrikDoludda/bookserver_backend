@@ -3,12 +3,11 @@ use crate::error_types::EmailErrors;
 use mail_send::mail_builder::MessageBuilder;
 use mail_send::SmtpClientBuilder;
 
-//Eventually I need to change it to use impl with a struct this way we can load the config once on opening the back end.
+/// Builds a plain-text email and sends it over SMTP using the `SMTP_*` env config.
+/// Returns `EmailErrors::EmailSetUpNotFound` when SMTP isn't configured.
+// TODO: move this onto a struct so the SMTP config is loaded once at startup
+// instead of on every send.
 pub async fn create_new_email(email_information: EmailInformation) -> Result<(), EmailErrors> {
-    //the call requires a subject and body as well as the receivers email address.
-    //set up the email using a library.
-    //sender email will always be the same.
-    //send the email.
     let sender = get_email_config().ok_or(EmailErrors::EmailSetUpNotFound)?;
     let email = MessageBuilder::new()
         .from((sender.from_name, sender.from))
@@ -37,8 +36,6 @@ pub async fn create_new_email(email_information: EmailInformation) -> Result<(),
         })?;
     Ok(())
 }
-
-fn send_email() {}
 
 pub struct EmailInformation {
     pub username: String,

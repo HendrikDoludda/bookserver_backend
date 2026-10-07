@@ -1,7 +1,15 @@
-//all functions need authentication header eventually. so that only logged in users can make changes to the backend
-//TODO: Requires a database table for directories that should be scannable.
-//TODO: The table still needs a link for the metadata agent result
-//TODO: Check if the file paths that get served are inside the database table for scannable files or the cover images folder
+//! HTTP handlers and the authentication extractors that guard them.
+//!
+//! TODO: every mutating handler should eventually require an `AuthSession`.
+//! TODO: needs a database table of scannable directories (replacing `BOOK_DIRS`),
+//!       with a link to the metadata-agent result.
+//! TODO: check that served file paths lie inside a scannable directory or the
+//!       cover-images folder.
+
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use axum::{
     body::Body,
@@ -11,63 +19,43 @@ use axum::{
     Json,
 };
 use rusqlite::Connection;
-use serde_json::error::Category::Data;
-use std::{
-    alloc::System,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use tower_cookies::Cookies;
 use url::Url;
 
 use crate::{
     data_models::authentication_model::{
-        AuthResponse, ChangeEmailRequest, ChangePasswordRequest, RequestPasswordResetLinkRequest,
-        ResettingUsersPassword,
+        AuthResponse, ChangeEmailRequest, ChangePasswordRequest, ChangeUserNameRequest,
+        DeviceInformation, LoginRequest, RequestPasswordResetLinkRequest, ResettingUsersPassword,
+        UserCreationRequest, VerifyEmailRequest,
+    },
+    db::Database,
+    error_types::{
+        AppErrors,
+        AuthenticationError::{ExpiredSession, UnauthorizedSession},
+        DatabaseError, EmailErrors, RequestErrors,
     },
     folder_scanner::scan_all_folders,
     models::{
-        QuerySeparator, ResetPasswordRequest, ResetPasswordRequestColumns, SelectionMethod,
-        UserDatabaseColumns,
+        BookMetadata, BookSeriesMetadata, DatabaseTypes, LibraryMetadata, QuerySeparator,
+        ResetPasswordRequest, ResetPasswordRequestColumns, SelectionMethod, Sessions,
+        SessionsDatabaseColumns, UserDatabaseColumns, UserMetadata, WithId,
     },
     routes::auth::{
-        create_new_user, create_verification_email, generate_password_reset_codes,
-        search_for_user_using_email_or_username, send_reset_password_email, validate_new_user,
-        ResetAndCancelationTokens,
+        create_new_session, create_new_user, create_verification_email,
+        generate_password_reset_codes, log_in, search_for_user_using_email_or_username,
+        send_reset_password_email, send_verification_email, update_existing_session,
+        update_password_to_new_password, validate_new_user, validate_submitted_password,
+        verify_verification_code, CreatedTokensReadable, ResetAndCancelationTokens,
+        UserTotpEnabledResult,
     },
-};
-use crate::{
-    data_models::authentication_model::{ChangeUserNameRequest, VerifyEmailRequest},
-    error_types::{DatabaseError, RequestErrors},
-    routes::auth::{update_password_to_new_password, validate_submitted_password},
-};
-use crate::{
-    data_models::authentication_model::{DeviceInformation, LoginRequest, UserCreationRequest},
-    routes::auth::{update_existing_session, UserTotpEnabledResult},
-};
-use crate::{
-    data_models::models::{
-        BookMetadata, BookSeriesMetadata, DatabaseTypes, LibraryMetadata, WithId,
-    },
-    routes::auth::{
-        create_new_session, log_in, send_verification_email, verify_verification_code,
-        CreatedTokensReadable,
-    },
-};
-use crate::{
-    db::Database,
-    error_types::EmailErrors::{self},
-};
-use crate::{
-    error_types::{
-        AppErrors,
-        AuthenticationError::{ExpiredSession, UnautherizedSession},
-    },
-    models::{Sessions, SessionsDatabaseColumns, UserMetadata},
     stream_reader::streaming_file,
 };
 
-use tower_cookies::{cookie, Cookies};
+// === Authentication extractors ===============================================
+// Adding one of these as a handler argument makes Axum validate the request's
+// cookies before the handler body runs; a failed check rejects with 401/403.
 
+/// A fully authenticated session whose user is an admin.
 pub struct AdminSession(pub Sessions);
 
 impl FromRequestParts<Arc<Database>> for AdminSession {
@@ -88,6 +76,7 @@ impl FromRequestParts<Arc<Database>> for AdminSession {
     }
 }
 
+/// A valid, fully authenticated session, looked up by the `session_token` cookie.
 pub struct AuthSession(pub Sessions);
 
 impl FromRequestParts<Arc<Database>> for AuthSession {
@@ -118,15 +107,15 @@ fn authorized(cookies: Cookies, db: &Arc<Database>) -> Result<Sessions, RequestE
                 conn,
                 &[SessionsDatabaseColumns::SessionToken],
                 &[&hashed_session_token],
-                crate::models::QuerySeparator::And,
-                crate::models::SelectionMethod::Everything,
+                QuerySeparator::And,
+                SelectionMethod::Everything,
             )?
-            .ok_or(AppErrors::Authentication(UnautherizedSession))?;
+            .ok_or(AppErrors::Authentication(UnauthorizedSession))?;
             if session.session_token_expiration_date < SystemTime::now() {
                 return Err(AppErrors::Authentication(ExpiredSession));
             }
             if !session.authentication_completed {
-                return Err(AppErrors::Authentication(UnautherizedSession));
+                return Err(AppErrors::Authentication(UnauthorizedSession));
             }
             Ok(session)
         })
@@ -140,6 +129,7 @@ fn authorized(cookies: Cookies, db: &Arc<Database>) -> Result<Sessions, RequestE
     Ok(session)
 }
 
+/// A session that passed the password step but is still waiting for its TOTP code.
 pub struct AuthTOTPLoginSession(pub Sessions);
 
 impl FromRequestParts<Arc<Database>> for AuthTOTPLoginSession {
@@ -172,15 +162,15 @@ fn validate_totp_login_session(
                 conn,
                 &[SessionsDatabaseColumns::SessionToken],
                 &[&hashed_session_token],
-                crate::models::QuerySeparator::And,
-                crate::models::SelectionMethod::Everything,
+                QuerySeparator::And,
+                SelectionMethod::Everything,
             )?
-            .ok_or(AppErrors::Authentication(UnautherizedSession))?;
+            .ok_or(AppErrors::Authentication(UnauthorizedSession))?;
             if session.session_token_expiration_date < SystemTime::now() {
                 return Err(AppErrors::Authentication(ExpiredSession));
             }
             if session.authentication_completed {
-                return Err(AppErrors::Authentication(UnautherizedSession));
+                return Err(AppErrors::Authentication(UnauthorizedSession));
             }
             Ok(session)
         })
@@ -194,6 +184,7 @@ fn validate_totp_login_session(
     Ok(session)
 }
 
+/// A session looked up by the `refresh_token` cookie, used to rotate the token pair.
 pub struct AuthRefreshSession(pub Sessions);
 
 impl FromRequestParts<Arc<Database>> for AuthRefreshSession {
@@ -223,15 +214,15 @@ fn refresh_authorized(cookies: Cookies, db: &Arc<Database>) -> Result<Sessions, 
                 conn,
                 &[SessionsDatabaseColumns::RefreshToken],
                 &[&hashed_refresh_token],
-                crate::models::QuerySeparator::And,
-                crate::models::SelectionMethod::Everything,
+                QuerySeparator::And,
+                SelectionMethod::Everything,
             )?
-            .ok_or(AppErrors::Authentication(UnautherizedSession))?;
+            .ok_or(AppErrors::Authentication(UnauthorizedSession))?;
             if session.refresh_token_expiration_date < SystemTime::now() {
                 return Err(AppErrors::Authentication(ExpiredSession));
             }
             if !session.authentication_completed {
-                return Err(AppErrors::Authentication(UnautherizedSession));
+                return Err(AppErrors::Authentication(UnauthorizedSession));
             }
             Ok(session)
         })
@@ -245,16 +236,16 @@ fn refresh_authorized(cookies: Cookies, db: &Arc<Database>) -> Result<Sessions, 
     Ok(session)
 }
 
-// Simple liveness check. Also used as the placeholder handler for routes
-// whose backing functionality doesn't exist yet.
+/// Simple liveness check. Also used as the placeholder handler for routes
+/// whose backing functionality doesn't exist yet.
 pub async fn ping_server() -> impl IntoResponse {
     (StatusCode::OK, "pong")
 }
 
-// === Implemented against existing functionality =============================
+// === Library, series & book handlers =========================================
 
-// Return every library, each paired with its row id.
-// TODO: gate behind auth once sessions exist.
+/// Return every library, each paired with its row id.
+// TODO: require an `AuthSession`.
 pub async fn get_libraries(
     State(db): State<Arc<Database>>,
 ) -> Result<Json<Vec<WithId<LibraryMetadata>>>, DatabaseError> {
@@ -264,7 +255,7 @@ pub async fn get_libraries(
     Ok(Json(libraries))
 }
 
-// Return every series that belongs to the given library, each with its row id.
+/// Return every series that belongs to the given library, each with its row id.
 pub async fn get_series_in_library(
     State(db): State<Arc<Database>>,
     Path(library_id): Path<i64>,
@@ -275,7 +266,7 @@ pub async fn get_series_in_library(
     Ok(Json(series))
 }
 
-// Return every book that belongs to the given series, each with its row id.
+/// Return every book that belongs to the given series, each with its row id.
 pub async fn get_series_children(
     State(db): State<Arc<Database>>,
     Path(series_id): Path<i64>,
@@ -286,35 +277,36 @@ pub async fn get_series_children(
     Ok(Json(books))
 }
 
-// Stream a book file (with HTTP range support, handled inside streaming_file).
+/// Stream a book file (with HTTP range support, handled inside `streaming_file`).
 pub async fn request_file(
     State(db): State<Arc<Database>>,
     Path(id): Path<i64>,
     request: Request<Body>,
 ) -> Result<Response<Body>, DatabaseError> {
-    //should be able to handle images (cover images) as well as books and partial books (as well as folders with images, like an unzipped cbz file)
-    //the image comics probably need to have their height pre-calculated in order for correct display conditions
+    // TODO: also serve cover images, partial books, and folders of images (e.g. an
+    // unzipped CBZ). Image comics will likely need page heights pre-calculated so the
+    // reader can lay them out correctly.
     let metadata = db.get_entry::<BookMetadata>(id)?;
     Ok(streaming_file(&metadata, request).await)
 }
 
-// Return a single book's metadata without streaming the file itself.
+/// Return a single book's metadata without streaming the file itself.
 pub async fn retrieve_metadata(
     State(db): State<Arc<Database>>,
     Path(id): Path<i64>,
 ) -> Result<Json<BookMetadata>, DatabaseError> {
-    //preferably can return the metadata from all metadata types
+    // TODO: return metadata for every metadata type, not just books.
     let metadata = db.get_entry::<BookMetadata>(id)?;
     Ok(Json(metadata))
 }
 
-// (Re)run migrations / ensure the database is set up.
+/// (Re)run migrations / ensure the database is set up.
 pub async fn initiate_database() -> Result<&'static str, DatabaseError> {
     Database::new()?;
     Ok("Database initialized")
 }
 
-// Kick off a scan of every configured book directory.
+/// Kick off a scan of every configured book directory.
 pub async fn scan_all_directories(State(db): State<Arc<Database>>) -> impl IntoResponse {
     match scan_all_folders(db).await {
         Ok(()) => (StatusCode::OK, "Directory scan complete".to_string()),
@@ -325,7 +317,7 @@ pub async fn scan_all_directories(State(db): State<Arc<Database>>) -> impl IntoR
     }
 }
 
-// Delete a library row by id.
+/// Delete a library row by id.
 pub async fn delete_library(
     State(db): State<Arc<Database>>,
     Path(id): Path<i64>,
@@ -334,25 +326,28 @@ pub async fn delete_library(
     Ok("Library deleted")
 }
 
-// === Not yet implementable — waiting on backing functionality ===============
+// === Not yet implemented =====================================================
 
-pub async fn update_database_entry(session: AuthSession) -> impl IntoResponse {
-    // Blocked: models don't derive Deserialize, and the request shape is undecided.
-    return failed_getting_response();
+// Blocked: the request shape is undecided.
+pub async fn update_database_entry(_session: AuthSession) -> impl IntoResponse {
+    failed_getting_response()
 }
 
-pub async fn insert_database_entry(session: AuthSession) -> impl IntoResponse {
-    // Blocked: models don't derive Deserialize, and the request shape is undecided.
-    return failed_getting_response();
+// Blocked: the request shape is undecided.
+pub async fn insert_database_entry(_session: AuthSession) -> impl IntoResponse {
+    failed_getting_response()
 }
 
-pub async fn scan_for_metadata(session: AuthSession) -> impl IntoResponse {
-    return failed_getting_response();
+// Blocked: online metadata fetching doesn't exist yet (see `scanner/metadata_fetcher.rs`).
+pub async fn scan_for_metadata(_session: AuthSession) -> impl IntoResponse {
+    failed_getting_response()
 }
 
 fn failed_getting_response() -> Response<Body> {
-    return Response::new("Failed to get response".into());
+    Response::new("Failed to get response".into())
 }
+
+// === Authentication ==========================================================
 
 pub async fn sign_up(
     State(db): State<Arc<Database>>,
@@ -368,8 +363,7 @@ pub async fn sign_up(
         Err(err) => {
             log::error!("Failed the sign up procedure with error: {err}");
             return create_internal_server_error_response(format!(
-                "Could not create a user due to: {}",
-                err.to_string()
+                "Could not create a user due to: {err}"
             ));
         }
     };
@@ -383,21 +377,16 @@ pub async fn sign_up(
             err => err,
         });
     match result {
-        Ok(()) => {
-            return Response::builder()
-                .status(StatusCode::ACCEPTED)
-                .body("Created a user and sent a verification email.".into())
-                .unwrap()
-        }
+        Ok(()) => Response::builder()
+            .status(StatusCode::ACCEPTED)
+            .body("Created a user and sent a verification email.".into())
+            .unwrap(),
         Err(EmailErrors::SentFailedDueToNoConfig { code }) => {
             auto_verify_account(request.email, code, &db, email_info.user.user_id).await
         }
-        Err(err) => {
-            return create_internal_server_error_response(format!(
-                "Failed to send verification email due to: {}",
-                err.to_string()
-            ));
-        }
+        Err(err) => create_internal_server_error_response(format!(
+            "Failed to send verification email due to: {err}"
+        )),
     }
 }
 
@@ -434,8 +423,7 @@ pub async fn sign_in(State(db): State<Arc<Database>>, request: LoginRequest) -> 
         Err(err) => {
             log::error!("Failed with log in transaction at: {err}");
             return create_internal_server_error_response(format!(
-                "Failed to sign in due to: {}",
-                err.to_string()
+                "Failed to sign in due to: {err}"
             ));
         }
     };
@@ -490,7 +478,7 @@ fn verify_email_logic(
 
 pub async fn log_out(session: AuthSession, State(db): State<Arc<Database>>) -> Response<Body> {
     match db.remove_entry(DatabaseTypes::Session, session.0.session_id) {
-        Ok(()) => (StatusCode::ACCEPTED, format!("Successfully logged out!")).into_response(),
+        Ok(()) => (StatusCode::ACCEPTED, "Successfully logged out!").into_response(),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to log out properly due to: {err}"),
@@ -523,7 +511,7 @@ pub async fn change_password(
     request: ChangePasswordRequest,
 ) -> Response<Body> {
     if request.new_password != request.new_password_repeat {
-        return create_internal_server_error_response(format!("Password mismatch"));
+        return create_internal_server_error_response("Password mismatch".to_string());
     }
     match db.setup_new_transaction(|conn| {
         let user = Database::get_entry_with_connection::<UserMetadata>(conn, session.0.user_id)?;
@@ -592,16 +580,17 @@ pub async fn change_email(
 }
 
 pub async fn reset_password(
-    request: ResettingUsersPassword,
-    State(db): State<Arc<Database>>,
+    _request: ResettingUsersPassword,
+    State(_db): State<Arc<Database>>,
 ) -> Response<Body> {
+    // Planned flow:
+    // - get the user using the email address
+    // - check for an existing reset-password entry using the user id
+    // - check that the attempt count is below five
+    // - check that the reset code matches the entry's hashed code
+    //   - if yes, change the password
+    //   - if no, increment the attempt count and return an unauthorized response
     (
-        //get the user using the email address
-        //check for existing reset password entry using user id
-        //check if attempt amount is less than five
-        //check if reset code matches the hashed entries code
-        //---->if yes change password
-        //---->if no up the attempt amount and return unautherized message
         StatusCode::NOT_IMPLEMENTED,
         "Needs the front end structure in place first so this can match the structure",
     )
@@ -666,30 +655,51 @@ fn store_user_password_reset_token(
     Ok(())
 }
 
-pub async fn totp_start_set_up() -> Response<Body> {} //needs the normal autherization
+// === TOTP (stubs until the flow in `totp_management.rs` is implemented) ======
 
-pub async fn finalize_totp_set_up() -> Response<Body> {} //normal autherization
-
-pub async fn disable_totp() -> Response<Body> {} //normal autherization
-
-pub async fn sign_in_totp_with_recovery_code() -> Response<Body> {} //totp sign in autherization
-
-pub async fn sign_in_totp() -> Response<Body> {} //totp sign in autherization
-
-//-------------------------Authentication Helpers----------------------------------//
-
-fn create_internal_server_error_response(body: String) -> Response<Body> {
-    return Response::builder()
-        .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .body(body.into())
-        .unwrap();
+/// Requires a fully authenticated session (`AuthSession`).
+pub async fn totp_start_set_up() -> Response<Body> {
+    not_implemented_response()
 }
 
-fn create_unautherized_error_response(body: String) -> Response<Body> {
-    return Response::builder()
+/// Requires a fully authenticated session (`AuthSession`).
+pub async fn finalize_totp_set_up() -> Response<Body> {
+    not_implemented_response()
+}
+
+/// Requires a fully authenticated session (`AuthSession`).
+pub async fn disable_totp() -> Response<Body> {
+    not_implemented_response()
+}
+
+/// Requires a half-authenticated TOTP login session (`AuthTOTPLoginSession`).
+pub async fn sign_in_totp_with_recovery_code() -> Response<Body> {
+    not_implemented_response()
+}
+
+/// Requires a half-authenticated TOTP login session (`AuthTOTPLoginSession`).
+pub async fn sign_in_totp() -> Response<Body> {
+    not_implemented_response()
+}
+
+// === Response helpers ========================================================
+
+fn not_implemented_response() -> Response<Body> {
+    (StatusCode::NOT_IMPLEMENTED, "Not implemented yet").into_response()
+}
+
+fn create_internal_server_error_response(body: String) -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .body(body.into())
+        .unwrap()
+}
+
+fn create_unauthorized_error_response(body: String) -> Response<Body> {
+    Response::builder()
         .status(StatusCode::UNAUTHORIZED)
         .body(body.into())
-        .unwrap();
+        .unwrap()
 }
 
 fn create_auth_response(

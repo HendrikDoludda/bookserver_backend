@@ -1,4 +1,8 @@
-//set up
+//! TOTP two-factor authentication — planned. Each function below lists the steps
+//! it will perform; see `docs/features/04-two-factor-auth-totp.md`.
+
+// === Setup ===================================================================
+
 pub fn begin_totp_setup() {
     // Ensure user is authenticated.
     // Generate a random TOTP secret.
@@ -25,7 +29,8 @@ fn generate_recovery_codes() {
     //returns recovery codes
 }
 
-//verify
+// === Verification ============================================================
+
 pub fn verify_totp_log_in() {
     //user sends in the session code
     //verify code
@@ -41,7 +46,8 @@ pub fn authenticate_using_recovery_code() {
     //mark code as used
 }
 
-//Disable
+// === Disabling ===============================================================
+
 pub fn disable_totp() {
     // Require current password (or another strong verification).
     // Delete TOTP secret.

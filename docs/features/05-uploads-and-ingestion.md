@@ -26,7 +26,7 @@ No upload code exists anywhere in the tree — no route, handler or model mentio
 - **Missing prerequisite:** scannable roots still come from the `BOOK_DIRS` env var ([config.rs:68-74](../../src/config.rs#L68)), so "ask where the new series should live" has no set of roots to offer. Libraries created by the scanner are also hardcoded to `LibraryType::Books` ([folder_scanner.rs:363](../../src/scanner/folder_scanner.rs#L363)), so "library type drives the default field set" has nothing varied to key off yet.
 - **Missing prerequisite:** the router installs no middleware at all ([api_routes.rs:45-70](../../src/routes/api_routes.rs#L45) — no `.layer(...)` anywhere), and axum's `multipart` feature is not enabled ([Cargo.toml:7](../../Cargo.toml#L7)). No free-space crate is in the tree.
 
-Roadmap drift: the §4 markers themselves are accurate — nothing here is built. The stale bit is inside the section: the collision-policy note says the email dependency means "SMTP, e.g. Rust `lettre`", but the backend already sends mail through `mail-send` with a working `create_new_email` ([email_helper.rs:7-39](../../src/routes/email_helper.rs#L7)), so this is reuse, not a new crate. Also worth knowing before starting: the crate does not currently compile (five empty-bodied TOTP handlers at [api_caller.rs:617-625](../../src/routes/api_caller.rs#L617)) and the router panics at startup on axum 0.8's rejection of `:id` path syntax — see [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md).
+Roadmap drift: the §4 markers themselves are accurate — nothing here is built. The stale bit is inside the section: the collision-policy note says the email dependency means "SMTP, e.g. Rust `lettre`", but the backend already sends mail through `mail-send` with a working `create_new_email` ([email_helper.rs:7-39](../../src/routes/email_helper.rs#L7)), so this is reuse, not a new crate.
 
 ## Decisions
 
@@ -165,4 +165,4 @@ What the uploader must therefore respect:
 - [Browsing, Search & Discovery](11-browsing-search-and-discovery.md) — the series-lookup/search endpoint the auto-complete needs
 - [Internationalization (i18n)](13-internationalization.md) — the backend-owned catalog that localizes the notification emails
 - [Video Library (Phase 2)](20-video.md) — where the video field sets (`movie` / `series` / `original`, season/episode) actually become reachable
-- [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md) — the compile errors and the axum 0.8 route-syntax panic that block exercising any of this
+- [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md) — owned the compile errors and the axum 0.8 route-syntax panic (now fixed) that used to block exercising any of this

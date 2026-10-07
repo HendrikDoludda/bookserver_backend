@@ -23,9 +23,9 @@ for a frontend to consume.
 - Runtime config via env vars: `PORT` (default 8080), `BOOK_DIRS` (`:`-separated), `API_KEY`,
   and `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM` / `SMTP_FROM_NAME`
 
-> ⚠️ The crate **does not currently compile** and the router **panics at startup** even when it
-> does. Both blockers are described at the top of [ROADMAP.md](ROADMAP.md); fix them before
-> trying to run anything.
+> The crate compiles and the server boots. Remaining `cargo clippy` warnings are confined to
+> the in-progress auth/TOTP code. Defects that still break individual endpoints are listed
+> under "Blocked right now" in [ROADMAP.md](ROADMAP.md).
 
 ## Where to find what
 
@@ -41,8 +41,8 @@ for a frontend to consume.
 
 ### HTTP layer — `src/routes/`
 - `api_routes.rs` — the **route table** (`set_up_routes`) and `start_server`. Router state is `Arc<Database>`.
-- `api_caller.rs` — the **handler functions** (what each endpoint does). Mix of implemented + stubbed; stubs note *why* they're blocked (some of those notes are now stale). `ping_server` doubles as the liveness check and the placeholder for routes with no handler yet.
-- `auth.rs` — real auth logic (~566 lines): user creation, email verification, login, password change/reset, Argon2 hashing, and the session + refresh token pair. **Not yet wired to routes.**
+- `api_caller.rs` — the **handler functions** (what each endpoint does). Also holds the auth **extractors** (`AuthSession`, `AdminSession`, `AuthTOTPLoginSession`, `AuthRefreshSession`). Mix of implemented + stubbed; stubs note *why* they're blocked, and the TOTP handlers return 501. `ping_server` doubles as the liveness check and the placeholder for routes with no handler yet.
+- `auth.rs` — real auth logic (~550 lines): user creation, email verification, login, password change/reset, Argon2 hashing, and the session + refresh token pair. **Not yet wired to routes.**
 - `totp_management.rs` — comment-only stubs for the TOTP flows.
 - `email_helper.rs` — `create_new_email`: builds and sends mail over SMTP via `mail-send`.
 
@@ -65,7 +65,7 @@ for a frontend to consume.
 ### Scanner — `src/scanner/`
 - `folder_scanner.rs` — walks configured dirs, parses filenames (regex for volume/chapter/page), inserts entries. Entry point: `scan_all_folders`.
 - `cover_image_retriever.rs` — extracts a cover per format (PDF / CBZ / EPUB / image). Entry point: `get_cover_image`. (EPUB path untested.)
-- `metadata_fetcher.rs` — **empty file**; online metadata fetching lives in [docs/features/09-metadata-enrichment.md](docs/features/09-metadata-enrichment.md).
+- `metadata_fetcher.rs` — **placeholder** (module doc only); online metadata fetching lives in [docs/features/09-metadata-enrichment.md](docs/features/09-metadata-enrichment.md).
 - `mod.rs` — module declarations.
 
 ### Reading & misc
@@ -76,8 +76,9 @@ for a frontend to consume.
 - `migrations/0001_initial_schema.sql` — 10 tables: `books`, `library`, `library_elements`
   (junction: composite PK `(library_id, series_id)`, **no `id`**), `series`, `users`,
   `email_verification`, `reset_password_requests`, `sessions`, `recovery_codes`, `totp`.
-- `data/databases/app_data.sqlite` — the SQLite database.
-- `cover_images/` — extracted cover images.
+- `data/databases/app_data.sqlite` — the SQLite database. Created on first run; git-ignored
+  (never commit it — it holds local file paths and user rows).
+- `cover_images/` — extracted cover images. Git-ignored except the `example-cover.png` fallback.
 
 ### Docs — `docs/`
 - `docs/README.md` — index of the feature docs + the doc conventions.

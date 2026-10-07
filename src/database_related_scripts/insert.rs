@@ -7,30 +7,17 @@ use crate::error_types::DatabaseError;
 use crate::models::ResetPasswordRequest;
 use rusqlite::{params, Connection};
 
+/// Write a model as a new row. Returns the new row's id (`last_insert_rowid`).
 pub trait Insert {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError>;
 }
 
 impl Insert for BookMetadata {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
-        let query = "INSERT INTO books 
-        (title, 
-    author, 
-    format, 
-    language, 
-    cover_image, 
-    description, 
-    tags, 
-    file_path, 
-    page_count, 
-    volume_number, 
-    chapter_number, 
-    page_number, 
-    file_hash, 
-    last_modified, 
-    file_size, 
-    series) 
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)";
+        let query = "INSERT INTO books (title, author, format, language, cover_image, \
+            description, tags, file_path, page_count, volume_number, chapter_number, \
+            page_number, file_hash, last_modified, file_size, series) \
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)";
 
         let params = params![
             self.title.clone(),
@@ -60,13 +47,8 @@ impl Insert for BookMetadata {
 
 impl Insert for BookSeriesMetadata {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
-        let query = "INSERT INTO series 
-        (name,
-         description,
-          cover_image,
-           start_release_year,
-            end_release_year)
-             VALUES (?1, ?2, ?3, ?4, ?5)";
+        let query = "INSERT INTO series (name, description, cover_image, \
+            start_release_year, end_release_year) VALUES (?1, ?2, ?3, ?4, ?5)";
 
         let params = params![
             self.name.clone(),
@@ -85,11 +67,7 @@ impl Insert for BookSeriesMetadata {
 
 impl Insert for LibraryMetadata {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
-        let query = "INSERT INTO library 
-        (library_name,
-         library_type,
-          cover_image,
-           description)
+        let query = "INSERT INTO library (library_name, library_type, cover_image, description) \
             VALUES (?1, ?2, ?3, ?4)";
 
         let params = params![
@@ -108,11 +86,7 @@ impl Insert for LibraryMetadata {
 
 impl Insert for UserMetadata {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
-        let query = "INSERT INTO users 
-        (username,
-         password_hash,
-          email)
-           VALUES (?1, ?2, ?3)";
+        let query = "INSERT INTO users (username, password_hash, email) VALUES (?1, ?2, ?3)";
 
         let params = params![
             self.username.clone(),
@@ -129,10 +103,7 @@ impl Insert for UserMetadata {
 
 impl Insert for SeriesLibraryConnection {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
-        let query = "INSERT INTO library_elements 
-        (library_id,
-         series_id)
-          VALUES (?1, ?2)";
+        let query = "INSERT INTO library_elements (library_id, series_id) VALUES (?1, ?2)";
 
         let params = params![self.library_id, self.series_id];
 
@@ -145,7 +116,8 @@ impl Insert for SeriesLibraryConnection {
 
 impl Insert for EmailVerification {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
-        let query = "INSERT INTO email_verification (user_id, email_verification_token, expires_at, invalidated) VALUES (?1, ?2, ?3, ?4)";
+        let query = "INSERT INTO email_verification (user_id, email_verification_token, \
+            expires_at, invalidated) VALUES (?1, ?2, ?3, ?4)";
         let expired_time = convert_system_time_to_unix_time(self.expiration_date);
         let params = params![
             self.user_id,
@@ -185,7 +157,10 @@ impl Insert for ResetPasswordRequest {
 
 impl Insert for Sessions {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
-        let query = "INSERT INTO sessions (user_id, device_id, device_name, platform, refresh_token_hashed, refresh_token_valid_until, session_token_hashed, session_token_valid_until, created_at, last_used_at, authentication_completed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,?9,?10,?11)";
+        let query = "INSERT INTO sessions (user_id, device_id, device_name, platform, \
+            refresh_token_hashed, refresh_token_valid_until, session_token_hashed, \
+            session_token_valid_until, created_at, last_used_at, authentication_completed) \
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)";
         let refresh_valid_until =
             convert_system_time_to_unix_time(self.refresh_token_expiration_date);
         let session_valid_until =

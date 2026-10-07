@@ -12,9 +12,12 @@ use crate::{
     },
 };
 
+/// Delete every row matching the given column values, joined with `AND` or `OR`.
+/// Useful for tables keyed by something other than `id` (e.g. `user_id`).
 pub trait Delete: FromRow {
     type Column: AsRef<str>;
     const TABLE: &'static str;
+
     fn delete(
         conn: &Connection,
         columns: &[Self::Column],

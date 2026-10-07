@@ -8,9 +8,9 @@ use crate::error_types::DatabaseError;
 use crate::models::{ResetPasswordRequest, ResetPasswordRequestColumns};
 use rusqlite::{params, params_from_iter, Connection, ToSql};
 
+/// Update one or more columns of a row by id.
 pub trait Update {
     type Column: AsRef<str>;
-
     const TABLE: &'static str;
 
     fn update(

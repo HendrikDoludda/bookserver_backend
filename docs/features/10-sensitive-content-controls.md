@@ -17,7 +17,7 @@ Nothing exists yet. Specifically:
 
 - No `is_sensitive` column on `library` ([0001_initial_schema.sql:23-29](../../migrations/0001_initial_schema.sql#L23)) or on `series` ([0001_initial_schema.sql:41-48](../../migrations/0001_initial_schema.sql#L41)).
 - No field on `LibraryMetadata` ([models.rs:292-298](../../src/data_models/models.rs#L292)) or `BookSeriesMetadata` ([models.rs:226-233](../../src/data_models/models.rs#L226)), and no variant in `LibraryDatabaseColumns` ([models.rs:300-316](../../src/data_models/models.rs#L300)) or `SeriesDatabaseColumns` ([models.rs:235-253](../../src/data_models/models.rs#L235)).
-- A grep for `sensitive` across `src/` and `migrations/` matches only unrelated text ([error_types.rs:256](../../src/error_types.rs#L256), a comment at [auth.rs:556](../../src/routes/auth.rs#L556)).
+- A grep for `sensitive` across `src/` and `migrations/` matches only unrelated text ([error_types.rs:256](../../src/error_types.rs#L256)).
 
 What *does* exist and this feature will lean on:
 

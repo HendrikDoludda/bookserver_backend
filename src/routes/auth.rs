@@ -1,6 +1,9 @@
+//! Authentication logic: account creation, email verification, login, password
+//! changes/resets, and the session + refresh token pair. Handlers in
+//! `api_caller.rs` call into these functions inside a database transaction.
+
 use argon2::password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier};
 use argon2::Argon2;
-use mail_send::mail_auth::hickory_resolver::caching_client;
 use rusqlite::{Connection, ToSql};
 use url::Url;
 
@@ -49,16 +52,18 @@ pub fn create_new_user(
     Ok(id)
 }
 
-struct UserCreationChecks {
+pub struct UserCreationChecks {
     pub make_admin: bool,
 }
-struct VerificationEmailInformation {
+
+pub struct VerificationEmailInformation {
     pub code: String,
     pub user: UserMetadata,
 }
+
 pub struct HashedString {
-    pub normal_string: String, //to send to front end
-    pub hashed_string: String, //to store
+    pub normal_string: String, // sent to the client
+    pub hashed_string: String, // stored in the database
 }
 
 pub struct CreatedTokensReadable {
@@ -100,7 +105,7 @@ pub fn validate_new_user(
         &[UserDatabaseColumns::Email, UserDatabaseColumns::Username],
         &[&request.email, &request.username],
         QuerySeparator::Or,
-        crate::models::SelectionMethod::PassedInColumns,
+        SelectionMethod::PassedInColumns,
     )
     .map_err(|_| AuthenticationError::DatabaseSearchFailure)?;
     if let Some(user) = existing_user {
@@ -154,7 +159,7 @@ pub fn send_verification_email(
         .ok_or(EmailErrors::TimeAdjustmentFailure)?;
 
     let email_verification = EmailVerification {
-        user_id: user_id,
+        user_id,
         verification_token: verification_code.hashed_string,
         expiration_date,
         invalidated: false,
@@ -166,18 +171,21 @@ pub fn send_verification_email(
     })?;
     let response = VerificationEmailInformation {
         code: verification_code.normal_string.clone(),
-        user: user,
+        user,
     };
     Ok(response)
 }
 
-//TODO: Text must be replaced with the i18n text which I will create after the authentication
+/// Sends the verification email; calling it again re-sends one with a new token.
+// TODO: replace the text with i18n strings once the catalog exists.
 pub async fn create_verification_email(
     information: &VerificationEmailInformation,
 ) -> Result<(), EmailErrors> {
-    //if called re-sends a verification email with a new token
-    let body = format!("Dear {}, \n The verify the account please enter the following code in the application.\n Code: {} \n Best regards,\n{}",&information.user.username,information.code,"Server Team");
-    let subject = format!("Verify Book Server Account");
+    let body = format!(
+        "Dear {},\nTo verify the account please enter the following code in the application.\nCode: {}\nBest regards,\n{}",
+        information.user.username, information.code, "Server Team"
+    );
+    let subject = "Verify Book Server Account".to_string();
 
     let mail_info: EmailInformation = EmailInformation {
         username: information.user.username.clone(),
@@ -190,10 +198,7 @@ pub async fn create_verification_email(
         subject,
     };
 
-    match create_new_email(mail_info).await {
-        Ok(()) => Ok(()),
-        Err(err) => return Err(err),
-    }
+    create_new_email(mail_info).await
 }
 
 pub fn search_for_user_using_email_or_username(
@@ -274,13 +279,14 @@ fn evaluate_verification_token(
 
         Ok(())
     } else {
-        return Err(AppErrors::Authentication(
+        Err(AppErrors::Authentication(
             AuthenticationError::IncorrectCredentials,
-        ));
+        ))
     }
 }
 
-//authentication
+// === Login ===================================================================
+
 pub fn log_in(
     request: &LoginRequest,
     conn: &Connection,
@@ -320,7 +326,8 @@ pub fn validate_submitted_password(
     Ok(())
 }
 
-//modification
+// === Password changes & resets ===============================================
+
 pub fn generate_password_reset_codes() -> Result<ResetAndCancelationTokens, AuthenticationError> {
     //create email body for resetting email
     //create a reset token
@@ -364,7 +371,7 @@ pub async fn send_reset_password_email(
     \n You have requested to reset your password. Use this code in the app to apply the new password.
     \n {}
     \nIn case you did not request the password reset use this link to invalidate the request: {}",reset_token,cancelation_link);
-    let subject = format!("Password Reset");
+    let subject = "Password Reset".to_string();
 
     let email_info = EmailInformation {
         username: "Anonymous".to_owned(),
@@ -373,10 +380,7 @@ pub async fn send_reset_password_email(
         subject,
     };
 
-    match create_new_email(email_info).await {
-        Ok(()) => Ok(()),
-        Err(err) => return Err(err),
-    }
+    create_new_email(email_info).await
 }
 
 pub fn update_password_to_new_password(
@@ -416,7 +420,8 @@ fn password_changed() {
     //remove all active sessions and refresh tokens.
 }
 
-//sign out
+// === Sessions ================================================================
+
 pub fn log_out() {
     //delete the session and refresh token entry to inactive
     //return success
@@ -434,20 +439,20 @@ pub fn update_existing_session(
         SessionsDatabaseColumns::SessionTokenExpirationDate,
         SessionsDatabaseColumns::LastUsedAt,
     ];
-    let refresh_expirtation = convert_system_time_to_unix_time(tokens.refresh_token_valid_until);
+    let refresh_expiration = convert_system_time_to_unix_time(tokens.refresh_token_valid_until);
     let session_expiration = convert_system_time_to_unix_time(tokens.session_token_valid_until);
     let now = convert_system_time_to_unix_time(SystemTime::now());
     let values: &[&dyn ToSql] = &[
         &tokens.refresh_token,
         &tokens.session_token,
-        &refresh_expirtation,
+        &refresh_expiration,
         &session_expiration,
         &now,
     ];
-    //For more safety change update to search and update
-    //This will allow for searching for a specific entry and confirming that the token is still the same as before
-    //to prevent racing conditions where the entry will overwrite the token twice
-    //For small applications not necessary but could be improtant later on
+    // For more safety, turn this update into a search-and-update that confirms the
+    // stored token is still the one that was presented. That prevents a race where two
+    // concurrent refreshes both overwrite the token. Not needed at this scale, but it
+    // could matter later.
     Database::update_multiple_values_with_connection::<Sessions>(
         conn,
         &columns,
@@ -542,28 +547,3 @@ fn hash_string_securely(to_hash: &str) -> Result<HashedString, AuthenticationErr
         hashed_string: hash.to_string(),
     })
 }
-
-/*One additional recommendation for your stack:
-Passwords: argon2
-Random values (refresh tokens, salts, etc.): rand (using the OS RNG)
-General hashing: blake3
-UUIDs: uuid
-JWTs: jsonwebtoken or another well-maintained JWT crate
-
-
-On first run:
-Generate a 256-bit random key.
-Store it in a protected secrets file.
-Use that key for:
-keyed BLAKE3 hashing of refresh tokens
-encrypting sensitive configuration values
-signing internal data (if appropriate)
-The database then contains only encrypted or hashed values, while the secrets file contains the key needed to use them.
-One recommendation
-I would avoid inventing your own encryption format. Rust has excellent, well-reviewed libraries for authenticated encryption, such as those implementing AES-GCM or ChaCha20-Poly1305. These provide both confidentiality and integrity, reducing the chance of subtle security mistakes.
-For your application, a clean architecture would be:
-Database: application data, sessions, encrypted secrets.
-Secrets file: one randomly generated 256-bit master key (and possibly a few deployment-specific secrets).
-Application: loads the master key at startup and uses it for keyed hashing and encryption/decryption as needed.
-That gives you a good separation of concerns without making deployment overly complicated.
-*/

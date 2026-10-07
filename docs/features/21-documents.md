@@ -102,7 +102,7 @@ What is *absent*, specifically:
 
 **Router state has to grow first.** Today it is `Arc<Database>` and nothing else ([api_routes.rs:45](../../src/routes/api_routes.rs#L45)). Real-time fan-out needs a per-document broadcast channel (`tokio::sync::broadcast`) living somewhere both the write handler and the subscribe handler can see, so state must become a struct holding the DB plus that map. This is the same widening the unused signing key already needs — see [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md) and [Operations & Security](12-operations-and-security.md).
 
-**WebSocket needs a Cargo change.** `axum = "0.8.9"` uses default features, which don't include `ws`; SSE (`axum::response::Sse`) works with what's already there. Whichever is chosen, note the route table currently uses axum 0.7-style `:id` path params, which axum 0.8 rejects — new routes must use `{id}` (tracked in [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md)).
+**WebSocket needs a Cargo change.** `axum = "0.8.9"` uses default features, which don't include `ws`; SSE (`axum::response::Sse`) works with what's already there. Whichever is chosen, note that axum 0.8 rejects the 0.7-style `:id` path params — new routes must use `{id}` (see [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md)).
 
 **Office formats: the zip half is already solved.** `zip = "8.6.0"` ([Cargo.toml:38](../../Cargo.toml#L38)) is in the tree for CBZ cover extraction, so reading a docx container reuses a known dependency; the XML-tree half is the actual work, and the lossiness warning above stands.
 

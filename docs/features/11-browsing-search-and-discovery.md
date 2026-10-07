@@ -24,7 +24,7 @@ Nothing of this feature is built. What exists is the ground it will be built on:
 - **Series names are stored lowercased** — `name: file_name.to_lowercase()` when the scanner creates a series ([folder_scanner.rs:322](../../src/scanner/folder_scanner.rs#L322)) — which makes A–Z bucketing case-insensitive for free but means display casing is currently wrong.
 - **Read state does not exist** (no table, no column, no struct), so the completed / not-completed filter has nothing to filter on yet.
 
-Roadmap drift: the status markers for §10 in [ROADMAP.md](../../ROADMAP.md) are all still correct (⬜ across the board), but the line "`GET /search` route stub already exists" overstates how ready that is — the route is registered yet unreachable, because `set_up_routes` uses axum 0.7 `:id` path syntax on eight routes ([api_routes.rs:48-63](../../src/routes/api_routes.rs#L48)) which axum 0.8 ([Cargo.toml:7](../../Cargo.toml#L7)) rejects with a startup panic, and the crate does not currently compile (5 errors, the empty-bodied TOTP handlers at [api_caller.rs:617-625](../../src/routes/api_caller.rs#L617)). Both are tracked in [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md); neither is search work, but neither can be skipped before a search handler can be exercised.
+Roadmap drift: none. The status markers for §10 in [ROADMAP.md](../../ROADMAP.md) are all still correct (⬜ across the board), and the line "`GET /search` route stub already exists" holds — the route is registered against the `ping_server` placeholder and is reachable now that the compile and route-syntax blockers ([Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md)) are fixed.
 
 ## Decisions
 
@@ -86,12 +86,11 @@ Roadmap drift: the status markers for §10 in [ROADMAP.md](../../ROADMAP.md) are
 - **Case handling:** series names are already lowercased at scan time, so A–Z bucketing is case-insensitive for free; for book titles (which keep their original casing) use `ORDER BY title COLLATE NOCASE` so `apple` and `Apple` sort together.
 - **`books.tags` is delimited text**, so an "exact tag" filter over it means matching a padded string (e.g. comparing against `',' || tags || ','` and looking for `,tag,`) — correct only if the delimiters are normalized on write. That awkwardness is the strongest argument for the junction table in Open questions.
 - **Warning kept from the roadmap:** greying the A–Z letters is *client-side* work computed from the series list. Don't build a backend endpoint for it.
-- **Nothing here is reachable until the router starts.** The axum 0.8 `:id` → `{id}` path-syntax fix and the five TOTP compile errors both sit in front of any endpoint work; see [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md).
 
 ## Related
 
 - [Reading & Read State](02-reading-and-read-state.md) — supplies the per-user state behind the completed / not-completed filter; ships with this on frontend F3 alongside "continue reading" and read/unread indicators.
-- [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md) — owns sorting + pagination on list endpoints (§6), the `/api/v1` prefix these routes already use, and the compile/router fixes that gate any endpoint work.
+- [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md) — owns sorting + pagination on list endpoints (§6) and the `/api/v1` prefix these routes already use.
 - [Library & Directory Management](01-library-and-directory-management.md) — the live `get_libraries` / `get_series_*` endpoints the A–Z bar, filters and sort controls decorate, plus cover serving for result cards.
 - [Metadata Enrichment (Online Sources)](09-metadata-enrichment.md) — fills `author`, `tags` and descriptions; until it lands, author/tag search matches almost nothing.
 - [Uploads & File Ingestion](05-uploads-and-ingestion.md) — its series field auto-complete needs a series lookup/search endpoint, which this feature's index is the natural home for.

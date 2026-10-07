@@ -1,9 +1,19 @@
+# Build output
 /target
-#ignore file types
+
+# Local runtime data (created on first run)
+/data/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
-*.jpg
-*.png
+
+# Extracted cover images; only the bundled fallback is tracked
+/cover_images/*
+!/cover_images/example-cover.png
+
+# Environment / secrets
 *.env
-!example-cover.png
+.env
+
+# OS clutter
+.DS_Store

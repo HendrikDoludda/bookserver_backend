@@ -9,10 +9,13 @@ use crate::error_types::DatabaseError;
 use crate::models::{ResetPasswordRequest, ResetPasswordRequestColumns};
 use rusqlite::{Connection, Result, ToSql};
 
+/// Find rows by arbitrary column values, joined with `AND` or `OR`.
+/// Column names come from trusted enums; values are always bound parameters.
 pub trait Search: FromRow {
     type Column: AsRef<str>;
     const TABLE: &'static str;
 
+    /// Returns the first matching row, or `None` if nothing matches.
     fn search_for_row(
         conn: &Connection,
         columns: &[Self::Column],
@@ -42,7 +45,7 @@ pub trait Search: FromRow {
             Self::TABLE,
             values_to_check
         );
-        let result = conn.query_row(&query, values, |row| Self::from_row(row)); //will create the from row in another script
+        let result = conn.query_row(&query, values, Self::from_row);
         match result {
             Ok(entry) => Ok(Some(entry)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -86,7 +89,7 @@ pub trait Search: FromRow {
             .map_err(|_| DatabaseError::TaskPreparationFailure)?;
 
         let result = stmt
-            .query_map(values, |row| Self::from_row(row))
+            .query_map(values, Self::from_row)
             .map_err(|_| DatabaseError::QueryFailure)?
             .collect::<Result<Vec<Self>, _>>()
             .map_err(|_| DatabaseError::OperationFailure)?;

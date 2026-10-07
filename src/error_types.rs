@@ -237,8 +237,8 @@ pub enum AuthenticationError {
     IncorrectCredentials,
     #[error("Expired Session and Refresh Token")]
     ExpiredSession,
-    #[error("Unautherized Session")]
-    UnautherizedSession,
+    #[error("Unauthorized session")]
+    UnauthorizedSession,
     #[error("Expired authentication code")]
     ExpiredAuthenticationCode,
     #[error("Invalid validation code")]

@@ -66,7 +66,7 @@ These are **decision tasks, not build tasks.** Each is "accept and move it into 
 
 ## Implementation notes
 
-**Nothing here is buildable today regardless of acceptance:** the crate does not compile, and once it does, `set_up_routes` still panics at startup on the axum 0.8 path syntax. Both blockers are owned by [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md) and must clear before any idea here can be prototyped.
+**The compile and startup-panic blockers are fixed** ([Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md)), so nothing outside this doc stops an accepted idea from being prototyped.
 
 - **Idea 1 (`notify`)** — a new dependency; it is not in `Cargo.toml`. The non-obvious Rust shape: `notify` delivers events on its own OS-watcher thread via a callback, not as an async stream, so the usual pattern is to send each event into a `tokio::sync::mpsc` channel from that callback and do the debouncing in a single async task that reads the channel (collect events, wait for a quiet period, then re-scan the affected folders). The roadmap's own note stands: this **builds on incremental scanning** — without the `file_hash` + `last_modified` comparison, a "re-scan the modified folder" event still does a full folder pass, and `create_book_entry` will skip every existing row rather than update it.
 - **Idea 2 (thumbnails)** — no new crate needed: `image` is already a dependency and already used in `cover_image_retriever.rs`. `image::DynamicImage::thumbnail(w, h)` is the fit-preserving resize. Two gotchas in the existing code to work around: the CBZ path has no `final_path.exists()` short-circuit and so re-extracts on every scan (the other three formats do short-circuit), and `get_cover_output_path` builds the filename with `Path::with_extension` on the hash while the caller passes `file_hash.clone().unwrap_or_default()` ([folder_scanner.rs:135](../../src/scanner/folder_scanner.rs#L135)), so on a hashing failure the extension lands on the *directory* name and the cover is written to `./cover_images.jpg` — one file beside the cover folder, shared by every such book. A thumbnail variant inherits both. *Suggestion, not a decision:* the `:kind` segment in `GET /get_cover/:kind/:id` is consumed by no handler today, so it is a natural place to select full-size vs thumbnail without adding a route.
@@ -78,7 +78,7 @@ These are **decision tasks, not build tasks.** Each is "accept and move it into 
 
 - [Library & Directory Management](01-library-and-directory-management.md) — owns ideas 1 and 2 if accepted, and already owns the promoted incremental-scanning task that idea 1 depends on.
 - [Reading & Read State](02-reading-and-read-state.md) — idea 4 is a constraint on its schema; decide before that schema is written.
-- [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md) — owns the compile and startup-panic blockers that sit in front of prototyping anything here.
+- [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md) — owned the compile and startup-panic blockers (now fixed) that used to sit in front of prototyping anything here.
 - [Authentication, Users & Sessions](03-auth-users-and-sessions.md) — supplies the role model idea 3 waits on.
 - [Sensitive Content Controls](10-sensitive-content-controls.md) — its per-user visibility overlaps idea 3; likely one mechanism, not two.
 - [Download Permissions (Phase 2)](24-download-permissions.md) — the third feature wanting the same user↔library access table idea 3 describes.

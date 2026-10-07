@@ -3,7 +3,7 @@
 > Everything that gets books *into* the catalog and keeps them organised: scanning directories, managing which directories are scannable, CRUD on libraries and series, per-format support, and covers.
 
 **Status:** 🟡 partial · **Phase:** 1 · **Tier:** Backend Tier 2 (items #6 create/update libraries & series, #7 scannable-directories table); the incremental-scan and file-watch items are unscheduled within this doc; frontend F2 · **Tags:** [BE] [DB] [FE]
-**Depends on:** [07 Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md) (the crate must compile and the router must bind before any scan or CRUD route works)
+**Depends on:** [07 Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md) (startup blockers now fixed)
 **Blocks:** [02 Reading & Read State](02-reading-and-read-state.md) (there must be scanned books to read) · [05 Uploads & File Ingestion](05-uploads-and-ingestion.md) (needs the scannable-directories table to know where a new series may live) · [09 Metadata Enrichment (Online Sources)](09-metadata-enrichment.md) (providers are routed by library type, so libraries must be typed and manageable) · [20 Video Library](20-video.md) (video libraries are typed libraries) · [23 Interop & Client Apps](23-interop-and-clients.md) (the feed is generated from libraries and series)
 **Roadmap:** [Build order](../../ROADMAP.md#priority-order-build-sequence)
 
@@ -36,9 +36,9 @@ This is the feature that makes the server a *library* rather than a file share: 
 - Any handler that serves a cover image.
 - Any route for deleting or updating a *series* (only library delete exists).
 
-**Two blockers sit in front of all of it.** The crate does not compile: five `expected Response<Body>, found ()` errors from the empty TOTP handler bodies at [api_caller.rs:617-625](../../src/routes/api_caller.rs#L617). And once it does, the router panics before binding the port: Axum 0.8 ([Cargo.toml:7](../../Cargo.toml#L7)) rejects the 0.7 `:param` syntax, and `set_up_routes` uses it on eight paths — [api_routes.rs:48](../../src/routes/api_routes.rs#L48), [:49](../../src/routes/api_routes.rs#L49), [:55](../../src/routes/api_routes.rs#L55), [:56](../../src/routes/api_routes.rs#L56), [:57](../../src/routes/api_routes.rs#L57), [:58](../../src/routes/api_routes.rs#L58), [:62](../../src/routes/api_routes.rs#L62), [:63](../../src/routes/api_routes.rs#L63) (two captures on that last one). `set_up_routes()` is called from `start_server` before `TcpListener::bind` ([api_routes.rs:21](../../src/routes/api_routes.rs#L21)), so the process aborts. Fix is `{id}` / `{kind}`.
+**The compile and route-syntax blockers are fixed;** the crate compiles and the router (now on axum 0.8 `{id}` / `{kind}` captures) no longer panics, so the server boots.
 
-**Roadmap drift:** the 🟡 on "Scan a directory for supported files" overstates it. Nothing in this feature can run today (compile errors + router panic above), and even when reached, `scan_folder` spawns its per-file tasks and drops the `JoinHandle`s ([folder_scanner.rs:77-87](../../src/scanner/folder_scanner.rs#L77)), so `POST /scan_all_directories` replies `"Directory scan complete"` before the scan has finished. `create_book_entry`'s own errors are discarded — only a join error is `eprintln!`-ed.
+**Roadmap drift:** the 🟡 on "Scan a directory for supported files" overstates it. `scan_folder` spawns its per-file tasks and drops the `JoinHandle`s ([folder_scanner.rs:77-87](../../src/scanner/folder_scanner.rs#L77)), so `POST /scan_all_directories` replies `"Directory scan complete"` before the scan has finished. `create_book_entry`'s own errors are discarded — only a join error is `eprintln!`-ed.
 
 **Roadmap drift:** `GET /get_libraries` is listed as live, but every library read fails at runtime. `LibraryMetadata::from_row` reads column `"name"` ([db_from_row.rs:71](../../src/database_related_scripts/db_from_row.rs#L71)) while `Extract::COLUMNS` selects `library_name` ([extract.rs:87](../../src/database_related_scripts/extract.rs#L87)) and the table column is `library_name` ([0001:25](../../migrations/0001_initial_schema.sql#L25)). Inserts and `get_id_from_table` use the correct name, so scanning works and reading back does not.
 
@@ -104,8 +104,6 @@ This is the feature that makes the server a *library* rather than a file share: 
 - [ ] `GET /api/v1/get_cover/{kind}/{id}` returns the image bytes with a correct `Content-Type` for a book, a series and a library; a series with no explicit cover returns its first entry's image.
 
 ## Implementation notes
-
-**Clear the two blockers first.** Nothing here is testable until (a) the five empty TOTP handler bodies at [api_caller.rs:617-625](../../src/routes/api_caller.rs#L617) return something so the crate compiles, and (b) the eight `:param` paths in [api_routes.rs:48-63](../../src/routes/api_routes.rs#L48) become `{param}` so the router stops panicking before `bind`. Both are mechanical.
 
 **Crates.** `notify` must be added to [Cargo.toml](../../Cargo.toml) — it isn't there yet; `notify-debouncer-full` is the usual companion for the debounce the roadmap calls for. `walkdir` is already declared ([Cargo.toml:15](../../Cargo.toml#L15)) but unused, because the scanner hand-rolls the walk with `tokio::fs::read_dir`; either put walkdir to work inside `spawn_blocking` or drop the dependency. `futures` is also already declared ([Cargo.toml:10](../../Cargo.toml#L10)) and unused — see joining, below.
 

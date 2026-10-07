@@ -117,7 +117,7 @@ Module-level orientation only — the feature docs carry the `file:line` detail.
   [src/error_types.rs](../src/error_types.rs).
 - **Scanner** — [src/scanner/](../src/scanner/): `folder_scanner.rs` walks the configured
   directories and parses filenames, `cover_image_retriever.rs` extracts a cover per format,
-  `metadata_fetcher.rs` is an empty placeholder for online enrichment.
+  `metadata_fetcher.rs` is a placeholder (module doc only) for online enrichment.
 - **Reading** — [src/stream_reader.rs](../src/stream_reader.rs) serves a file with HTTP
   range support; [src/utils.rs](../src/utils.rs) holds small helpers.
 
@@ -127,16 +127,8 @@ module's job changes; it is what a fresh session reads first.
 
 ## Known blockers
 
-As of this writing, nothing in these docs can be exercised, because two defects sit in
-front of all of it:
-
-1. **The crate does not compile** — five type errors in
-   [src/routes/api_caller.rs](../src/routes/api_caller.rs), where the TOTP handler bodies
-   are empty and so return `()` where `Response<Body>` is declared.
-2. **The router would panic at startup even if it did** — Axum 0.8 rejects the older
-   colon-prefixed path parameter syntax, and eight route registrations still use it. The
-   panic happens before the port opens.
-
-Both are owned by
-[07 Cross-Cutting Backend Polish](features/07-cross-cutting-backend-polish.md). Everything
-else in these docs — every task, every "Done when" line — is blocked behind them.
+The two startup blockers — the crate not compiling, and the router panicking on the
+axum 0.7 `:param` path syntax — are both fixed: `cargo build` succeeds and the server
+boots. The defects that still break individual endpoints are listed under
+[Blocked right now](../ROADMAP.md#blocked-right-now) in the roadmap, each linked to the
+feature doc that owns it.

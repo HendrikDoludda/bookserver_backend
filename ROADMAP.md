@@ -30,20 +30,15 @@ backend, not in either UI.
 
 ## Blocked right now
 
-Two defects sit in front of the entire ladder. Neither is a feature, and nothing below can
-be tested until both are cleared. Both are owned by
-[07 Cross-Cutting Backend Polish](docs/features/07-cross-cutting-backend-polish.md).
+The two startup blockers are cleared — the crate compiles and the server boots. Both were
+owned by [07 Cross-Cutting Backend Polish](docs/features/07-cross-cutting-backend-polish.md).
 
-1. ⬜ **The crate does not compile** — five type errors at
-   [api_caller.rs:617-625](src/routes/api_caller.rs#L617): the TOTP handler bodies are
-   empty, so they return `()` where `Response<Body>` is declared. Fill them or remove the
-   handlers. **[BE]**
-2. ⬜ **The router panics before the port opens** — `axum` is pinned to 0.8, which rejects
-   the 0.7 `:param` path syntax; **eight** registrations still use it in
-   [api_routes.rs](src/routes/api_routes.rs#L48) (nine params — `/get_cover/:kind/:id` has
-   two). Mechanical fix: `:id` → `{id}`. **[BE]**
+1. ✅ **The crate does not compile** — the empty TOTP handler bodies now return
+   `501 Not Implemented` until the TOTP flow is built. **[BE]**
+2. ✅ **The router panics before the port opens** — all route paths moved from the axum 0.7
+   `:param` syntax to 0.8's `{param}`. **[BE]**
 
-Two more break live endpoints once it boots:
+Two more break live endpoints now that it boots:
 
 3. ⬜ `GET /api/v1/get_libraries` can't return a row — `LibraryMetadata::from_row` reads
    column `name` while the query selects `library_name`
@@ -73,9 +68,8 @@ Two parallel tracks, each gated internally:
 
 **Tier 0 — tiny unblockers** *(each small, high leverage)*: 🟡 landed on paper
 All three are owned by [07](docs/features/07-cross-cutting-backend-polish.md) and are in the
-code, but see it — the derive landed while its handlers are still stubbed, the `/api/v1`
-prefix landed but no request can traverse it, and the status-code decision landed for 1
-error enum out of 10.
+code, but see it — the derive landed while its handlers are still stubbed, and the
+status-code decision landed for 1 error enum out of 10.
 
 1. ✅ Add `Deserialize` to models — unblocks the stubbed `insert_entry` / `update_entry`
    handlers → unblocks create/edit (#6). **[BE]**
