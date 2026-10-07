@@ -1,6 +1,7 @@
 use crate::data_models::models::ColumnSelector;
 use crate::data_models::models::DatabaseTypes;
 use crate::data_models::models::WithId;
+use crate::database_related_scripts::db_delete::Delete;
 use crate::database_related_scripts::db_search::Search;
 use crate::database_related_scripts::db_update::Update;
 use crate::database_related_scripts::extract::Extract;
@@ -156,6 +157,18 @@ impl Database {
                 .map_err(|_| DatabaseError::ConnectionExecutableFailure)?;
             Ok(())
         }
+    }
+
+    pub fn remove_entry_with_connection_based_on_columns<T>(
+        conn: &Connection,
+        columns: &[T::Column],
+        values: &[&dyn ToSql],
+        query_separator: QuerySeparator,
+    ) -> Result<(), DatabaseError>
+    where
+        T: Delete,
+    {
+        T::delete(conn, columns, values, query_separator)
     }
 
     pub fn get_entry<T>(&self, id: i64) -> Result<T, DatabaseError>

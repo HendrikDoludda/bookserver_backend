@@ -80,3 +80,4 @@ Roadmap drift: none for this section — all four items are correctly marked ⬜
 - [Browsing, Search & Discovery](11-browsing-search-and-discovery.md) — "hidden from default views" and search results both need the same filter predicate.
 - [Operations & Security](12-operations-and-security.md) — the wider privacy/threat-model stance this feature's no-third-party-leak rule fits into.
 - [Ideas Backlog](90-ideas-backlog.md) — the per-library permissions idea overlaps with the "optional per-user visibility" extra protection.
+- [Download Permissions (Phase 2)](24-download-permissions.md) — a third per-user/per-library capability on the same axis; its open questions name this doc as the candidate home for one shared access model rather than three.

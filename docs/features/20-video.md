@@ -85,3 +85,4 @@ Roadmap drift: none — every ⬜ marker in the Video section matches the code.
 - [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md) — the Axum 0.8 `:id` → `{id}` path-syntax fix has to land before any streaming route can start.
 - [Operations & Security](12-operations-and-security.md) — Tailscale threat model, in-app TLS, and path-traversal protection all cover the WebDAV door.
 - [Interop & Client Apps](23-interop-and-clients.md) — WebDAV is a second "speak a standard protocol" door alongside the planned OPDS feed for book readers.
+- [Download Permissions](24-download-permissions.md) — the WebDAV mount hands out raw files and has no way to express a per-user download restriction, so issuing WebDAV credentials effectively grants that permission; video is also the content class that motivated the feature.

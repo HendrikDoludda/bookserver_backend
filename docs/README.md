@@ -86,6 +86,7 @@ re-litigated later, not because the work is queued.
 | [21 Collaborative Documents](features/21-documents.md) | ⬜ not started | Parked | [BE] [DB] [FE] | Editable text documents synced live via server-serialized append-only ops — 6 tasks, 7 open questions |
 | [22 PDF Annotations](features/22-pdf-annotations.md) | ⬜ not started | Parked | [DB] [BE] [FE] | Per-user comments and highlights on PDFs, stored server-side for any client to read back — 6 tasks, 5 open questions |
 | [23 Interop & Client Apps](features/23-interop-and-clients.md) | ⬜ not started | Parked | [BE] [FE] | A read-only OPDS feed so third-party reader apps can browse the library — 2 tasks, 5 open questions |
+| [24 Download Permissions & Protected Delivery](features/24-download-permissions.md) | ⬜ not started | Parked | [DB] [BE] [FE] | A per-user permission deciding who may keep the original file and who may only view it through the app — 9 tasks, 8 open questions |
 
 ## Backlog
 

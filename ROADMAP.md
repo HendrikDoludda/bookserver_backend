@@ -171,6 +171,10 @@ Not scheduled. Designs are recorded so the decisions aren't re-litigated later.
   highlighting. **[DB][BE][FE]**
 - ⬜ [Interop & client apps](docs/features/23-interop-and-clients.md) — OPDS catalog feed;
   native mobile apps deferred until there's revenue to justify them. **[BE][FE]**
+- ⬜ [Download permissions](docs/features/24-download-permissions.md) — a per-user permission
+  splitting "may keep the original file" from "may only view it through the app", with an
+  optional server-enforced loan window. Rides whatever user↔library access model roles
+  settle on, rather than adding a third visibility mechanism. **[DB][BE][FE]**
 
 ---
 

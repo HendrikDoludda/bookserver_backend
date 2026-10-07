@@ -61,4 +61,5 @@ Nothing exists for either item.
 - [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md) — the axum 0.8 path-syntax fix any new OPDS route waits on.
 - [Sensitive Content Controls](10-sensitive-content-controls.md) — a third-party client bypasses frontend controls, so sensitive items need filtering at the feed.
 - [Operations & Security](12-operations-and-security.md) — the LAN + Tailscale threat model that decides how exposed the feed actually is.
+- [Download Permissions](24-download-permissions.md) — OPDS acquisition links are download links by definition, so a download-restricted user either gets a browse-only feed or no feed access at all.
 - [Ideas Backlog](90-ideas-backlog.md) — where OPDS was proposed before being promoted into Phase 2.

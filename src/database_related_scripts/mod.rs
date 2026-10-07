@@ -1,4 +1,5 @@
 pub mod db;
+pub mod db_delete;
 pub mod db_from_row;
 pub mod db_search;
 pub mod db_update;

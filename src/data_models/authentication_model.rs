@@ -60,6 +60,7 @@ pub struct RequestPasswordResetLinkRequest {
 #[derive(Debug, Deserialize, Clone)]
 pub struct ResettingUsersPassword {
     pub verification_token: String,
+    pub email: String,
     pub new_password: String,
     pub new_password_repeat: String,
 }

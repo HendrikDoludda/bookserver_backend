@@ -103,4 +103,5 @@ Reading is the point of the whole server: everything else exists so a client can
 - [Video Library (Phase 2)](20-video.md) — direct-play video streaming is explicitly modelled on `stream_reader`'s range support.
 - [PDF Annotations (Phase 2)](22-pdf-annotations.md) — per-user comments and highlights are read-side per-user data layered on the same reader.
 - [Interop & Client Apps (Phase 2)](23-interop-and-clients.md) — an OPDS feed would expose the same files to standard reader apps.
+- [Download Permissions (Phase 2)](24-download-permissions.md) — gates this feature's offline-download task per user, so the "separate route or a flag" question above is also the question of where that check goes.
 - [Ideas Backlog](90-ideas-backlog.md) — idea #4 (format-aware reading position) is the constraint behind this feature's schema question; idea #2 (thumbnails) affects the grid views that show the read/unread indicators.

@@ -1,5 +1,6 @@
 use argon2::password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier};
 use argon2::Argon2;
+use mail_send::mail_auth::hickory_resolver::caching_client;
 use rusqlite::{Connection, ToSql};
 use url::Url;
 
@@ -29,7 +30,7 @@ pub fn create_new_user(
     first_user: UserCreationChecks,
     request: UserCreationRequest,
 ) -> Result<i64, AuthenticationError> {
-    let hashed_password = hash_string_securely(request.password)?;
+    let hashed_password = hash_string_securely(&request.password)?;
     let user = UserMetadata {
         user_id: 0,
         username: request.username,
@@ -81,6 +82,8 @@ pub struct UserTotpEnabledResult {
 }
 
 pub struct ResetAndCancelationTokens {
+    pub reset_token: String,
+    pub cancelation_token: String,
     pub reset_token_hashed: String,
     pub cancelation_token_hashed: String,
 }
@@ -132,7 +135,7 @@ pub fn send_verification_email(
     Database::remove_entry_with_connection(conn, DatabaseTypes::EmailVerificationType, user_id)
         .map_err(|_| EmailErrors::VerificationTokenRemovalFailure)?;
     let crypto_code = create_crypto_code(8);
-    let verification_code = hash_string_securely(crypto_code).map_err(|e| {
+    let verification_code = hash_string_securely(&crypto_code).map_err(|e| {
         log::error!("failed to hash code: {e}");
         EmailErrors::HashingFailed
     })?;
@@ -318,10 +321,7 @@ pub fn validate_submitted_password(
 }
 
 //modification
-pub async fn request_reset_password(
-    server_address: &Url,
-    email: &String,
-) -> Result<ResetAndCancelationTokens, AuthenticationError> {
+pub fn generate_password_reset_codes() -> Result<ResetAndCancelationTokens, AuthenticationError> {
     //create email body for resetting email
     //create a reset token
     //create link that redirects to reset password
@@ -332,40 +332,43 @@ pub async fn request_reset_password(
     let reset_token = create_crypto_code(8);
     let cancelation_token = create_crypto_code(32);
 
-    //send email here with borrowed tokens
-    send_reset_password_email(&reset_token, &cancelation_token, server_address, email)
-        .await
-        .map_err(|_| AuthenticationError::EmailVerificationNotFound)?;
-
-    let reset_token_hashed = hash_string_securely(reset_token)
+    let reset_token_hashed = hash_string_securely(&reset_token)
         .map_err(|_| AuthenticationError::ErrorHashingData)?
         .normal_string;
-    let cancelation_token_hashed = hash_string_securely(cancelation_token)
+    let cancelation_token_hashed = hash_string_securely(&cancelation_token)
         .map_err(|_| AuthenticationError::ErrorHashingData)?
         .normal_string;
 
     Ok(ResetAndCancelationTokens {
+        reset_token,
+        cancelation_token,
         reset_token_hashed,
         cancelation_token_hashed,
     })
 }
 
-async fn send_reset_password_email(
-    reset_token: &String,
-    cancelation_token: &String,
+pub async fn send_reset_password_email(
+    reset_token: &str,
+    cancelation_token: &str,
     server_address: &Url,
-    email: &String,
+    email: &str,
 ) -> Result<(), EmailErrors> {
     //must look into getting the server address even if it is just storing the value somewhere
-    let cancelation_link = server_address
-        .join(&format!("/password-reset/cancel?token={cancelation_token}"))
+    let mut cancelation_link = server_address
+        .join("/password-reset/cancel")
         .map_err(|_| EmailErrors::MissingEmail)?;
-    let body = format!("Hello,\n You have requested to reset your password. Use this code in the app to apply the new password.\n {}\nIn case you did not request the password reset use this link to invalidate the request: {}",reset_token,cancelation_link);
+    cancelation_link
+        .query_pairs_mut()
+        .append_pair("token", cancelation_token);
+    let body = format!("Hello,
+    \n You have requested to reset your password. Use this code in the app to apply the new password.
+    \n {}
+    \nIn case you did not request the password reset use this link to invalidate the request: {}",reset_token,cancelation_link);
     let subject = format!("Password Reset");
 
     let email_info = EmailInformation {
-        username: "Anonymous".to_string(),
-        email: email.clone(),
+        username: "Anonymous".to_owned(),
+        email: email.to_owned(),
         body,
         subject,
     };
@@ -385,7 +388,7 @@ pub fn update_password_to_new_password(
     //if old password passes the argon verification continue
     //verify new password
     //hash and store the new password for the user
-    let password_hash = hash_string_securely(request.new_password)?;
+    let password_hash = hash_string_securely(&request.new_password)?;
     Database::update_value_with_connection::<UserMetadata>(
         conn,
         UserDatabaseColumns::PasswordHash,
@@ -529,13 +532,13 @@ pub fn create_new_token() -> Result<HashedString, AuthenticationError> {
     })
 }
 
-fn hash_string_securely(to_hash: String) -> Result<HashedString, AuthenticationError> {
+fn hash_string_securely(to_hash: &str) -> Result<HashedString, AuthenticationError> {
     let hasher = Argon2::default();
     let hash = hasher
         .hash_password(to_hash.as_bytes())
         .map_err(|_| AuthenticationError::ErrorHashingData)?;
     Ok(HashedString {
-        normal_string: to_hash,
+        normal_string: to_hash.to_owned(),
         hashed_string: hash.to_string(),
     })
 }

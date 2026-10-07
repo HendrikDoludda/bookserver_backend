@@ -123,7 +123,7 @@ impl FromRow for Sessions {
         let session_token_valid_until =
             convert_to_system_time(row, "session_token_valid_until", 8)?;
         let created_at = convert_to_system_time(row, "created_at", 9)?;
-        let last_used_at = convert_to_system_time(row, "last§", 10)?;
+        let last_used_at = convert_to_system_time(row, "last_used_at", 10)?;
 
         Ok(Self {
             session_id: row.get("session_id")?,
@@ -157,12 +157,15 @@ impl FromRow for EmailVerification {
 
 impl FromRow for ResetPasswordRequest {
     fn from_row(row: &Row) -> rusqlite::Result<Self> {
-        let expires_at = convert_to_system_time(row, "expires_at", 2)?;
+        let expires_at = convert_to_system_time(row, "expires_at", 5)?;
+        let email_sent_at = convert_to_system_time(row, "email_sent_at", 4)?;
 
         Ok(Self {
             user_id: row.get("user_id")?,
             reset_token: row.get("reset_token")?,
             cancelation_token: row.get("cancelation_token")?,
+            attempt_count: row.get("attempt_count")?,
+            email_sent_at,
             expiration_date: expires_at,
             invalidated: row.get("invalidated")?,
         })

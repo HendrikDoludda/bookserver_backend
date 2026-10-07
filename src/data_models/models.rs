@@ -23,6 +23,7 @@ pub enum DatabaseTypes {
     Users,
     EmailVerificationType,
     Session,
+    ResetPasswordRequest,
 }
 
 impl DatabaseTypes {
@@ -35,6 +36,7 @@ impl DatabaseTypes {
             DatabaseTypes::LibraryElements => "library_elements",
             DatabaseTypes::EmailVerificationType => "email_verification",
             DatabaseTypes::Session => "session",
+            DatabaseTypes::ResetPasswordRequest => "reset_password_requests",
         }
     }
 
@@ -556,6 +558,8 @@ pub struct ResetPasswordRequest {
     pub user_id: i64,
     pub reset_token: String,
     pub cancelation_token: String,
+    pub attempt_count: i64,
+    pub email_sent_at: SystemTime,
     pub expiration_date: SystemTime,
     pub invalidated: bool,
 }
@@ -564,6 +568,8 @@ pub enum ResetPasswordRequestColumns {
     UserID,
     ResetToken,
     CancelationToken,
+    AttemptCount,
+    EmailSentAt,
     ExpirationDate,
     Invalidated,
 }
@@ -574,6 +580,8 @@ impl AsRef<str> for ResetPasswordRequestColumns {
             ResetPasswordRequestColumns::UserID => "user_id",
             ResetPasswordRequestColumns::ResetToken => "reset_token",
             ResetPasswordRequestColumns::CancelationToken => "cancelation_token",
+            ResetPasswordRequestColumns::AttemptCount => "attempt_count",
+            ResetPasswordRequestColumns::EmailSentAt => "email_sent_at",
             ResetPasswordRequestColumns::ExpirationDate => "expires_at",
             ResetPasswordRequestColumns::Invalidated => "invalidated",
         }

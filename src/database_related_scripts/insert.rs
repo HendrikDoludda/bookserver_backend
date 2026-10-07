@@ -165,10 +165,13 @@ impl Insert for ResetPasswordRequest {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
         let query = "INSERT INTO reset_password_requests (user_id, reset_token, cancelation_token, expires_at, invalidated) VALUES (?1, ?2, ?3, ?4, ?5)";
         let expired_time = convert_system_time_to_unix_time(self.expiration_date);
+        let email_sent_at = convert_system_time_to_unix_time(self.email_sent_at);
         let params = params![
             self.user_id,
             self.reset_token.clone(),
             self.cancelation_token.clone(),
+            self.attempt_count,
+            email_sent_at,
             expired_time,
             self.invalidated
         ];

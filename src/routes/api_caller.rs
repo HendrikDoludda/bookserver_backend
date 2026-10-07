@@ -10,7 +10,14 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use std::{sync::Arc, time::SystemTime};
+use rusqlite::Connection;
+use serde_json::error::Category::Data;
+use std::{
+    alloc::System,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
+use url::Url;
 
 use crate::{
     data_models::authentication_model::{
@@ -18,10 +25,14 @@ use crate::{
         ResettingUsersPassword,
     },
     folder_scanner::scan_all_folders,
-    models::UserDatabaseColumns,
+    models::{
+        QuerySeparator, ResetPasswordRequest, ResetPasswordRequestColumns, SelectionMethod,
+        UserDatabaseColumns,
+    },
     routes::auth::{
-        create_new_user, create_verification_email, search_for_user_using_email_or_username,
-        validate_new_user,
+        create_new_user, create_verification_email, generate_password_reset_codes,
+        search_for_user_using_email_or_username, send_reset_password_email, validate_new_user,
+        ResetAndCancelationTokens,
     },
 };
 use crate::{
@@ -585,9 +596,12 @@ pub async fn reset_password(
     State(db): State<Arc<Database>>,
 ) -> Response<Body> {
     (
-        //verify new password and verify the code same as on the verification email.
-        //assign new password
-        //redirect user to log in screen if successful
+        //get the user using the email address
+        //check for existing reset password entry using user id
+        //check if attempt amount is less than five
+        //check if reset code matches the hashed entries code
+        //---->if yes change password
+        //---->if no up the attempt amount and return unautherized message
         StatusCode::NOT_IMPLEMENTED,
         "Needs the front end structure in place first so this can match the structure",
     )
@@ -598,20 +612,58 @@ pub async fn request_reset_password_link(
     request: RequestPasswordResetLinkRequest,
     State(db): State<Arc<Database>>,
 ) -> Response<Body> {
-    match db.setup_new_transaction(|conn| {
+    let tokens = match db.setup_new_transaction(|conn| {
         let user = search_for_user_using_email_or_username(conn, &request.email)?;
-        //create something similar or the same as the verification email
-
-        Ok(())
+        let reset_and_cancelation_token = generate_password_reset_codes()?;
+        store_user_password_reset_token(conn, &reset_and_cancelation_token, user)?;
+        Ok(reset_and_cancelation_token)
     }) {
-        Ok(()) => (),
+        Ok(tokens) => tokens,
         Err(err) => {
             return create_internal_server_error_response(format!(
                 "Could not create reset password link due to: {err}"
             ))
         }
-    }
+    };
+
+    send_reset_password_email(
+        &tokens.reset_token,
+        &tokens.cancelation_token,
+        &Url::parse("https://invalid.link").unwrap(),
+        &request.email,
+    )
+    .await
+    .map_err(|err| return create_internal_server_error_response(err.to_string()));
     (StatusCode::ACCEPTED, "Email has been sent").into_response()
+}
+
+fn store_user_password_reset_token(
+    conn: &Connection,
+    tokens: &ResetAndCancelationTokens,
+    user: UserMetadata,
+) -> Result<(), DatabaseError> {
+    Database::remove_entry_with_connection_based_on_columns::<ResetPasswordRequest>(
+        conn,
+        &[ResetPasswordRequestColumns::UserID],
+        &[&user.user_id],
+        QuerySeparator::And,
+    )?;
+    let expiration_time = SystemTime::now()
+        .checked_add(Duration::from_mins(15))
+        .ok_or(return Err(DatabaseError::OperationFailure))?;
+    Database::insert_with_connection(
+        conn,
+        &ResetPasswordRequest {
+            user_id: user.user_id,
+            reset_token: tokens.reset_token_hashed,
+            cancelation_token: tokens.cancelation_token_hashed,
+            attempt_count: 0,
+            email_sent_at: SystemTime::UNIX_EPOCH,
+            expiration_date: expiration_time,
+            invalidated: false,
+        },
+    )?;
+    Ok(())
 }
 
 pub async fn totp_start_set_up() -> Response<Body> {} //needs the normal autherization
