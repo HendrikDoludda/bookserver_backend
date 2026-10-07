@@ -141,3 +141,10 @@ cargo fmt
 
 There are no automated tests yet. A database-layer test suite is the next item on the
 [cross-cutting polish](docs/features/07-cross-cutting-backend-polish.md) track.
+
+## License
+
+Copyright © 2026 Hendrik Doludda. All rights reserved.
+
+The source is published for viewing only. No license is granted to use, copy, modify or
+distribute it.
