@@ -4,7 +4,7 @@
 
 **Status:** ⬜ not started · **Phase:** 1 · **Tier:** Backend Tier 4 (second item, after uploads) · **Tags:** [BE] [FE]
 **Depends on:** [03 Authentication, Users & Sessions](03-auth-users-and-sessions.md) (the admin UI is admin-only, so it needs roles) · [13 Internationalization (i18n)](13-internationalization.md) (its text must go through t("key") from the first screen, against the same backend-owned catalog)
-**Blocks:** [08 Theming & Branding](08-theming-and-branding.md) (only for the backend-served branding option, which exists so the admin UI can edit it)
+**Blocks:** [08 Theming & Branding](08-theming-and-branding.md) (only for the backend-served branding option, which exists so the admin UI can edit it) · [25 Desktop Auto-Update](25-desktop-auto-update.md) (only for the optional in-browser update banner)
 **Roadmap:** [Build order](../../ROADMAP.md#priority-order-build-sequence)
 
 ## Why

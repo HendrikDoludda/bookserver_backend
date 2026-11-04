@@ -169,13 +169,18 @@ Not scheduled. Designs are recorded so the decisions aren't re-litigated later.
   splitting "may keep the original file" from "may only view it through the app", with an
   optional server-enforced loan window. Rides whatever user↔library access model roles
   settle on, rather than adding a third visibility mechanism. **[DB][BE][FE]**
+- ⬜ [Desktop auto-update](docs/features/25-desktop-auto-update.md) — Plex-style: a menu bar
+  icon, a notification when a new version is out, one click to install and relaunch.
+  `.dmg` / `.exe` installs only; Docker keeps the usual image-pull update. **[BE]**
 
 ---
 
 ## Backlog
 
-[90 Ideas Backlog](docs/features/90-ideas-backlog.md) — five proposals awaiting an
+[90 Ideas Backlog](docs/features/90-ideas-backlog.md) — six proposals awaiting an
 accept-or-drop: file watching for auto-rescan, thumbnail generation, per-library
-permissions, format-aware reading position, and a DB backup/export endpoint. One is
-time-sensitive: **format-aware reading position** has to be answered before the read-state
-schema (Tier 3 #8) is written.
+permissions, format-aware reading position, a DB backup/export endpoint, and a modular
+core with switchable media modules (books, video, documents). Two carry a time-sensitive
+question: **format-aware reading position** has to be answered before the read-state
+schema (Tier 3 #8) is written, and the modular idea's **URL shape** before frontend F1
+couples to the routes.

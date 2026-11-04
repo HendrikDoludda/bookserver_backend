@@ -4,7 +4,7 @@
 
 **Status:** 🟡 partial · **Phase:** 1 · **Tier:** Cross-cutting, mostly unscheduled — TLS and "user_id always from the session token" ride along with Backend Tier 1 · **Tags:** [BE] [FE]
 **Depends on:** [03 Authentication, Users & Sessions](03-auth-users-and-sessions.md) (session-derived user ids, session revocation and in-app TLS all live in the auth step) · [04 Two-Factor Authentication (TOTP)](04-two-factor-auth-totp.md) (the signing key’s one concrete use is encrypting the TOTP secret at rest)
-**Blocks:** Nothing
+**Blocks:** [25 Desktop Auto-Update](25-desktop-auto-update.md) (needs the `.dmg`/`.exe` packaging and a data directory outside the app bundle)
 **Roadmap:** [Build order](../../ROADMAP.md#priority-order-build-sequence)
 
 ## Why
@@ -122,3 +122,4 @@ This is a personal home server, not a public SaaS, and the security work should 
 - [Library & Directory Management](01-library-and-directory-management.md) — the scannable-directories table is what path containment should ultimately validate against, and file reconciliation runs as part of scanning
 - [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md) — the generic-error-body work continues its `IntoResponse` / status-code effort, and the `WHERE id` PK bug blocking logout belongs to that cleanup
 - [Backend Admin Web View](06-admin-web-view.md) — the first browser client that makes CORS configuration necessary, and the natural home for an active-sessions screen
+- [Desktop Auto-Update](25-desktop-auto-update.md) — builds on the `.dmg`/`.exe` packaging task, and makes the `ProjectDirs` answer to the data-directory question required for desktop builds, since an update replaces the whole app bundle

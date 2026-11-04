@@ -241,6 +241,12 @@ pub fn verify_verification_code(
     })?
     .ok_or(AuthenticationError::EmailVerificationNotFound)?;
 
+    if verification_token.expiration_date < SystemTime::now() {
+        return Err(AppErrors::Authentication(
+            AuthenticationError::ExpiredAuthenticationCode,
+        ));
+    }
+
     let hashed_token = PasswordHash::new(&verification_token.verification_token).map_err(|e| {
         log::error!("PasswordHash::new failed to convert string to PasswordHash: {e}");
         AuthenticationError::StringToPasswordHashConversionFailed
@@ -341,10 +347,10 @@ pub fn generate_password_reset_codes() -> Result<ResetAndCancelationTokens, Auth
 
     let reset_token_hashed = hash_string_securely(&reset_token)
         .map_err(|_| AuthenticationError::ErrorHashingData)?
-        .normal_string;
+        .hashed_string;
     let cancelation_token_hashed = hash_string_securely(&cancelation_token)
         .map_err(|_| AuthenticationError::ErrorHashingData)?
-        .normal_string;
+        .hashed_string;
 
     Ok(ResetAndCancelationTokens {
         reset_token,
@@ -443,8 +449,8 @@ pub fn update_existing_session(
     let session_expiration = convert_system_time_to_unix_time(tokens.session_token_valid_until);
     let now = convert_system_time_to_unix_time(SystemTime::now());
     let values: &[&dyn ToSql] = &[
-        &tokens.refresh_token,
-        &tokens.session_token,
+        &tokens.refresh_token_hashed,
+        &tokens.session_token_hashed,
         &refresh_expiration,
         &session_expiration,
         &now,

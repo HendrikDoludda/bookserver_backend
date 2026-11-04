@@ -87,12 +87,13 @@ re-litigated later, not because the work is queued.
 | [22 PDF Annotations](features/22-pdf-annotations.md) | ⬜ not started | Parked | [DB] [BE] [FE] | Per-user comments and highlights on PDFs, stored server-side for any client to read back — 6 tasks, 5 open questions |
 | [23 Interop & Client Apps](features/23-interop-and-clients.md) | ⬜ not started | Parked | [BE] [FE] | A read-only OPDS feed so third-party reader apps can browse the library — 2 tasks, 5 open questions |
 | [24 Download Permissions & Protected Delivery](features/24-download-permissions.md) | ⬜ not started | Parked | [DB] [BE] [FE] | A per-user permission deciding who may keep the original file and who may only view it through the app — 9 tasks, 8 open questions |
+| [25 Desktop Auto-Update](features/25-desktop-auto-update.md) | ⬜ not started | Parked | [BE] [FE?] | Plex-style menu bar icon, update notification and one-click install-and-relaunch for the `.dmg` / `.exe` installs — 11 tasks, 6 open questions |
 
 ## Backlog
 
 | Doc | Status | Tier | Tags | What it covers |
 | --- | --- | --- | --- | --- |
-| [90 Ideas Backlog](features/90-ideas-backlog.md) | ⬜ proposals only | Unscheduled | [BE] [DB] [FE] | Holding pen for unaccepted ideas — each gets promoted into a feature doc or dropped — 7 tasks, 6 open questions |
+| [90 Ideas Backlog](features/90-ideas-backlog.md) | ⬜ proposals only | Unscheduled | [BE] [DB] [FE] | Holding pen for unaccepted ideas — each gets promoted into a feature doc or dropped — 8 tasks, 9 open questions |
 
 ## Where the code lives
 
