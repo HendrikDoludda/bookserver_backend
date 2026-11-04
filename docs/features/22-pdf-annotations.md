@@ -3,7 +3,7 @@
 > Per-user comments and highlighting on PDFs, stored in the backend so any client can read them back.
 
 **Status:** ⬜ not started · **Phase:** 2 · **Tier:** Parked — out of focus · **Tags:** [DB] [BE] [FE]
-**Depends on:** [03 Authentication, Users & Sessions](03-auth-users-and-sessions.md) (annotations are per-user) · [02 Reading & Read State](02-reading-and-read-state.md) (shares the anchor/locator problem with read state)
+**Depends on:** [03 Authentication, Users & Sessions](03-login-and-sessions.md) (annotations are per-user) · [02 Reading & Read State](02-reading-and-read-state.md) (shares the anchor/locator problem with read state)
 **Blocks:** Nothing
 **Roadmap:** [Build order](../../ROADMAP.md#priority-order-build-sequence)
 
@@ -55,7 +55,7 @@ The roadmap carries this as a single line; the rest is that line split along its
 - [ ] A comment survives a server restart and comes back with its text and anchor intact.
 
 ## Implementation notes
-- **Auth first, genuinely.** Every row needs a `user_id`, and there is no way to get a trustworthy one until the session extractor from [Auth](03-auth-users-and-sessions.md) works. Starting this before then means either faking a user id or accepting one from the body, and the second is the exact mistake §11 warns about.
+- **Auth first, genuinely.** Every row needs a `user_id`, and there is no way to get a trustworthy one until the session extractor from [Auth](03-login-and-sessions.md) works. Starting this before then means either faking a user id or accepting one from the body, and the second is the exact mistake §11 warns about.
 - **The Rust shape is the one this repo already repeats for every table it reads:** one metadata struct in [models.rs](../../src/data_models/models.rs), one `*DatabaseColumns` enum next to it with a hand-written `impl AsRef<str>`, and small `FromRow` / `Insert` / `Search` / `Update` impls in `src/database_related_scripts/`. Nothing generic or clever is needed.
 - **Name the primary key column `id`.** The `Extract` and `Update` default methods hard-code `WHERE id = ?1` / `WHERE id = ?2` ([extract.rs:21](../../src/database_related_scripts/extract.rs#L21), [db_update.rs:23](../../src/database_related_scripts/db_update.rs#L23)). Every auth table that named its key something else (`session_id`, `recovery_id`, `user_id`) inherited SQL that references a non-existent column and is a live source of runtime failures — don't repeat it here.
 - **Register the migration** as a new numbered `.sql` file plus a new entry in the `MIGRATIONS` array ([migrations.rs:16](../../src/database_related_scripts/migrations.rs#L16)); each migration runs in its own transaction, so a multi-statement file is all-or-nothing. (The maintainer's early-dev habit of editing `0001` in place and wiping the DB should be long over by Phase 2 — there will be real user data by then.)
@@ -65,7 +65,7 @@ The roadmap carries this as a single line; the rest is that line split along its
 - *Suggested table shape (a suggestion, not roadmap scope):* `id`, `user_id`, `book_id`, `kind` (`comment` | `highlight`), the anchor (page number + normalized rect, or a single locator string), `body TEXT` for comment text, `created_at` / `updated_at`. Storing the anchor as one opaque locator string keeps the door open to reusing whatever shape read state settles on.
 
 ## Related
-- [Authentication, Users & Sessions](03-auth-users-and-sessions.md) — hard prerequisite; supplies the session-derived `user_id` every annotation row needs.
+- [Authentication, Users & Sessions](03-login-and-sessions.md) — hard prerequisite; supplies the session-derived `user_id` every annotation row needs.
 - [Reading & Read State](02-reading-and-read-state.md) — the same per-user locator problem (PDF pages vs EPUB CFI); solve the anchor shape there once and reuse it.
 - [Collaborative Documents](21-documents.md) — its id-anchored ops and tombstones are the same "anchor that survives shifting content" problem in a third form.
 - [Library & Directory Management](01-library-and-directory-management.md) — incremental scanning relies on `file_hash` / `last_modified`, which is the argument for annotations not mutating the PDF (the storage question is still open above).

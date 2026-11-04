@@ -3,7 +3,7 @@
 > An admin-only `is_sensitive` flag on libraries and series that changes how those items behave — starting with never sending their titles to third-party metadata APIs.
 
 **Status:** ⬜ not started · **Phase:** 1 · **Tier:** Backend Tier 4 (fourth item, last in the tier) · **Tags:** [DB] [BE] [FE]
-**Depends on:** [03 Authentication, Users & Sessions](03-auth-users-and-sessions.md) (the toggle is admin-only, so it needs roles) · [09 Metadata Enrichment (Online Sources)](09-metadata-enrichment.md) (the "sensitive items skip online lookups" rule needs provider dispatch to exist)
+**Depends on:** [03 Authentication, Users & Sessions](03-login-and-sessions.md) (the toggle is admin-only, so it needs roles) · [09 Metadata Enrichment (Online Sources)](09-metadata-enrichment.md) (the "sensitive items skip online lookups" rule needs provider dispatch to exist)
 **Blocks:** Nothing
 **Roadmap:** [Build order](../../ROADMAP.md#priority-order-build-sequence)
 
@@ -73,7 +73,7 @@ Roadmap drift: none for this section — all four items are correctly marked ⬜
 
 ## Related
 
-- [Authentication, Users & Sessions](03-auth-users-and-sessions.md) — supplies roles and the `AdminSession` extractor this feature's toggle gates on; this feature cannot start before it lands.
+- [Authentication, Users & Sessions](03-login-and-sessions.md) — supplies roles and the `AdminSession` extractor this feature's toggle gates on; this feature cannot start before it lands.
 - [Metadata Enrichment (Online Sources)](09-metadata-enrichment.md) — the online lookups sensitive items must skip; the two features have to agree on where that check lives.
 - [Library & Directory Management](01-library-and-directory-management.md) — the library/series create and edit endpoints the toggle extends.
 - [Backend Admin Web View](06-admin-web-view.md) — one of the two clients that must be able to flip the flag.

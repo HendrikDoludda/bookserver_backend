@@ -3,7 +3,7 @@
 > A backend-owned translation catalog, served over the API, so users can pick a display language and adding a new language is pure data entry instead of a code change.
 
 **Status:** ⬜ not started · **Phase:** 1 · **Tier:** Frontend track F0 — build right after Backend Tier 1 and before F1 · **Tags:** [BE] [DB] [FE]
-**Depends on:** [03 Authentication, Users & Sessions](03-auth-users-and-sessions.md) (the per-user language preference is part of per-user settings)
+**Depends on:** [03 Authentication, Users & Sessions](03-login-and-sessions.md) (the per-user language preference is part of per-user settings)
 **Blocks:** [06 Backend Admin Web View](06-admin-web-view.md) (its text must go through t("key") from the first screen, against the same backend-owned catalog) · [14 Email & Notifications](14-email-and-notifications.md) (only for localized bodies; the catalog makes the emails translate for free)
 **Roadmap:** [Build order](../../ROADMAP.md#priority-order-build-sequence)
 
@@ -104,7 +104,7 @@ Nothing exists yet — no tables, no endpoint, no module. What exists is the sha
 ## Related
 
 - [Backend Admin Web View](06-admin-web-view.md) — hosts the catalog editor (namespaces as tabs, keys as input boxes) and must itself be wrapped in `t("key")` from the moment it is first built; it reads the same catalog as the main app.
-- [Authentication, Users & Sessions](03-auth-users-and-sessions.md) — F0 opens once auth (Tier 1) is done; the per-user language preference lives with §3's per-user settings, and the verification/reset emails are the first strings to localize.
+- [Authentication, Users & Sessions](03-login-and-sessions.md) — F0 opens once auth (Tier 1) is done; the per-user language preference lives with §3's per-user settings, and the verification/reset emails are the first strings to localize.
 - [Email & Notifications](14-email-and-notifications.md) — notification emails localize from this catalog for free using the user's stored locale; no separate email catalog.
 - [Uploads & File Ingestion](05-uploads-and-ingestion.md) — the auto-rename and insufficient-storage notification emails are localized by the same mechanism.
 - [Reading & Read State](02-reading-and-read-state.md) — supplies the canonical examples: "Continue reading" is UI chrome (translated), and `"{count} unread"` is the pluralization/interpolation test case; offline reading is why the client needs a bundled fallback.

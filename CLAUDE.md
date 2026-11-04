@@ -392,3 +392,6 @@ on the situation, it is not a rule — ask the developer to sharpen it into one,
 - **SQL safety:** values are always bound parameters (`?1`, `params!`, `params_from_iter`). Table/column names are only ever interpolated from trusted enums/consts, never from request input.
 - **Handlers** use Axum extractors: `State<Arc<Database>>`, `Path<i64>`, `Json<T>`, `Request<Body>`.
 - **Junction table** `library_elements` deliberately does *not* implement `Extract` (no `id` column); it's queried by FK via dedicated `Database` methods.
+- **`user_id` always comes from the session** (`AuthSession`), never from the request body or path.
+- **Auth answers never reveal whether an account exists:** an unknown user and a wrong password get the same response, and so does a password-reset request for an unknown address.
+- **Never return `UserMetadata` or `Sessions` from a handler** — they serialize the password hash and the token hashes; build a response struct.

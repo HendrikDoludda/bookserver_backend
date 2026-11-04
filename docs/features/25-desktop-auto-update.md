@@ -100,6 +100,6 @@ Nothing exists, and most of the prerequisites don't either.
 
 - [Operations & Security](12-operations-and-security.md) — owns the `.dmg`/`.exe` packaging, the data-directory question and pdfium bundling that this feature builds on.
 - [Backend Admin Web View](06-admin-web-view.md) — home of the optional in-browser update banner, and the "Open admin" target of the tray menu.
-- [Authentication, Users & Sessions](03-auth-users-and-sessions.md) — `AdminSession`, which an install-from-the-browser endpoint must sit behind.
+- [Authentication, Users & Sessions](03-login-and-sessions.md) — `AdminSession`, which an install-from-the-browser endpoint must sit behind.
 - [Theming & Branding](08-theming-and-branding.md) — the app name and icon, which the tray icon and the app bundle should take from the same single source.
 - [Ideas Backlog](90-ideas-backlog.md) — idea 5 (DB backup endpoint) uses the same `VACUUM INTO` mechanism as the pre-update backup.

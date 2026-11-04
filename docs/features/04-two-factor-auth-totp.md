@@ -3,7 +3,7 @@
 > A second login factor using authenticator-app codes (TOTP) plus single-use recovery codes, layered on top of the password login built in §3.
 
 **Status:** 🟡 partial · **Phase:** 1 · **Tier:** Backend Tier 1 (item #5 — only after #4 works) · **Tags:** [BE] [DB] [FE]
-**Depends on:** [03 Authentication, Users & Sessions](03-auth-users-and-sessions.md) (TOTP extends the login flow that core auth builds)
+**Depends on:** [03 Authentication, Users & Sessions](03-login-and-sessions.md) (TOTP extends the login flow that core auth builds)
 **Blocks:** [12 Operations & Security](12-operations-and-security.md) (the signing key’s one concrete use is encrypting the TOTP secret at rest)
 **Roadmap:** [Build order](../../ROADMAP.md#priority-order-build-sequence)
 
@@ -48,7 +48,7 @@ Not started at all:
 
 - **TOTP, not email or SMS (DECIDED).** Authenticator-app codes on top of normal password auth. Chosen because there is no delivery service to run (no SMTP, no Twilio, no cost), it works offline, and it is more secure than SMS. The shared secret plus the current time produce the same 6-digit code on both phone and server independently.
 - **Crate: `totp-rs`.** It covers secret generation, the `otpauth://` URI + QR, and skew-tolerant verification — the three things that would otherwise be hand-rolled crypto. Already in `Cargo.toml`, though secret generation and the URI each sit behind a cargo feature that is not switched on yet (see Implementation notes).
-- **Build order: only after core auth works.** Tier 1 item #5, gated behind item #4 ([auth](03-auth-users-and-sessions.md)) because 2FA *extends* the login flow that #4 builds rather than standing alone.
+- **Build order: only after core auth works.** Tier 1 item #5, gated behind item #4 ([auth](03-login-and-sessions.md)) because 2FA *extends* the login flow that #4 builds rather than standing alone.
 - **Enrollment flow (agreed, four steps).** The secret is only trusted once the user has proved they can produce a live code from it — a user who mis-scans the QR must not end up locked out of their own account.
   1. In settings, user starts enrollment. Backend generates a random secret and returns it as a QR code (`otpauth://` URI); 2FA stays **disabled / pending**.
   2. User scans it into their authenticator app and types back the code it currently shows.
@@ -62,7 +62,7 @@ Not started at all:
 - **The half-authenticated session is the TOTP gate (committed in code).** `authentication_completed` starts false for a TOTP user, `AuthSession`-gated routes refuse such a session, and `AuthTOTPLoginSession` accepts *only* such a session. This is a clean way to say "you proved the password, not the second factor" without inventing a second token type.
 - **Disable requires re-authentication and is destructive.** Require the current password (or another strong verification), delete the secret, delete all recovery codes, invalidate all active sessions and tokens, mark 2FA disabled ([totp_management.rs:45-51](../../src/routes/totp_management.rs#L45)). Rationale: if an attacker holds a live session, turning 2FA off must not be a quiet one-click action, and the old sessions were authorized under the old factor set.
 - **TOTP verify rate-limiting is the priority throttle** — ahead of ordinary login rate-limiting, which stays *(public only)*. A 6-digit code is only 1,000,000 combos, so it is brute-forceable even behind Tailscale, whereas there is no anonymous attacker on the tailnet to brute-force a password. (Also tracked from the security side in [Operations & Security](12-operations-and-security.md).)
-- **TLS is part of the auth step, partly because of this feature.** Login sends the password **and** the TOTP code, so the transport is encrypted even on the LAN (defense-in-depth) — the reason in-app TLS via `axum-server` was pulled into §3 rather than left as "public only". Details live in [auth](03-auth-users-and-sessions.md) and [Operations & Security](12-operations-and-security.md).
+- **TLS is part of the auth step, partly because of this feature.** Login sends the password **and** the TOTP code, so the transport is encrypted even on the LAN (defense-in-depth) — the reason in-app TLS via `axum-server` was pulled into §3 rather than left as "public only". Details live in [auth](03-login-and-sessions.md) and [Operations & Security](12-operations-and-security.md).
 
 ## Open questions
 
@@ -133,7 +133,7 @@ Naming: the crate's `Totp` and this project's `TOTP` model ([models.rs:503](../.
 
 **Broken plumbing you will hit on the way.** These are real, in the tree today:
 - `RecoveryCodes::from_row` reads the column `"rocovery_id"` — [db_from_row.rs:111](../../src/database_related_scripts/db_from_row.rs#L111). A typo; every recovery-code read fails until it is fixed.
-- `Sessions::from_row` reads `"last§"` for `last_used_at` — [db_from_row.rs:126](../../src/database_related_scripts/db_from_row.rs#L126). Another typo, and it means **every** session read currently fails, so `AuthTOTPLoginSession` cannot succeed until it is fixed (tracked in [auth](03-auth-users-and-sessions.md)).
+- `Sessions::from_row` reads `"last§"` for `last_used_at` — [db_from_row.rs:126](../../src/database_related_scripts/db_from_row.rs#L126). Another typo, and it means **every** session read currently fails, so `AuthTOTPLoginSession` cannot succeed until it is fixed (tracked in [auth](03-login-and-sessions.md)).
 - `Update`'s SQL is hard-coded `WHERE id = ?` ([db_update.rs:23](../../src/database_related_scripts/db_update.rs#L23), [:52](../../src/database_related_scripts/db_update.rs#L52)), but `totp`'s PK is `user_id` and `recovery_codes`' is `recovery_id`. So "mark this recovery code used" and "rotate the secret" both need either a widened `Update` trait or a dedicated `Database` method.
 - `Extract` has the same hard-coded `WHERE id = ?1` ([extract.rs:19-29](../../src/database_related_scripts/extract.rs#L19)), so `Extract for TOTP` is unusable as written. Reach both tables through the `Search` trait instead — that is how `log_in` already does it ([auth.rs:287](../../src/routes/auth.rs#L287)).
 - `DatabaseTypes` ([models.rs:18-26](../../src/data_models/models.rs#L18)) has no variant for `totp` or `recovery_codes`, so `Database::remove_entry` cannot address them. Disable-2FA needs new variants (and their table names) or its own delete methods.
@@ -141,7 +141,7 @@ Naming: the crate's `Totp` and this project's `TOTP` model ([models.rs:503](../.
 
 **Request bodies.** Add `#[derive(Debug, Deserialize, Clone)]` to the three structs in [totp_model.rs](../../src/data_models/totp_model.rs), and take them as `Json<T>` as the **last** handler argument — Axum only lets the final argument consume the body, which is the same mistake several existing auth handlers make. Note `DisableTOTPRequest` already carries the `password` field the disable decision requires.
 
-**Cookies vs JSON.** The half-session extractor reads a `session_token` **cookie** ([api_caller.rs:153](../../src/routes/api_caller.rs#L153)), but `create_auth_response` hands tokens back in a **JSON body** ([api_caller.rs:643](../../src/routes/api_caller.rs#L643)) and no `CookieManagerLayer` is installed on the router at all. Until those two halves meet, `AuthTOTPLoginSession` cannot receive a token — resolve it in [auth](03-auth-users-and-sessions.md) before wiring the TOTP endpoints.
+**Cookies vs JSON.** The half-session extractor reads a `session_token` **cookie** ([api_caller.rs:153](../../src/routes/api_caller.rs#L153)), but `create_auth_response` hands tokens back in a **JSON body** ([api_caller.rs:643](../../src/routes/api_caller.rs#L643)) and no `CookieManagerLayer` is installed on the router at all. Until those two halves meet, `AuthTOTPLoginSession` cannot receive a token — resolve it in [auth](03-login-and-sessions.md) before wiring the TOTP endpoints.
 
 **Reuse, don't reinvent.** Recovery codes can use `create_crypto_code(n)` ([auth.rs:124](../../src/routes/auth.rs#L124)) for generation and `create_new_token`'s BLAKE3 pattern ([auth.rs:519-530](../../src/routes/auth.rs#L519)) for hashing. Both `create_crypto_code` and `hash_string_securely` ([auth.rs:532](../../src/routes/auth.rs#L532)) are private to `auth.rs` today, so calling them from `totp_management.rs` means marking them `pub(crate)` first. Session issuance on successful verification is already written: `create_new_session` ([auth.rs:466](../../src/routes/auth.rs#L466)) — for the TOTP completion path you want to *flip* the existing half-session's `authentication_completed` to true rather than create a second row, since `sessions.device_id` is globally `UNIQUE` ([0001_initial_schema.sql:83](../../migrations/0001_initial_schema.sql#L83)) and a second insert for the same device would violate it.
 
@@ -153,7 +153,7 @@ Naming: the crate's `Totp` and this project's `TOTP` model ([models.rs:503](../.
 
 ## Related
 
-- [Authentication, Users & Sessions](03-auth-users-and-sessions.md) — the prerequisite: password login, sessions, the token pair, the cookie layer and the extractors this feature extends
+- [Authentication, Users & Sessions](03-login-and-sessions.md) — the prerequisite: password login, sessions, the token pair, the cookie layer and the extractors this feature extends
 - [Operations & Security](12-operations-and-security.md) — the signing key's one concrete job is encrypting this secret; also carries the rate-limiting stance, TLS, session revocation and the security audit log
 - [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md) — the `Deserialize` derives the TOTP DTOs still need, correct status codes, and generic error bodies for failed verification
 - [Backend Admin Web View](06-admin-web-view.md) — where an admin-side 2FA reset for a locked-out user would live

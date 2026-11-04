@@ -1,0 +1,1 @@
+- `src/routes/email_helper.rs` · `create_new_email` passes the username as a second recipient address (`.to(vec![username, email])`) · every verification and reset mail gets a bogus extra recipient, which the SMTP server may reject — mail delivery (stability)

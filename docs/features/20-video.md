@@ -3,7 +3,7 @@
 > This backend becomes the single media source for video, reached by two front doors: the custom Flutter app over the REST API, and Infuse over WebDAV.
 
 **Status:** ⬜ not started · **Phase:** 2 · **Tier:** Parked — out of focus · **Tags:** [BE] [FE]
-**Depends on:** [03 Authentication, Users & Sessions](03-auth-users-and-sessions.md) (the WebDAV front door needs credentials) · [01 Library & Directory Management](01-library-and-directory-management.md) (video libraries are typed libraries)
+**Depends on:** [03 Authentication, Users & Sessions](03-login-and-sessions.md) (the WebDAV front door needs credentials) · [01 Library & Directory Management](01-library-and-directory-management.md) (video libraries are typed libraries)
 **Blocks:** Nothing
 **Roadmap:** [Build order](../../ROADMAP.md#priority-order-build-sequence)
 
@@ -78,7 +78,7 @@ Roadmap drift: none — every ⬜ marker in the Video section matches the code.
 
 - [Reading & Read State](02-reading-and-read-state.md) — direct-play reuses the same `ServeFile` range-streaming pattern; "continue watching" would extend the same per-user read-state tables.
 - [Library & Directory Management](01-library-and-directory-management.md) — the video library needs a scannable directory and a typed library, and the scanner's format filter has to accept video extensions.
-- [Authentication, Users & Sessions](03-auth-users-and-sessions.md) — WebDAV basic-auth verifies against the same users and Argon2 password hashes.
+- [Authentication, Users & Sessions](03-login-and-sessions.md) — WebDAV basic-auth verifies against the same users and Argon2 password hashes.
 - [Two-Factor Authentication (TOTP)](04-two-factor-auth-totp.md) — a basic-auth door has no way to prompt for a TOTP code; see the open question.
 - [Uploads & File Ingestion](05-uploads-and-ingestion.md) — its upload dialog already specifies the video field set (`movie` / `series` / `original` kind, plus series/season/episode) and library-type-driven defaults.
 - [Metadata Enrichment (Online Sources)](09-metadata-enrichment.md) — the video-metadata item reuses its `MetadataProvider` abstraction routed by content type, with different providers.

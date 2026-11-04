@@ -94,7 +94,7 @@ Roadmap drift: none. The status markers for §10 in [ROADMAP.md](../../ROADMAP.m
 - [Library & Directory Management](01-library-and-directory-management.md) — the live `get_libraries` / `get_series_*` endpoints the A–Z bar, filters and sort controls decorate, plus cover serving for result cards.
 - [Metadata Enrichment (Online Sources)](09-metadata-enrichment.md) — fills `author`, `tags` and descriptions; until it lands, author/tag search matches almost nothing.
 - [Uploads & File Ingestion](05-uploads-and-ingestion.md) — its series field auto-complete needs a series lookup/search endpoint, which this feature's index is the natural home for.
-- [Authentication, Users & Sessions](03-auth-users-and-sessions.md) — Tier 3 sits after Tier 1; the search and filter endpoints should be session-gated and scoped to the requesting user.
+- [Authentication, Users & Sessions](03-login-and-sessions.md) — Tier 3 sits after Tier 1; the search and filter endpoints should be session-gated and scoped to the requesting user.
 - [Sensitive Content Controls](10-sensitive-content-controls.md) — if the "hidden from default views" protection is chosen, search results and default browse listings must honour it.
 - [Internationalization (i18n)](13-internationalization.md) — filter/sort labels, the A–Z bar's empty states and "no results" text all go through `t("key")` from the first screen.
 - [Operations & Security](12-operations-and-security.md) — deployment/packaging is where the "does this build of SQLite have FTS5?" question gets settled for Windows and Docker.

@@ -3,7 +3,7 @@
 > Editable, collaboratively-synced text documents on the same server, built as an ordered list of id-anchored nodes with append-only ops that the backend serializes into a single total order.
 
 **Status:** ⬜ not started · **Phase:** 2 · **Tier:** Parked — out of focus · **Tags:** [BE] [DB] [FE]
-**Depends on:** [03 Authentication, Users & Sessions](03-auth-users-and-sessions.md) (edits are attributed to a user)
+**Depends on:** [03 Authentication, Users & Sessions](03-login-and-sessions.md) (edits are attributed to a user)
 **Blocks:** Nothing
 **Roadmap:** [Build order](../../ROADMAP.md#priority-order-build-sequence)
 
@@ -115,7 +115,7 @@ What is *absent*, specifically:
 - [Video Library (Phase 2)](20-video.md) — the other parked Phase 2 media pillar; same "out of focus until Phase 1 lands" status.
 - [PDF Annotations (Phase 2)](22-pdf-annotations.md) — the other Phase 2 document-adjacent feature (per-user comments + highlighting).
 - [Reading & Read State](02-reading-and-read-state.md) — offline download/reading is what the offline op queue ties into.
-- [Authentication, Users & Sessions](03-auth-users-and-sessions.md) — edits need an authenticated user to attribute and authorize them.
+- [Authentication, Users & Sessions](03-login-and-sessions.md) — edits need an authenticated user to attribute and authorize them.
 - [Library & Directory Management](01-library-and-directory-management.md) — `LibraryType::Documents` is a library type; libraries/series are how content is organised today.
 - [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md) — router state widening, axum 0.8 path syntax, and the testing strategy this feature would use.
 - [Interop & Client Apps (Phase 2)](23-interop-and-clients.md) — the clients that would open and edit documents.

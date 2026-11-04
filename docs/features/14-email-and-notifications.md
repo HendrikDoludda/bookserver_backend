@@ -4,7 +4,7 @@
 
 **Status:** 🟡 partial · **Phase:** 1 · **Tier:** Cross-cutting, unscheduled — already in use by Backend Tier 1, extended again in Tier 4 · **Tags:** [BE]
 **Depends on:** [13 Internationalization (i18n)](13-internationalization.md) (only for localized bodies; the catalog makes the emails translate for free)
-**Blocks:** [03 Authentication, Users & Sessions](03-auth-users-and-sessions.md) (sign-up verification and password reset both send mail) · [05 Uploads & File Ingestion](05-uploads-and-ingestion.md) (the rename and out-of-space policies both notify by email)
+**Blocks:** [03 Authentication, Users & Sessions](03-login-and-sessions.md) (sign-up verification and password reset both send mail) · [05 Uploads & File Ingestion](05-uploads-and-ingestion.md) (the rename and out-of-space policies both notify by email)
 **Roadmap:** [Build order](../../ROADMAP.md#priority-order-build-sequence)
 
 ## Why
@@ -22,7 +22,7 @@ Email #1 — account verification (live, wired):
 - [auth.rs:128](../../src/routes/auth.rs#L128) `send_verification_email` issues an 8-character code, Argon2-hashes it into `email_verification`, and returns the plaintext code plus the user row.
 - [auth.rs:172](../../src/routes/auth.rs#L172) `create_verification_email` builds subject `Verify Book Server Account` and a plaintext body ([auth.rs:176](../../src/routes/auth.rs#L176)) and calls `create_new_email`. `UserMetadata.email` is `Option<String>` ([models.rs:261](../../src/data_models/models.rs#L261)) even though `users.email` is `TEXT NOT NULL`, so this step can still bail out with `MissingEmail` ([auth.rs:185](../../src/routes/auth.rs#L185)).
 - Called from `sign_up` at [api_caller.rs:366](../../src/routes/api_caller.rs#L366) — inline in the request path, after the transaction commits.
-- If the SMTP config is absent, `EmailSetUpNotFound` is remapped to `SentFailedDueToNoConfig { code }` ([api_caller.rs:369-371](../../src/routes/api_caller.rs#L369-L371)) and `sign_up` falls through to `auto_verify_account` ([api_caller.rs:381-383](../../src/routes/api_caller.rs#L381-L383), [api_caller.rs:393](../../src/routes/api_caller.rs#L393)), which self-verifies the account and hands out real tokens with the device fields hard-coded to `"Unknown"`. Owned by [auth](03-auth-users-and-sessions.md); noted here because the no-config path is an email-layer consequence.
+- If the SMTP config is absent, `EmailSetUpNotFound` is remapped to `SentFailedDueToNoConfig { code }` ([api_caller.rs:369-371](../../src/routes/api_caller.rs#L369-L371)) and `sign_up` falls through to `auto_verify_account` ([api_caller.rs:381-383](../../src/routes/api_caller.rs#L381-L383), [api_caller.rs:393](../../src/routes/api_caller.rs#L393)), which self-verifies the account and hands out real tokens with the device fields hard-coded to `"Unknown"`. Owned by [auth](03-login-and-sessions.md); noted here because the no-config path is an email-layer consequence.
 
 Email #2 — password reset with cancelation link (code exists, **no caller**):
 - [auth.rs:353](../../src/routes/auth.rs#L353) `send_reset_password_email` builds subject `Password Reset`, a body containing the reset code plus a cancelation link `"{server_address}/password-reset/cancel?token={cancelation_token}"` ([auth.rs:360-363](../../src/routes/auth.rs#L360-L363)), and passes `username: "Anonymous"` ([auth.rs:367](../../src/routes/auth.rs#L367)).
@@ -56,7 +56,7 @@ Not started at all:
 - **Delete or implement `send_email()`?** [email_helper.rs:41](../../src/routes/email_helper.rs#L41) is an empty private fn with no callers. Options: delete it, or make it the struct-based sender the file's comment plans. Suggested: delete it and let the "load config once" work introduce the struct deliberately, rather than keeping a hollow name around.
 - **Send inline or off the request path?** Today `sign_up` awaits the send inside the handler ([api_caller.rs:366](../../src/routes/api_caller.rs#L366)), so an unreachable SMTP host stalls the HTTP response. Options: keep it inline (the caller can report failure, at the cost of latency) vs. `tokio::spawn` after commit (fast response, but the failure can only be logged). Suggested: keep verification inline for now — the user is waiting for a code — and spawn the upload notifications, which nobody is waiting on.
 - **Where does the server base URL for the reset link come from?** Nothing supplies the `&Url` that `send_reset_password_email` needs, and `config.rs` has no such variable ([auth.rs:359](../../src/routes/auth.rs#L359)). Options: a `SERVER_BASE_URL` env var vs. a value stored in the DB and editable from the admin UI (which fits the guiding principle better). Suggested: env var now, admin-editable later alongside the other admin-managed settings.
-- **Does the no-SMTP auto-verify fallback stay?** With no SMTP configured, sign-up currently self-verifies the account and issues tokens ([api_caller.rs:381-383](../../src/routes/api_caller.rs#L381-L383)). Convenient during development, but it means "email is misconfigured" silently becomes "email verification is off". Suggested: keep it only behind an explicit dev flag, and decide it in [auth](03-auth-users-and-sessions.md), which owns the flow.
+- **Does the no-SMTP auto-verify fallback stay?** With no SMTP configured, sign-up currently self-verifies the account and issues tokens ([api_caller.rs:381-383](../../src/routes/api_caller.rs#L381-L383)). Convenient during development, but it means "email is misconfigured" silently becomes "email verification is off". Suggested: keep it only behind an explicit dev flag, and decide it in [auth](03-login-and-sessions.md), which owns the flow.
 - **Email error text currently reaches the client.** `sign_up` interpolates `err.to_string()` into a 500 body ([api_caller.rs:385-388](../../src/routes/api_caller.rs#L385-L388)), which §11's "generic error bodies to the client" hardening item forbids. Suggested: log the detail, send a generic body — tracked in [cross-cutting polish](07-cross-cutting-backend-polish.md) / [operations & security](12-operations-and-security.md), listed here because email failures are one of the leaks.
 
 ## Tasks
@@ -73,7 +73,7 @@ Not started at all:
 ### The two existing emails
 - ✅ Account-verification email — code issued, hashed, stored, body + subject built, sent from `sign_up` **[BE]**
 - 🟡 Password-reset email with reset code + cancelation link — body/subject and link building exist but nothing calls them **[BE]**
-- ⬜ Wire the reset email into `request_reset_password_link` so the 202 "Email has been sent" is true **[BE]** *(the token storage/expiry side is owned by [auth](03-auth-users-and-sessions.md))*
+- ⬜ Wire the reset email into `request_reset_password_link` so the 202 "Email has been sent" is true **[BE]** *(the token storage/expiry side is owned by [auth](03-login-and-sessions.md))*
 - ⬜ Supply the server base URL the cancelation link needs (no config source today) **[BE]**
 - ⬜ Use the real recipient name in the reset email instead of the hardcoded `"Anonymous"` **[BE]**
 
@@ -105,7 +105,7 @@ Not started at all:
 - The 8-character verification code, the 8-character reset token and the 32-character cancelation token all come from the same `Alphanumeric` sampler ([auth.rs:124](../../src/routes/auth.rs#L124), called at [auth.rs:134](../../src/routes/auth.rs#L134) and [auth.rs:332-333](../../src/routes/auth.rs#L332-L333)); they are the payload of these emails, so never log a body that contains one.
 
 ## Related
-- [Authentication, Users & Sessions](03-auth-users-and-sessions.md) — owns both existing emails' surrounding flows: verification code issuance/checking, the password-reset token storage, and the no-SMTP auto-verify fallback.
+- [Authentication, Users & Sessions](03-login-and-sessions.md) — owns both existing emails' surrounding flows: verification code issuance/checking, the password-reset token storage, and the no-SMTP auto-verify fallback.
 - [Two-Factor Authentication (TOTP)](04-two-factor-auth-totp.md) — deliberately email-free; the "no delivery service to run" rationale lives there.
 - [Uploads & File Ingestion](05-uploads-and-ingestion.md) — the rename and insufficient-storage notifications are decided there and delivered here.
 - [Internationalization (i18n)](13-internationalization.md) — the catalog that email bodies move into, and the per-user locale that selects the language.

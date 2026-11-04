@@ -138,7 +138,7 @@ This is the feature that makes the server a *library* rather than a file share: 
 ## Related
 
 - [Reading & Read State](02-reading-and-read-state.md) — serves the files this feature catalogs; cover serving reuses the same `stream_reader` / `ServeFile` pattern as `GET /book/:id`.
-- [Authentication, Users & Sessions](03-auth-users-and-sessions.md) — Tier 1 gate; every scan, create, update and delete endpoint here is currently unauthenticated and needs admin gating.
+- [Authentication, Users & Sessions](03-login-and-sessions.md) — Tier 1 gate; every scan, create, update and delete endpoint here is currently unauthenticated and needs admin gating.
 - [Uploads & File Ingestion](05-uploads-and-ingestion.md) — the new-series "where should it live" step depends on the scannable-directories table; the post-upload pipeline reuses the scanner (DB entry + cover + hash); uploaded names must round-trip through this feature's filename parser.
 - [Backend Admin Web View](06-admin-web-view.md) — manages directories, libraries, series and scans entirely through these endpoints.
 - [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md) — the `Deserialize` derive that unblocks create/edit, sorting + pagination on these list endpoints, and the testing strategy (which explicitly includes validating EPUB covers).

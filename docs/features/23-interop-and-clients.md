@@ -3,7 +3,7 @@
 > Speak one standard protocol (OPDS) so third-party reader apps can browse the server, and keep native iOS/Android apps parked until they pay for themselves.
 
 **Status:** ⬜ not started · **Phase:** 2 · **Tier:** Parked — out of focus · **Tags:** [BE] [FE]
-**Depends on:** [03 Authentication, Users & Sessions](03-auth-users-and-sessions.md) (OPDS needs an auth scheme a third-party reader can speak) · [01 Library & Directory Management](01-library-and-directory-management.md) (the feed is generated from libraries and series)
+**Depends on:** [03 Authentication, Users & Sessions](03-login-and-sessions.md) (OPDS needs an auth scheme a third-party reader can speak) · [01 Library & Directory Management](01-library-and-directory-management.md) (the feed is generated from libraries and series)
 **Blocks:** Nothing
 **Roadmap:** [Build order](../../ROADMAP.md#priority-order-build-sequence)
 
@@ -56,7 +56,7 @@ Nothing exists for either item.
 - [Video Library (Phase 2)](20-video.md) — Infuse over WebDAV is this exact idea applied to video: expose a protocol the third-party client already understands instead of expecting it to learn the REST API.
 - [Reading & Read State](02-reading-and-read-state.md) — the range-streaming endpoint OPDS download links reuse.
 - [Library & Directory Management](01-library-and-directory-management.md) — cover serving, which feed thumbnails depend on.
-- [Authentication, Users & Sessions](03-auth-users-and-sessions.md) — the credentials an OPDS client would present; today's sessions are cookie-only.
+- [Authentication, Users & Sessions](03-login-and-sessions.md) — the credentials an OPDS client would present; today's sessions are cookie-only.
 - [Browsing, Search & Discovery](11-browsing-search-and-discovery.md) — the same catalog data the feed re-exposes, in the app's own representation.
 - [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md) — the axum 0.8 path-syntax fix any new OPDS route waits on.
 - [Sensitive Content Controls](10-sensitive-content-controls.md) — a third-party client bypasses frontend controls, so sensitive items need filtering at the feed.

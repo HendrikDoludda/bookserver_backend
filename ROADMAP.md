@@ -46,7 +46,7 @@ Two more break live endpoints now that it boots:
    column typos sit beside it. → [01](docs/features/01-library-and-directory-management.md) **[BE]**
 4. ⬜ No `CookieManagerLayer` is installed, so every handler behind the `AuthSession`
    extractor answers 400 before its body runs. →
-   [03](docs/features/03-auth-users-and-sessions.md) **[BE]**
+   [03](docs/features/03-login-and-sessions.md) **[BE]**
 
 ---
 
@@ -78,10 +78,13 @@ status-code decision landed for 1 error enum out of 10.
 
 **Tier 1 — the foundation that gates everything per-user:**
 
-4. 🟡 [Auth, users & sessions](docs/features/03-auth-users-and-sessions.md) — the keystone,
+4. 🟡 [Auth, users & sessions](docs/features/03-login-and-sessions.md) — the keystone,
    and the biggest single piece. **Further along than it looks:** Argon2 hashing, sign-up,
    email verification and the session + refresh token pair are written; nothing is wired to
    a route yet. **[BE][DB][FE]**
+   *Migrated to the new doc format: split into feature docs 03 and 27–32, with the
+   database-layer bugs they hit moved into
+   [26 Database layer fixes](docs/features/26-database-layer-fixes.md) (Tier 0).*
    *Dependency note (not tasks here):* read state (#8), uploads (#12), sensitive content
    (#15) and the admin UI (#13, built in Tier 4) all wait on this.
 5. 🟡 [Two-factor auth (TOTP)](docs/features/04-two-factor-auth-totp.md) — *only after #4

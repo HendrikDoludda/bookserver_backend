@@ -3,7 +3,7 @@
 > A per-user permission deciding who may take the original file home and who may only view it through the app, on the server's terms.
 
 **Status:** ⬜ not started · **Phase:** 2 · **Tier:** Parked — out of focus · **Tags:** [DB] [BE] [FE]
-**Depends on:** [03 Authentication, Users & Sessions](03-auth-users-and-sessions.md) (a per-user permission needs a session-derived user and a role model) · [02 Reading & Read State](02-reading-and-read-state.md) (this gates the offline-download endpoint that doc owns)
+**Depends on:** [03 Authentication, Users & Sessions](03-login-and-sessions.md) (a per-user permission needs a session-derived user and a role model) · [02 Reading & Read State](02-reading-and-read-state.md) (this gates the offline-download endpoint that doc owns)
 **Blocks:** Nothing
 **Roadmap:** [Build order](../../ROADMAP.md#priority-order-build-sequence)
 
@@ -180,7 +180,7 @@ Roadmap drift: none — the feature is new, and nothing in the code contradicts 
 - **Nothing here is meaningful until the streaming route is authenticated.** `request_file`
   ([api_caller.rs:290-299](../../src/routes/api_caller.rs#L290)) has no session extractor,
   and the path-containment TODO ([api_caller.rs:4](../../src/routes/api_caller.rs#L4)) is
-  still open. Both belong to [Auth](03-auth-users-and-sessions.md) and
+  still open. Both belong to [Auth](03-login-and-sessions.md) and
   [Operations & Security](12-operations-and-security.md); this feature is a no-op until they
   land, and building it first would produce a permission check sitting in front of an open door.
 - **The allowed path is one header on the response.** `Content-Disposition: attachment; filename="…"`
@@ -240,7 +240,7 @@ Roadmap drift: none — the feature is new, and nothing in the code contradicts 
 ## Related
 
 - [Reading & Read State](02-reading-and-read-state.md) — owns the offline-download endpoint this permission gates, including the still-open "separate route or a flag" question.
-- [Authentication, Users & Sessions](03-auth-users-and-sessions.md) — hard prerequisite: supplies the session-derived user, the role model, and the extractor pattern the permission check copies.
+- [Authentication, Users & Sessions](03-login-and-sessions.md) — hard prerequisite: supplies the session-derived user, the role model, and the extractor pattern the permission check copies.
 - [Sensitive Content Controls](10-sensitive-content-controls.md) — wants per-user visibility over the same libraries; the candidate home for one shared access model.
 - [Operations & Security](12-operations-and-security.md) — the "derive the user from the session, never the body" rule, the unused signing key in `secrets.toml`, and the audit log a download record would join.
 - [Video Library](20-video.md) — the WebDAV door for Infuse hands out raw files with no notion of this permission; the motivating example (a movie someone may or may not keep) is this content class.

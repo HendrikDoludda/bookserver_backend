@@ -3,7 +3,7 @@
 > Serving book files to a reader client and remembering, per user, where they got to.
 
 **Status:** 🟡 partial · **Phase:** 1 · **Tier:** Backend Tier 3 (item #8 per-user read state); frontend F1 for the readers, F3 for the read-state surfaces · **Tags:** [BE] [DB] [FE]
-**Depends on:** [03 Authentication, Users & Sessions](03-auth-users-and-sessions.md) (read state is per-user, so it needs the session-derived user id) · [01 Library & Directory Management](01-library-and-directory-management.md) (there must be scanned books to read)
+**Depends on:** [03 Authentication, Users & Sessions](03-login-and-sessions.md) (read state is per-user, so it needs the session-derived user id) · [01 Library & Directory Management](01-library-and-directory-management.md) (there must be scanned books to read)
 **Blocks:** [11 Browsing, Search & Discovery](11-browsing-search-and-discovery.md) (the completed / not-completed filter reads per-user read state) · [22 PDF Annotations](22-pdf-annotations.md) (shares the anchor/locator problem with read state)
 **Roadmap:** [Build order](../../ROADMAP.md#priority-order-build-sequence)
 
@@ -93,7 +93,7 @@ Reading is the point of the whole server: everything else exists so a client can
 ## Related
 
 - [Library & Directory Management](01-library-and-directory-management.md) — produces the `books` rows this serves, owns per-format scan/cover support and the `GET /get_cover/:kind/:id` stub the reader will need for grid views.
-- [Authentication, Users & Sessions](03-auth-users-and-sessions.md) — supplies the session extractor every per-user surface here depends on; per-user settings live there too.
+- [Authentication, Users & Sessions](03-login-and-sessions.md) — supplies the session extractor every per-user surface here depends on; per-user settings live there too.
 - [Browsing, Search & Discovery](11-browsing-search-and-discovery.md) — the completed / not-completed filter reads this feature's finished flag.
 - [Cross-Cutting Backend Polish](07-cross-cutting-backend-polish.md) — `Deserialize` on models, status codes, sorting + pagination, and the testing plan.
 - [Operations & Security](12-operations-and-security.md) — path-traversal validation of served file paths, and the "derive `user_id` from the session token" rule.

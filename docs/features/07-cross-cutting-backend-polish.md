@@ -4,7 +4,7 @@
 
 **Status:** 🟡 partial · **Phase:** 1 · **Tier:** Backend Tier 0 (all three items — landed in the code, but see Current state: the roadmap now marks the tier 🟡 rather than ✅) plus Backend Tier 3 item #10 for sorting + pagination; the testing strategy is unscheduled · **Tags:** [BE]
 **Depends on:** Nothing
-**Blocks:** [01 Library & Directory Management](01-library-and-directory-management.md) (the create/edit handlers need the request-body work) · [03 Authentication, Users & Sessions](03-auth-users-and-sessions.md) (its handlers need the generic-error-body work) · [11 Browsing, Search & Discovery](11-browsing-search-and-discovery.md) (the filter and sort controls need backend sorting + pagination)
+**Blocks:** [01 Library & Directory Management](01-library-and-directory-management.md) (the create/edit handlers need the request-body work) · [03 Authentication, Users & Sessions](03-login-and-sessions.md) (its handlers need the generic-error-body work) · [11 Browsing, Search & Discovery](11-browsing-search-and-discovery.md) (the filter and sort controls need backend sorting + pagination)
 **Roadmap:** [Build order](../../ROADMAP.md#priority-order-build-sequence)
 
 ## Why
@@ -97,7 +97,7 @@ Roadmap drift: **[CLAUDE.md](../../CLAUDE.md) is stale on this section** — it 
 - [01-library-and-directory-management.md](01-library-and-directory-management.md) — the `Deserialize` derive unblocks its create/edit endpoints, and the EPUB cover this section's tests validate comes from its cover pipeline
 - [11-browsing-search-and-discovery.md](11-browsing-search-and-discovery.md) — its sorting controls and completed/tag/author filters are the frontend of the sorting + pagination task here
 - [12-operations-and-security.md](12-operations-and-security.md) — owns the generic-error-body hardening item, the `0600` file permissions, `cargo audit`, and the signing-key decision that explains the dangling `secrets` binding in `main`
-- [03-auth-users-and-sessions.md](03-auth-users-and-sessions.md) — its handlers are the main source of hand-built, detail-leaking error responses, and its extractors are why router state needs to grow past `Arc<Database>`
+- [03-login-and-sessions.md](03-login-and-sessions.md) — its handlers are the main source of hand-built, detail-leaking error responses, and its extractors are why router state needs to grow past `Arc<Database>`
 - [04-two-factor-auth-totp.md](04-two-factor-auth-totp.md) — its five handlers are 501 stubs until the TOTP flow is built
 - [06-admin-web-view.md](06-admin-web-view.md) — a second client of the same `/api/v1` surface, so the prefix and route-naming decisions bind it too
 - [13-internationalization.md](13-internationalization.md) — its timing note cites the `/api/v1` prefix as the same "decide the architecture on day one" lesson
