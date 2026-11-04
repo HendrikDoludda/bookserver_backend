@@ -16,6 +16,7 @@ whether the address has an account.
 - [ ] ? h · Cancel: `GET /password-reset/cancel?token=…` invalidates a reset the user did not ask for [BE]
 - [ ] ? h · Routes for request, redeem and cancel — `request_reset_password_link` and `reset_password` take a bare struct before `State`; take the body as `Json<…>`, last [BE]
 - [ ] ? h · Reset email text from the [translation catalog](13-internationalization.md) instead of hard-coded English [BE]
+- [ ] ? h · `send_reset_password_email` sets the username to `"Anonymous"` — once the recipient fix in [14](14-email-and-notifications.md) makes it the display name, pass the account's username [BE]
 - [ ] ? h · Delete the comment-only `reset_password` stub in `auth.rs` [BE]
 - [ ] ? h · "Forgot password" form [FE]
 - [ ] ? h · New-password page that the reset link opens [FE]

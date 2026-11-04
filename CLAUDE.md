@@ -21,21 +21,6 @@ project as much as a product. These three rules come before everything else in t
    contradiction with an earlier decision, a simpler way — say so and why, before doing
    anything. The developer decides; then follow the decision without re-arguing it.
 
-## Docs migration — pending
-
-The docs are still in the old format: [ROADMAP.md](ROADMAP.md) (build order in tiers) and the
-feature docs in [docs/features/](docs/features/) (eight sections, ⬜ 🟡 ✅ markers), indexed in
-[docs/README.md](docs/README.md). Moving them into the [Documentation](#documentation) layout
-below is a task of its own — plan it before starting. Until it is done:
-
-- Read the old docs for what to build and what was decided.
-- Keep them current in their own format (conventions in [docs/README.md](docs/README.md)) —
-  never mix the two formats in one doc.
-- The [Project map](#project-map-until-the-docs-migration) at the bottom of this file stands in
-  for `ARCHITECTURE.md` and `commands.md`.
-
-Delete this section and the project map once the migration lands.
-
 ## Documentation
 
 All project knowledge lives in `docs/`. One fact, one file — if you are about
@@ -51,7 +36,7 @@ docs/
 ├── setup.md              ← repositories, git permissions, default branch
 ├── <nn>-<slug>-found.md  ← out-of-scope findings, one per feature in progress (see Scope)
 ├── <nn>-<slug>-checks.md ← the developer's manual checks, one per feature in progress (see Verification gate)
-└── features/             ← one file per feature
+└── features/             ← one file per feature; 99-bugfixes.md holds bugs that fit no feature
 ```
 
 There is no built/unbuilt folder split: a feature's state lives in its doc's `State:` line and
@@ -75,8 +60,10 @@ One row per feature. No description, no rationale, no sub-items, no dates, no co
 | <name> | <tier or phase> | <state> | [<nn>-<slug>](features/<nn>-<slug>.md) |
 ```
 
-`Tier` is the build tier or phase the feature belongs to — `—` until one is assigned. It lives in
-this table only. Finish every feature in a tier before starting the next.
+`Tier` is where the feature sits in the build order — `—` until one is assigned. It lives in
+this table only. The numbered tiers run in order: finish every feature in one before starting
+the next. `F0` / `F1` are the frontend track, `cross-cutting` rides along with whatever touches
+it, `Phase 2` is parked, `optional` waits for an accept, and `ongoing` never holds anything up.
 
 Completed rows stay until the developer says that work is released to users — then they go,
 together with the feature doc (see [Deleting](#deleting)).
@@ -320,78 +307,3 @@ on the situation, it is not a rule — ask the developer to sharpen it into one,
 | Axum route params are `{param}`, never `:param` | Axum 0.8 panics while building the router, before the port opens |
 | A column name in `Extract::COLUMNS` must match the `row.get("…")` in `FromRow` exactly | A mismatch compiles fine and fails only at runtime |
 | Never commit `data/` | The SQLite file holds local file paths and user rows; git history had to be rewritten once |
-
-## Project map (until the docs migration)
-
-### Commands
-- Type-check: `cargo check`
-- Build: `cargo build`   ·   Run: `cargo run`
-- Tests: `cargo test` (no tests yet — see [docs/features/07-cross-cutting-backend-polish.md](docs/features/07-cross-cutting-backend-polish.md))
-- Runtime config via env vars: `PORT` (default 8080), `BOOK_DIRS` (`:`-separated), `API_KEY`,
-  and `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM` / `SMTP_FROM_NAME`
-
-> The crate compiles and the server boots. Remaining `cargo clippy` warnings are confined to
-> the in-progress auth/TOTP code. Defects that still break individual endpoints are listed
-> under "Blocked right now" in [ROADMAP.md](ROADMAP.md).
-
-### Entry & wiring
-- `src/main.rs` — binary entry. Inits tracing, opens the DB, calls `start_server`. Returns `anyhow::Result`.
-- `src/lib.rs` — module declarations + re-exports. Note `pub use data_models::models` and
-  `pub use database_related_scripts::db`, which is why `crate::models::…` and `crate::db::…`
-  resolve despite the nested directories.
-- `src/config.rs` — env-var config readers (`get_port`, `get_books_dirs`, `get_api_key`,
-  `get_email_config`) plus `set_up_config_file`, which generates a 256-bit signing key into
-  `secrets.toml` on first run. **Nothing consumes that key yet** — see
-  [docs/features/12-operations-and-security.md](docs/features/12-operations-and-security.md).
-
-### HTTP layer — `src/routes/`
-- `api_routes.rs` — the **route table** (`set_up_routes`) and `start_server`. Router state is `Arc<Database>`.
-- `api_caller.rs` — the **handler functions** (what each endpoint does). Also holds the auth **extractors** (`AuthSession`, `AdminSession`, `AuthTOTPLoginSession`, `AuthRefreshSession`). Mix of implemented + stubbed; stubs note *why* they're blocked, and the TOTP handlers return 501. `ping_server` doubles as the liveness check and the placeholder for routes with no handler yet.
-- `auth.rs` — real auth logic (~550 lines): user creation, email verification, login, password change/reset, Argon2 hashing, and the session + refresh token pair. **Not yet wired to routes.**
-- `totp_management.rs` — comment-only stubs for the TOTP flows.
-- `email_helper.rs` — `create_new_email`: builds and sends mail over SMTP via `mail-send`.
-
-### Database layer — `src/database_related_scripts/`
-- `db.rs` — the **`Database` struct** (r2d2 SQLite pool) and all DB operations: `get_entry`, `get_entries_batch`, `insert`, `update_value`, `remove_entry`, library/series queries, `setup_new_transaction`.
-- `extract.rs` — **`Extract` trait**: read a row → metadata struct. Each type supplies `TABLE` / `COLUMNS` / `from_row`; gets `extract` (by id) + `extract_batch` (IN-list → `Vec<WithId<T>>`) as default methods.
-- `insert.rs` — **`Insert` trait**: metadata struct → `INSERT`.
-- `db_update.rs` — **`Update` trait**: update one column by id (plus a multi-column variant).
-- `db_from_row.rs` — the **`FromRow` impls**: `rusqlite::Row` → metadata struct, by column name.
-- `db_search.rs` — **`Search` trait**: find a row by arbitrary columns + values, `And`/`Or` separated. Also used to prove a value *doesn't* exist (uniqueness checks).
-- `migrations.rs` — versioned migration runner; loads `migrations/*.sql` via `include_str!`. To add schema: new numbered `.sql` + register in the `MIGRATIONS` array; never edit an applied migration. *(Early dev exception: migration 0001 is still edited in place and the DB wiped.)*
-- `mod.rs` — module declarations.
-
-### Domain models & errors — `src/data_models/`
-- `models.rs` — the domain structs & enums: `BookMetadata`, `BookSeriesMetadata`, `LibraryMetadata`, `UserMetadata`, `SeriesLibraryConnection`, `Sessions`, `TOTP`, `EmailVerification`, `RecoveryCodes`, `EmailConfig`; the `*DatabaseColumns` enums; `LibraryType` / `BookFormat` / `BookLanguage`; `DatabaseTypes`; `ColumnSelector`; `QuerySeparator` / `SelectionMethod`; **`WithId<T>`** (pairs row id + metadata, flattened in JSON); `ParsedName`, `FileExtractedMetadata`, `DatabaseEntry`.
-- `authentication_model.rs` — the auth **request/response bodies** (`UserCreationRequest`, `LoginRequest`, `VerifyEmailRequest`, `ChangePasswordRequest`, `DeviceInformation`, `AuthResponse`, …).
-- `totp_model.rs` / `information_retrieval_models.rs` — TOTP and library-request bodies. *(These don't derive `Deserialize` yet, so they can't back a `Json<T>` extractor.)*
-- `src/error_types.rs` — 10 typed error enums per domain (`DatabaseError`, `FolderScannerError`, `CoverImageError`, `StreamReaderErrors`, `RequestErrors`, `RoutingErrors`, `AuthenticationError`, `EmailErrors`, `AppErrors`, `ApplicationSetUpErrors`). Only `DatabaseError` and `RequestErrors` implement Axum's `IntoResponse`.
-
-### Scanner — `src/scanner/`
-- `folder_scanner.rs` — walks configured dirs, parses filenames (regex for volume/chapter/page), inserts entries. Entry point: `scan_all_folders`.
-- `cover_image_retriever.rs` — extracts a cover per format (PDF / CBZ / EPUB / image). Entry point: `get_cover_image`. (EPUB path untested.)
-- `metadata_fetcher.rs` — **placeholder** (module doc only); online metadata fetching lives in [docs/features/09-metadata-enrichment.md](docs/features/09-metadata-enrichment.md).
-- `mod.rs` — module declarations.
-
-### Reading & misc
-- `src/stream_reader.rs` — `streaming_file`: serves a file with HTTP range support via `tower-http` `ServeFile`.
-- `src/utils.rs` — small helpers (`convert_file_path_to_blob`).
-
-### Data & assets (runtime, not source)
-- `migrations/0001_initial_schema.sql` — 10 tables: `books`, `library`, `library_elements`
-  (junction: composite PK `(library_id, series_id)`, **no `id`**), `series`, `users`,
-  `email_verification`, `reset_password_requests`, `sessions`, `recovery_codes`, `totp`.
-- `data/databases/app_data.sqlite` — the SQLite database. Created on first run; git-ignored.
-- `cover_images/` — extracted cover images. Git-ignored except the `example-cover.png` fallback.
-
-### Key patterns & conventions
-- **DB traits, one per operation:** `Extract` (read), `Insert` (write), `Update` (modify), `Search` (find by column), `FromRow` (row → struct). Each metadata type implements the relevant ones; `Database` methods wrap them with a pooled connection.
-- **Two flavours of every `Database` method:** the plain one takes a connection from the pool; the `*_with_connection` variant takes a `&Connection` so several operations can share one transaction (`setup_new_transaction`).
-- **`WithId<T>`** is how list endpoints return id + metadata together (the metadata structs don't store their own id).
-- **Errors:** `thiserror` enums per domain. `DatabaseError::into_response` is the reference shape: `EntryNotFound` → 404, everything else → 500 with the detail logged server-side and a generic body to the client.
-- **SQL safety:** values are always bound parameters (`?1`, `params!`, `params_from_iter`). Table/column names are only ever interpolated from trusted enums/consts, never from request input.
-- **Handlers** use Axum extractors: `State<Arc<Database>>`, `Path<i64>`, `Json<T>`, `Request<Body>`.
-- **Junction table** `library_elements` deliberately does *not* implement `Extract` (no `id` column); it's queried by FK via dedicated `Database` methods.
-- **`user_id` always comes from the session** (`AuthSession`), never from the request body or path.
-- **Auth answers never reveal whether an account exists:** an unknown user and a wrong password get the same response, and so does a password-reset request for an unknown address.
-- **Never return `UserMetadata` or `Sessions` from a handler** — they serialize the password hash and the token hashes; build a response struct.

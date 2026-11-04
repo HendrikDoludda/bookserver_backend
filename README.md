@@ -6,7 +6,8 @@ an HTTP API for a reader frontend.
 
 > **Status: work in progress.** Scanning, cataloging, cover extraction and file streaming
 > work. Authentication is implemented but not yet wired to routes, and TOTP two-factor auth
-> is planned. See [ROADMAP.md](ROADMAP.md) for the build order and known issues.
+> is planned. See [docs/project-state.md](docs/project-state.md) for what works today and the
+> [build checklist](docs/build-checklist.md) for what comes next.
 
 ## Highlights
 
@@ -120,16 +121,17 @@ Implemented endpoints:
 | `DELETE` | `/api/v1/delete_library/{id}` | Delete a library |
 
 The other registered routes are placeholders for upcoming features. Known issues that still
-affect some of these endpoints are tracked in [ROADMAP.md](ROADMAP.md#blocked-right-now).
+affect some of these endpoints are tracked in
+[Database layer fixes](docs/features/26-database-layer-fixes.md).
 
 > **Security note:** the API is not authenticated yet, and the server listens on all
 > interfaces. Run it on a trusted network only until authentication is wired in.
 
 ## Project docs
 
-- [ROADMAP.md](ROADMAP.md): what gets built, in what order.
-- [docs/](docs/README.md): one document per feature, with its decisions, open questions,
-  task list, and the current state of the code.
+- [Build checklist](docs/build-checklist.md): every feature, its tier in the build order, and its state.
+- [Feature docs](docs/features/): one document per feature — what to build and what is still undecided.
+- [Architecture](docs/ARCHITECTURE.md): the conventions the code follows.
 
 ## Development
 
@@ -139,8 +141,8 @@ cargo clippy
 cargo fmt
 ```
 
-There are no automated tests yet. A database-layer test suite is the next item on the
-[cross-cutting polish](docs/features/07-cross-cutting-backend-polish.md) track.
+There are no automated tests yet. A database-layer test suite comes with the next item,
+[Database layer fixes](docs/features/26-database-layer-fixes.md).
 
 ## License
 
