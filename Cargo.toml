@@ -46,3 +46,7 @@ directories = "6.0.0"
 totp-rs = "6.0.0"
 url = "2.5.8"
 
+# Unoptimised Argon2 takes seconds per hash, and the tests hash a lot.
+[profile.dev.package.argon2]
+opt-level = 3
+

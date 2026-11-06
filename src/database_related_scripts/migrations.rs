@@ -77,3 +77,22 @@ pub fn run(conn: &mut Connection) -> Result<(), DatabaseError> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::memory_connection;
+
+    #[test]
+    fn running_the_migrations_again_changes_nothing() {
+        let mut conn = memory_connection();
+        run(&mut conn).unwrap();
+
+        let applied: i64 = conn
+            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(applied, MIGRATIONS.len() as i64);
+    }
+}

@@ -71,3 +71,30 @@ pub fn set_up_routes() -> Router<Arc<Database>> {
         .route("/health", get(ping_server))
         .nest("/api/v1", api)
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::{
+        body::{to_bytes, Body},
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+
+    use super::set_up_routes;
+    use crate::test_support::TempDatabase;
+
+    #[tokio::test]
+    async fn health_answers_pong_through_the_router() {
+        let temp = TempDatabase::open();
+        let app = set_up_routes().with_state(temp.db.clone());
+
+        let response = app
+            .oneshot(Request::get("/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        assert_eq!(&body[..], b"pong");
+    }
+}

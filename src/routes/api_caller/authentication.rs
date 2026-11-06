@@ -169,7 +169,7 @@ fn verify_email_logic(
 
 pub async fn log_out(session: AuthSession, State(db): State<Arc<Database>>) -> Response<Body> {
     match db.remove_entry(DatabaseTypes::Session, session.0.session_id) {
-        Ok(()) => (StatusCode::ACCEPTED, "Successfully logged out!").into_response(),
+        Ok(_) => (StatusCode::ACCEPTED, "Successfully logged out!").into_response(),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to log out properly due to: {err}"),

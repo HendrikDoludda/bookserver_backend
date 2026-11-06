@@ -12,6 +12,7 @@
 - `src/error_types.rs` — the typed error enums, one per domain.
 - `src/scanner/` — `folder_scanner.rs` (walks the book folders, parses filenames), `cover_image_retriever.rs` (one cover per format), `metadata_fetcher.rs` (placeholder).
 - `src/stream_reader.rs` — file serving with HTTP range support.
+- `src/test_support.rs` — shared test fixtures, compiled only for tests.
 - `migrations/` — numbered SQL files, embedded at compile time.
 - Runtime data, git-ignored: `data/databases/app_data.sqlite`, `cover_images/` (except the `example-cover.png` fallback).
 
@@ -41,13 +42,25 @@
 ## Database
 - One trait per operation — `Extract`, `Insert`, `Update`, `Search`, `Delete`, `FromRow` — implemented per model; `Database` methods wrap them with a pooled connection.
 - Every `Database` method has a `*_with_connection` twin taking `&Connection`, so several operations can share one transaction (`setup_new_transaction`).
+- A transaction holds only SQL: it starts `IMMEDIATE`, an async handler runs it through `Database::transact` (on Tokio's blocking pool), Argon2 runs in `spawn_blocking` outside it, and mail goes out after the commit.
+- Inside a transaction closure, use the `conn` it was given — a pooled `db.*` call opens a second connection that waits on the first one's write lock.
+- Every connection is set up by `db::configure` — SQLite applies `foreign_keys` per connection, not per file.
 - Values are always bound parameters; table and column names are interpolated only from trusted enums and consts, never from request input.
-- Tables without an `id` column (the `library_elements` junction) don't implement `Extract`; dedicated `Database` methods query them by foreign key.
+- Each table names its key column (`KEY` on `Extract` and `Update`, `DatabaseTypes::get_key_column`); nothing assumes it is `id`.
+- Tables without a single key column (the `library_elements` junction) don't implement `Extract`; dedicated `Database` methods query them by foreign key.
 - List queries fetch the ids first, then every row in one `IN (…)` query — no N+1.
 - Every reference to another table is a declared `FOREIGN KEY` — `PRAGMA foreign_keys = ON` enforces only declared ones.
 - Times are stored as unix seconds; a nullable time is read as `Option<i64>` — `convert_to_system_time` fails on NULL.
 - Back up SQLite with `VACUUM INTO`, never by copying the file — under WAL a plain copy is not a valid backup.
 - Schema changes: a new numbered `.sql` in `migrations/`, registered in `MIGRATIONS`; an applied migration is never edited. Early-development exception: migration 0001 is edited in place and the database wiped.
+
+## Tests
+- A test lives in a `#[cfg(test)] mod tests` at the bottom of the file it tests; shared fixtures live in `src/test_support.rs`.
+- A database test runs on `memory_connection()`: in-memory, configured and migrated, fresh for every test.
+- A test that needs the pool or the router uses `TempDatabase` — never a plain `:memory:` path, which gives every pooled connection its own empty database.
+- Router tests send requests with `tower::ServiceExt::oneshot` and read bodies with `axum::body::to_bytes`.
+- Fixtures insert rows with plain SQL, so they don't depend on the model code under test.
+- Logic that depends on the time takes `now` as a parameter, so tests never sleep.
 
 ## Modules
 - Core code — auth, users, sessions, settings, email, config, migrations — never imports book-specific types (`BookMetadata`, `BookSeriesMetadata`, `BookFormat`, the filename parser); book code may use core, never the reverse. Today's mixed files (`models.rs`, the per-model trait impls, `api_caller/library.rs`) get split up by [94](features/94-modular-core.md).

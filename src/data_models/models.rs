@@ -40,6 +40,22 @@ impl DatabaseTypes {
         }
     }
 
+    /// The column a row is identified by; `None` for the `library_elements` junction,
+    /// whose rows are identified by two columns.
+    pub fn get_key_column(&self) -> Option<&str> {
+        match self {
+            DatabaseTypes::Books
+            | DatabaseTypes::Library
+            | DatabaseTypes::Series
+            | DatabaseTypes::Users => Some("id"),
+            DatabaseTypes::LibraryElements => None,
+            DatabaseTypes::EmailVerificationType | DatabaseTypes::ResetPasswordRequest => {
+                Some("user_id")
+            }
+            DatabaseTypes::Session => Some("session_id"),
+        }
+    }
+
     pub fn get_file_path(&self) -> PathBuf {
         let base_path = std::path::Path::new("./data/databases/");
         if !base_path.exists() {
@@ -558,12 +574,6 @@ impl QuerySeparator {
             QuerySeparator::Or => " OR ",
         }
     }
-}
-
-/// Which columns a search selects: `*`, or only the columns being matched on.
-pub enum SelectionMethod {
-    Everything,
-    PassedInColumns,
 }
 
 // === Password reset requests =================================================

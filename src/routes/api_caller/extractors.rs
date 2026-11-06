@@ -13,7 +13,7 @@ use crate::{
         AuthenticationError::{ExpiredSession, UnauthorizedSession},
         RequestErrors,
     },
-    models::{QuerySeparator, SelectionMethod, Sessions, SessionsDatabaseColumns, UserMetadata},
+    models::{QuerySeparator, Sessions, SessionsDatabaseColumns, UserMetadata},
 };
 
 /// A fully authenticated session whose user is an admin.
@@ -69,7 +69,6 @@ fn authorized(cookies: Cookies, db: &Arc<Database>) -> Result<Sessions, RequestE
                 &[SessionsDatabaseColumns::SessionToken],
                 &[&hashed_session_token],
                 QuerySeparator::And,
-                SelectionMethod::Everything,
             )?
             .ok_or(AppErrors::Authentication(UnauthorizedSession))?;
             if session.session_token_expiration_date < SystemTime::now() {
@@ -124,7 +123,6 @@ fn validate_totp_login_session(
                 &[SessionsDatabaseColumns::SessionToken],
                 &[&hashed_session_token],
                 QuerySeparator::And,
-                SelectionMethod::Everything,
             )?
             .ok_or(AppErrors::Authentication(UnauthorizedSession))?;
             if session.session_token_expiration_date < SystemTime::now() {
@@ -176,7 +174,6 @@ fn refresh_authorized(cookies: Cookies, db: &Arc<Database>) -> Result<Sessions, 
                 &[SessionsDatabaseColumns::RefreshToken],
                 &[&hashed_refresh_token],
                 QuerySeparator::And,
-                SelectionMethod::Everything,
             )?
             .ok_or(AppErrors::Authentication(UnauthorizedSession))?;
             if session.refresh_token_expiration_date < SystemTime::now() {

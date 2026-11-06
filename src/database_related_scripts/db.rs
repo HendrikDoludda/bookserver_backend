@@ -1,14 +1,13 @@
 use std::path::Path;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use r2d2::{ManageConnection, Pool};
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{Connection, Result, ToSql};
+use rusqlite::{Connection, Result, ToSql, TransactionBehavior};
 use serde::Serialize;
 
-use crate::data_models::models::{
-    ColumnSelector, DatabaseTypes, QuerySeparator, SelectionMethod, WithId,
-};
+use crate::data_models::models::{ColumnSelector, DatabaseTypes, QuerySeparator, WithId};
 use crate::database_related_scripts::{
     db_delete::Delete, db_search::Search, db_update::Update, extract::Extract, insert::Insert,
     migrations,
@@ -26,25 +25,31 @@ pub struct Database {
     pool: r2d2::Pool<SqliteConnectionManager>,
 }
 
+/// Settings every connection needs. SQLite applies them per connection, not per file,
+/// so a connection that skips this runs without foreign keys.
+pub fn configure(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "
+        PRAGMA foreign_keys = ON;
+        PRAGMA journal_mode = WAL;
+        PRAGMA synchronous = NORMAL;
+        PRAGMA busy_timeout = 5000;
+        ",
+    )
+}
+
 impl Database {
     pub fn new() -> Result<Self, DatabaseError> {
-        let path = Path::new("./data/databases/app_data.sqlite");
-
         // Ensure the database folder exists
         std::fs::create_dir_all("./data/databases/")
             .map_err(|_| DatabaseError::DirectoryCreationFailure)?;
 
-        let manager = SqliteConnectionManager::file(path).with_init(|c| {
-            c.execute_batch(
-                "
-            PRAGMA foreign_keys = ON;
-            PRAGMA journal_mode = WAL;
-            PRAGMA synchronous = NORMAL;
-            PRAGMA busy_timeout = 5000;
-            ",
-            )?;
-            Ok(())
-        });
+        Self::open(Path::new("./data/databases/app_data.sqlite"))
+    }
+
+    /// Opens (or creates) the database at `path` and applies any pending migrations.
+    pub fn open(path: &Path) -> Result<Self, DatabaseError> {
+        let manager = SqliteConnectionManager::file(path).with_init(|conn| configure(conn));
 
         {
             let mut conn = manager
@@ -82,12 +87,13 @@ impl Database {
         Ok(id)
     }
 
+    /// Returns the number of rows changed: 0 when no row has that key.
     pub fn update_value<U>(
         &self,
         column: U::Column,
         new_value: &dyn ToSql,
         id: i64,
-    ) -> Result<(), DatabaseError>
+    ) -> Result<usize, DatabaseError>
     where
         U: Update,
     {
@@ -103,7 +109,7 @@ impl Database {
         column: U::Column,
         new_value: &dyn ToSql,
         id: i64,
-    ) -> Result<(), DatabaseError>
+    ) -> Result<usize, DatabaseError>
     where
         U: Update,
     {
@@ -115,7 +121,7 @@ impl Database {
         columns: &[U::Column],
         new_values: &[&dyn ToSql],
         id: i64,
-    ) -> Result<(), DatabaseError>
+    ) -> Result<usize, DatabaseError>
     where
         U: Update,
     {
@@ -131,14 +137,15 @@ impl Database {
         columns: &[U::Column],
         new_values: &[&dyn ToSql],
         id: i64,
-    ) -> Result<(), DatabaseError>
+    ) -> Result<usize, DatabaseError>
     where
         U: Update,
     {
         U::update_multiple(conn, columns, new_values, id)
     }
 
-    pub fn remove_entry(&self, db_type: DatabaseTypes, id: i64) -> Result<(), DatabaseError> {
+    /// Deletes the row whose key column equals `id`; returns the number of rows deleted.
+    pub fn remove_entry(&self, db_type: DatabaseTypes, id: i64) -> Result<usize, DatabaseError> {
         let conn = self
             .pool
             .get()
@@ -150,16 +157,18 @@ impl Database {
         conn: &Connection,
         db_type: DatabaseTypes,
         id: i64,
-    ) -> Result<(), DatabaseError> {
-        // The junction table has no `id` column; use `remove_entry_from_library_elements`.
-        if db_type == DatabaseTypes::LibraryElements {
-            return Err(DatabaseError::LibrarySeriesException);
-        }
-        let table_name = db_type.get_table_name();
-        let query = format!("DELETE FROM {} WHERE id = ?1", table_name);
+    ) -> Result<usize, DatabaseError> {
+        // The junction table has no single key; use `remove_entry_from_library_elements`.
+        let key = db_type
+            .get_key_column()
+            .ok_or(DatabaseError::LibrarySeriesException)?;
+        let query = format!(
+            "DELETE FROM {} WHERE {} = ?1",
+            db_type.get_table_name(),
+            key
+        );
         conn.execute(&query, rusqlite::params![id])
-            .map_err(|_| DatabaseError::ConnectionExecutableFailure)?;
-        Ok(())
+            .map_err(|_| DatabaseError::ConnectionExecutableFailure)
     }
 
     pub fn remove_entry_with_connection_based_on_columns<T>(
@@ -167,7 +176,7 @@ impl Database {
         columns: &[T::Column],
         values: &[&dyn ToSql],
         query_separator: QuerySeparator,
-    ) -> Result<(), DatabaseError>
+    ) -> Result<usize, DatabaseError>
     where
         T: Delete,
     {
@@ -220,7 +229,6 @@ impl Database {
         columns: &[T::Column],
         values: &[&dyn ToSql],
         query_separator: QuerySeparator,
-        selection_method: SelectionMethod,
     ) -> Result<Option<T>, DatabaseError>
     where
         T: Search,
@@ -229,13 +237,7 @@ impl Database {
             .pool
             .get()
             .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
-        Self::search_for_single_row_with_connection::<T>(
-            &conn,
-            columns,
-            values,
-            query_separator,
-            selection_method,
-        )
+        Self::search_for_single_row_with_connection::<T>(&conn, columns, values, query_separator)
     }
 
     pub fn search_for_single_row_with_connection<T>(
@@ -243,12 +245,11 @@ impl Database {
         columns: &[T::Column],
         values: &[&dyn ToSql],
         query_separator: QuerySeparator,
-        selection_method: SelectionMethod,
     ) -> Result<Option<T>, DatabaseError>
     where
         T: Search,
     {
-        T::search_for_row(conn, columns, values, query_separator, selection_method)
+        T::search_for_row(conn, columns, values, query_separator)
     }
 
     pub fn search_for_multiple_rows<T>(
@@ -256,7 +257,6 @@ impl Database {
         columns: &[T::Column],
         values: &[&dyn ToSql],
         query_separator: QuerySeparator,
-        selection_method: SelectionMethod,
     ) -> Result<Vec<T>, DatabaseError>
     where
         T: Search,
@@ -265,13 +265,7 @@ impl Database {
             .pool
             .get()
             .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
-        Self::search_for_multiple_rows_with_connection::<T>(
-            &conn,
-            columns,
-            values,
-            query_separator,
-            selection_method,
-        )
+        Self::search_for_multiple_rows_with_connection::<T>(&conn, columns, values, query_separator)
     }
 
     pub fn search_for_multiple_rows_with_connection<T>(
@@ -279,12 +273,11 @@ impl Database {
         columns: &[T::Column],
         values: &[&dyn ToSql],
         query_separator: QuerySeparator,
-        selection_method: SelectionMethod,
     ) -> Result<Vec<T>, DatabaseError>
     where
         T: Search,
     {
-        T::search_for_multiple_rows(conn, columns, values, query_separator, selection_method)
+        T::search_for_multiple_rows(conn, columns, values, query_separator)
     }
 
     pub fn get_all_libraries(&self) -> Result<Vec<i64>, DatabaseError> {
@@ -403,7 +396,8 @@ impl Database {
     }
 
     /// Runs `operation` inside a single SQLite transaction. It commits if the closure
-    /// returns `Ok`; on `Err` the transaction is dropped, which rolls it back.
+    /// returns `Ok`; on `Err` the transaction is dropped, which rolls it back, and the
+    /// closure's own error is returned unchanged.
     pub fn setup_new_transaction<F, T>(&self, operation: F) -> Result<T, AppErrors>
     where
         F: FnOnce(&Connection) -> Result<T, AppErrors>,
@@ -412,19 +406,36 @@ impl Database {
             log::error!("Got an error when trying to set up a new connection: {err}");
             DatabaseError::PoolConnectionRetrievalFailure
         })?;
-        let tx = conn.transaction().map_err(|err| {
-            log::error!("Failed to set up a transaction: {err}");
-            DatabaseError::TransactionFailure
-        })?;
-        let result = operation(&tx).map_err(|err| {
-            log::error!("Failure while executing the transaction: {err}");
-            DatabaseError::OperationFailure
-        })?;
+        // IMMEDIATE takes the write lock up front. A deferred transaction that reads and
+        // then writes fails at once with SQLITE_BUSY_SNAPSHOT if another connection wrote
+        // in between, and the busy timeout can't help it.
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|err| {
+                log::error!("Failed to set up a transaction: {err}");
+                DatabaseError::TransactionFailure
+            })?;
+        let result = operation(&tx)?;
         tx.commit().map_err(|err| {
             log::error!("Failure while commiting the transaction: {err}");
             DatabaseError::OperationCommitFailure
         })?;
         Ok(result)
+    }
+
+    /// [`Database::setup_new_transaction`] for async handlers. SQLite calls block the
+    /// thread, so they run on Tokio's blocking pool instead of an async worker thread.
+    pub async fn transact<F, T>(self: Arc<Self>, operation: F) -> Result<T, AppErrors>
+    where
+        F: FnOnce(&Connection) -> Result<T, AppErrors> + Send + 'static,
+        T: Send + 'static,
+    {
+        tokio::task::spawn_blocking(move || self.setup_new_transaction(operation))
+            .await
+            .map_err(|err| {
+                log::error!("The transaction task did not finish: {err}");
+                DatabaseError::TransactionFailure
+            })?
     }
 }
 
@@ -434,4 +445,158 @@ pub fn convert_system_time_to_unix_time(time: SystemTime) -> i64 {
     time.duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error_types::AuthenticationError;
+    use crate::test_support::{insert_user, memory_connection, TempDatabase};
+
+    fn count_users(db: &Database) -> i64 {
+        let conn = db.pool.get().unwrap();
+        conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    fn foreign_keys_setting(conn: &Connection) -> i64 {
+        conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn test_connections_enforce_foreign_keys() {
+        let conn = memory_connection();
+        assert_eq!(foreign_keys_setting(&conn), 1);
+        let orphan = conn.execute(
+            "INSERT INTO email_verification (user_id, email_verification_token, expires_at) \
+             VALUES (999, 'hash', 0)",
+            [],
+        );
+        assert!(orphan.is_err(), "a row for a missing user must be refused");
+    }
+
+    #[test]
+    fn pooled_connections_enforce_foreign_keys() {
+        let temp = TempDatabase::open();
+        let conn = temp.db.pool.get().unwrap();
+        assert_eq!(foreign_keys_setting(&conn), 1);
+    }
+
+    #[test]
+    fn failed_transaction_rolls_back_and_returns_its_own_error() {
+        let temp = TempDatabase::open();
+        let result: Result<(), AppErrors> = temp.db.setup_new_transaction(|conn| {
+            insert_user(conn, "alice");
+            Err(AuthenticationError::IncorrectCredentials.into())
+        });
+
+        assert!(matches!(
+            result,
+            Err(AppErrors::Authentication(
+                AuthenticationError::IncorrectCredentials
+            ))
+        ));
+        assert_eq!(count_users(&temp.db), 0);
+    }
+
+    #[test]
+    fn transactions_take_the_write_lock_before_their_first_statement() {
+        let temp = TempDatabase::open();
+        temp.db
+            .setup_new_transaction(|_conn| {
+                let other = Connection::open(temp.path()).unwrap();
+                other.busy_timeout(std::time::Duration::ZERO).unwrap();
+
+                let blocked = other.execute_batch("BEGIN IMMEDIATE; COMMIT;");
+                assert!(
+                    matches!(
+                        blocked,
+                        Err(rusqlite::Error::SqliteFailure(ref e, _))
+                            if e.code == rusqlite::ErrorCode::DatabaseBusy
+                    ),
+                    "another writer must already be locked out, got {blocked:?}"
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn successful_transaction_commits() {
+        let temp = TempDatabase::open();
+        let id = temp
+            .db
+            .setup_new_transaction(|conn| Ok(insert_user(conn, "alice")))
+            .unwrap();
+
+        assert!(id > 0);
+        assert_eq!(count_users(&temp.db), 1);
+    }
+
+    #[tokio::test]
+    async fn transact_commits_on_ok_and_returns_errors_unchanged() {
+        let temp = TempDatabase::open();
+
+        let id = temp
+            .db
+            .clone()
+            .transact(|conn| Ok(insert_user(conn, "alice")))
+            .await
+            .unwrap();
+        assert!(id > 0);
+
+        let failed: Result<(), AppErrors> = temp
+            .db
+            .clone()
+            .transact(|conn| {
+                insert_user(conn, "bob");
+                Err(AuthenticationError::IncorrectCredentials.into())
+            })
+            .await;
+        assert!(matches!(
+            failed,
+            Err(AppErrors::Authentication(
+                AuthenticationError::IncorrectCredentials
+            ))
+        ));
+
+        assert_eq!(count_users(&temp.db), 1);
+    }
+
+    #[test]
+    fn remove_entry_deletes_by_the_tables_key_column() {
+        let conn = memory_connection();
+        let user_id = insert_user(&conn, "alice");
+        conn.execute(
+            "INSERT INTO email_verification (user_id, email_verification_token, expires_at) \
+             VALUES (?1, 'hash', 0)",
+            [user_id],
+        )
+        .unwrap();
+
+        let removed = Database::remove_entry_with_connection(
+            &conn,
+            DatabaseTypes::EmailVerificationType,
+            user_id,
+        )
+        .unwrap();
+        assert_eq!(removed, 1);
+
+        let removed_again = Database::remove_entry_with_connection(
+            &conn,
+            DatabaseTypes::EmailVerificationType,
+            user_id,
+        )
+        .unwrap();
+        assert_eq!(removed_again, 0);
+    }
+
+    #[test]
+    fn remove_entry_refuses_the_junction_table() {
+        let conn = memory_connection();
+        let result =
+            Database::remove_entry_with_connection(&conn, DatabaseTypes::LibraryElements, 1);
+        assert!(matches!(result, Err(DatabaseError::LibrarySeriesException)));
+    }
 }

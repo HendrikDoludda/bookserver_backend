@@ -7,6 +7,9 @@ pub mod scanner;
 pub mod stream_reader;
 pub mod utils;
 
+#[cfg(test)]
+mod test_support;
+
 // Short paths for the most-used modules, so code can write `crate::models::…`
 // and `crate::db::…` instead of the full nested path.
 pub use data_models::models;

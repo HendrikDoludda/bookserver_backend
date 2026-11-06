@@ -137,12 +137,13 @@ affect some of these endpoints are tracked in
 
 ```sh
 cargo build
+cargo test
 cargo clippy
 cargo fmt
 ```
 
-There are no automated tests yet. A database-layer test suite comes with the next item,
-[Database layer fixes](docs/features/26-database-layer-fixes.md).
+`cargo test` needs no setup: database tests run against a fresh in-memory SQLite, and router
+tests against a temporary database file that is deleted afterwards.
 
 ## License
 

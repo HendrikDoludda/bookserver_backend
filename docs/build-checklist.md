@@ -3,7 +3,7 @@
 | Feature | Tier | State | Doc |
 |---|---|---|---|
 | API route naming | 0 | not started | [07-api-route-naming](features/07-api-route-naming.md) |
-| Database layer fixes | 0 | not started | [26-database-layer-fixes](features/26-database-layer-fixes.md) |
+| Database layer fixes | 0 | in progress | [26-database-layer-fixes](features/26-database-layer-fixes.md) |
 | Error responses & status codes | 0 | in progress | [33-error-responses](features/33-error-responses.md) |
 | Login, logout & sessions | 1 | in progress | [03-login-and-sessions](features/03-login-and-sessions.md) |
 | Two-factor auth (TOTP) | 1 | in progress | [04-two-factor-auth-totp](features/04-two-factor-auth-totp.md) |

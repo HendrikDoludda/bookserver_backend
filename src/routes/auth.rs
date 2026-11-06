@@ -14,8 +14,8 @@ use crate::database_related_scripts::db::Database;
 use crate::db::convert_system_time_to_unix_time;
 use crate::error_types::{AppErrors, AuthenticationError, EmailErrors};
 use crate::models::{
-    DatabaseTypes, EmailVerification, EmailVerificationDatabaseColumns, QuerySeparator,
-    SelectionMethod, Sessions, SessionsDatabaseColumns, TOTPDatabaseColumns, TOTP,
+    DatabaseTypes, EmailVerification, EmailVerificationDatabaseColumns, QuerySeparator, Sessions,
+    SessionsDatabaseColumns, TOTPDatabaseColumns, TOTP,
 };
 use crate::routes::email_helper::{create_new_email, EmailInformation};
 use crate::{
@@ -105,7 +105,6 @@ pub fn validate_new_user(
         &[UserDatabaseColumns::Email, UserDatabaseColumns::Username],
         &[&request.email, &request.username],
         QuerySeparator::Or,
-        SelectionMethod::PassedInColumns,
     )
     .map_err(|_| AuthenticationError::DatabaseSearchFailure)?;
     if let Some(user) = existing_user {
@@ -121,7 +120,6 @@ pub fn validate_new_user(
         &[UserDatabaseColumns::IsAdmin],
         &[&true],
         QuerySeparator::And,
-        SelectionMethod::PassedInColumns,
     )
     .map_err(|_| AuthenticationError::DatabaseSearchFailure)?;
     Ok(UserCreationChecks {
@@ -149,7 +147,6 @@ pub fn send_verification_email(
         &[UserDatabaseColumns::UserId],
         &[&user_id],
         QuerySeparator::And,
-        SelectionMethod::Everything,
     )
     .map_err(|_| EmailErrors::FailedToRetrieveUserEntry)?
     .ok_or(EmailErrors::UserEntryNotFound)?;
@@ -210,7 +207,6 @@ pub fn search_for_user_using_email_or_username(
         &[UserDatabaseColumns::Email, UserDatabaseColumns::Username],
         &[&username_or_email, &username_or_email],
         QuerySeparator::Or,
-        SelectionMethod::Everything,
     )
     .map_err(|e| {
         log::error!("Database returned error: {e}");
@@ -233,7 +229,6 @@ pub fn verify_verification_code(
         ],
         &[&user_id, &false],
         QuerySeparator::And,
-        SelectionMethod::Everything,
     )
     .map_err(|e| {
         log::error!("Database returned error: {e}");
@@ -304,7 +299,6 @@ pub fn log_in(
         &[TOTPDatabaseColumns::UserId],
         &[&user.user_id],
         QuerySeparator::And,
-        SelectionMethod::Everything,
     )
     .map_err(|err| {
         log::error!("search request failed: {err}");
