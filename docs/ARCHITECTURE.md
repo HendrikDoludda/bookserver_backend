@@ -5,7 +5,7 @@
 - `src/lib.rs` — module declarations; re-exports `data_models::models` and `database_related_scripts::db`, so `crate::models::…` and `crate::db::…` resolve.
 - `src/config.rs` — env-var readers and the generated `secrets.toml` (in the OS config directory).
 - `src/routes/api_routes.rs` — the route table (`set_up_routes`) and `start_server`.
-- `src/routes/api_caller.rs` — the handlers and the session extractors (`AuthSession`, `AdminSession`, `AuthTOTPLoginSession`, `AuthRefreshSession`); `ping_server` is the liveness check and the placeholder for routes without a handler.
+- `src/routes/api_caller/` — the handlers, one file per area (`authentication.rs`, `totp.rs`, `library.rs`); `extractors.rs` holds the session extractors (`AuthSession`, `AdminSession`, `AuthTOTPLoginSession`, `AuthRefreshSession`), and `helpers.rs` the shared response builders and `ping_server`, the liveness check and the placeholder for routes without a handler.
 - `src/routes/auth.rs` — account, password and session logic; `totp_management.rs` — TOTP flows; `email_helper.rs` — SMTP sending.
 - `src/database_related_scripts/` — `db.rs` (`Database`: the r2d2 pool and every DB operation), one file per operation trait, `migrations.rs`.
 - `src/data_models/` — `models.rs` (domain structs, `*DatabaseColumns` enums, `WithId<T>`) and the request/response bodies.
@@ -50,7 +50,7 @@
 - Schema changes: a new numbered `.sql` in `migrations/`, registered in `MIGRATIONS`; an applied migration is never edited. Early-development exception: migration 0001 is edited in place and the database wiped.
 
 ## Modules
-- Core code — auth, users, sessions, settings, email, config, migrations — never imports book-specific types (`BookMetadata`, `BookSeriesMetadata`, `BookFormat`, the filename parser); book code may use core, never the reverse. Today's mixed files (`models.rs`, the per-model trait impls, `api_caller.rs`) get split up by [94](features/94-modular-core.md).
+- Core code — auth, users, sessions, settings, email, config, migrations — never imports book-specific types (`BookMetadata`, `BookSeriesMetadata`, `BookFormat`, the filename parser); book code may use core, never the reverse. Today's mixed files (`models.rs`, the per-model trait impls, `api_caller/library.rs`) get split up by [94](features/94-modular-core.md).
 - Per-user data references `users.id` through a declared foreign key, in the one SQLite database.
 - Format-specific behaviour — filename parsing, cover extraction, reading positions — is chosen by `LibraryType` / `BookFormat` in one place, never spread through core.
 

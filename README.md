@@ -38,7 +38,7 @@ src/
 ├── config.rs                   env-var config + generated secrets file
 ├── routes/
 │   ├── api_routes.rs           route table (/health, /api/v1/…)
-│   ├── api_caller.rs           request handlers + auth extractors
+│   ├── api_caller/             request handlers per area + auth extractors
 │   ├── auth.rs                 account, session and token logic
 │   └── email_helper.rs         SMTP delivery
 ├── database_related_scripts/

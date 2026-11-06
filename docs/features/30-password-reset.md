@@ -2,25 +2,16 @@
 
 State: in progress
 
-A user who forgot their password asks for a reset link by email, sets a new password through
-it, and can cancel a reset they did not ask for. The answer to a request never reveals
-whether the address has an account.
+A user who forgot their password asks for a code by email and types it into the app together
+with a new password. The answer to a request never reveals whether the address has an account,
+and a reset never switches two-factor auth off.
 
 ## Build
-- [ ] 1 h · Fix the row write in `store_user_password_reset_token`: in `.ok_or(return Err(…))` the `return` runs before `ok_or` does, so the old row is deleted and no new one is ever written (the compiler warns "unreachable call"). The fix exposes a move out of `&tokens` a few lines below — fix both in one change [BE]
-- [ ] 1 h · Answer the same for known and unknown addresses — today an unknown address fails the lookup with 500, so once the row write works, 202 versus 500 tells anyone which addresses have accounts [BE]
-- [ ] 1 h · Stop dropping a failed reset-mail send: `.map_err(|err| return …)` returns from the closure, not from the handler, and the result is discarded — log the failure and keep the answer unchanged [BE]
-- [ ] 1 h · Build reset links from a configured public base URL — today `https://invalid.link` is hard-coded [BE]
-- [ ] 1 h · In `send_reset_password_email`, `join("/password-reset/cancel")` drops any base path of the server URL because of the leading `/`, and a join failure is reported as `EmailErrors::MissingEmail` [BE]
-- [ ] 3 h · Redeem: implement `reset_password` (today 501) — check the token and its expiry, take the new password twice, store the new hash, delete the reset row and end all sessions (the function from [29](29-account-management.md)) [BE]
-- [ ] 2 h · Cancel: `GET /password-reset/cancel?token=…` invalidates a reset the user did not ask for [BE]
-- [ ] 2 h · Routes for request, redeem and cancel — `request_reset_password_link` and `reset_password` take a bare struct before `State`; take the body as `Json<…>`, last [BE]
+- [ ] 3 h · `email_codes` table, one row per user and purpose (`reset_password`, `verify_email` — [27](27-registration-and-email-verification.md)), replacing `reset_password_requests`: the Argon2 hash of an 8-character code from `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (compared case-insensitively), an expiry 15 minutes out, and a try counter — 5 per code, counted before the code is checked. Per account at least 60 s between mails and at most 5 mails in 24 hours [DB] [BE]
+- [ ] 3 h · Request: `POST /api/v1/auth/password_reset` with `{email}` answers 503 `email_not_configured` when email is off, otherwise 202 at once. A background task looks the address up (the email only — today's lookup also matches usernames), applies the limits, hashes and stores the code, and after the commit mails the stored address, addressed with the account's username — today the mail goes to whatever string was sent, addressed to `"Anonymous"`. A failed send is logged without its body [BE]
+- [ ] 3 h · Redeem: `POST /api/v1/auth/password_reset/confirm` with `{email, code, new_password, new_password_repeat}` — the password check of [27](27-registration-and-email-verification.md) first; an unknown address, a missing, expired or used-up code and a wrong code all get one 400 `invalid_or_expired_code` in the same time (a dummy Argon2 verify where there is no code). On success store the new hash, delete the code (exactly one row), end all sessions (the function from [29](29-account-management.md)) and answer 200 without tokens [BE]
+- [ ] 0.5 h · Remove the cancel link: `cancelation_token`, the `Url` parameter of `send_reset_password_email`, the `https://invalid.link` placeholder and the `url` dependency [BE]
+- [ ] 0.5 h · Delete the comment-only `reset_password` stub in `auth.rs`, and `store_user_password_reset_token`, which the request task replaces [BE]
 - [ ] 1 h · Reset email text from the [translation catalog](13-internationalization.md) instead of hard-coded English [BE]
-- [ ] 0.5 h · `send_reset_password_email` sets the username to `"Anonymous"` — once the recipient fix in [14](14-email-and-notifications.md) makes it the display name, pass the account's username [BE]
-- [ ] 0.5 h · Delete the comment-only `reset_password` stub in `auth.rs` [BE]
 - [ ] 2 h · "Forgot password" form [FE]
-- [ ] 2 h · New-password page that the reset link opens [FE]
-- [ ] 1 h · Cancel confirmation page [FE]
-
-## Open decisions
-- [ ] How does the server find the reset row from a link? Both tokens are Argon2-hashed with a random salt and the link carries only the token, so no lookup is possible — blocks: redeem, cancel. Suggested: long random tokens hashed with BLAKE3 like the session tokens — without a salt, the row is found by its hash.
+- [ ] 2 h · Code and new-password screen [FE]

@@ -1,6 +1,6 @@
 //! Authentication logic: account creation, email verification, login, password
-//! changes/resets, and the session + refresh token pair. Handlers in
-//! `api_caller.rs` call into these functions inside a database transaction.
+//! changes/resets, and the session + refresh token pair. The handlers in
+//! `api_caller/` call into these functions inside a database transaction.
 
 use argon2::password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier};
 use argon2::Argon2;

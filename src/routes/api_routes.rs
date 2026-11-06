@@ -12,9 +12,12 @@ use crate::{
     db::Database,
     error_types::RoutingErrors,
     routes::api_caller::{
-        delete_library, get_libraries, get_series_children, get_series_in_library,
-        initiate_database, insert_database_entry, ping_server, request_file, retrieve_metadata,
-        scan_all_directories, scan_for_metadata, update_database_entry,
+        helpers::ping_server,
+        library::{
+            delete_library, get_libraries, get_series_children, get_series_in_library,
+            initiate_database, insert_database_entry, request_file, retrieve_metadata,
+            scan_all_directories, scan_for_metadata, update_database_entry,
+        },
     },
 };
 
