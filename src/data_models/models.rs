@@ -24,6 +24,8 @@ pub enum DatabaseTypes {
     EmailVerificationType,
     Session,
     ResetPasswordRequest,
+    Totp,
+    RecoveryCodes,
 }
 
 impl DatabaseTypes {
@@ -35,8 +37,10 @@ impl DatabaseTypes {
             DatabaseTypes::Users => "users",
             DatabaseTypes::LibraryElements => "library_elements",
             DatabaseTypes::EmailVerificationType => "email_verification",
-            DatabaseTypes::Session => "session",
+            DatabaseTypes::Session => "sessions",
             DatabaseTypes::ResetPasswordRequest => "reset_password_requests",
+            DatabaseTypes::Totp => "totp",
+            DatabaseTypes::RecoveryCodes => "recovery_codes",
         }
     }
 
@@ -49,10 +53,11 @@ impl DatabaseTypes {
             | DatabaseTypes::Series
             | DatabaseTypes::Users => Some("id"),
             DatabaseTypes::LibraryElements => None,
-            DatabaseTypes::EmailVerificationType | DatabaseTypes::ResetPasswordRequest => {
-                Some("user_id")
-            }
+            DatabaseTypes::EmailVerificationType
+            | DatabaseTypes::ResetPasswordRequest
+            | DatabaseTypes::Totp => Some("user_id"),
             DatabaseTypes::Session => Some("session_id"),
+            DatabaseTypes::RecoveryCodes => Some("recovery_id"),
         }
     }
 
@@ -284,11 +289,11 @@ pub struct UserMetadata {
     pub user_id: i64,
     pub username: String,
     pub password_hash: String,
-    pub email: Option<String>,
+    pub email: String,
     pub email_verified: bool,
     pub is_admin: bool,
     pub created_at: SystemTime,
-    pub last_login: SystemTime,
+    pub last_login: Option<SystemTime>,
 }
 
 pub enum UserDatabaseColumns {
@@ -303,7 +308,7 @@ pub enum UserDatabaseColumns {
 impl AsRef<str> for UserDatabaseColumns {
     fn as_ref(&self) -> &str {
         match self {
-            UserDatabaseColumns::UserId => "user_id",
+            UserDatabaseColumns::UserId => "id",
             UserDatabaseColumns::Username => "username",
             UserDatabaseColumns::PasswordHash => "password_hash",
             UserDatabaseColumns::Email => "email",

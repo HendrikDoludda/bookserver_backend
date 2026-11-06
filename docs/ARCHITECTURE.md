@@ -50,7 +50,8 @@
 - Tables without a single key column (the `library_elements` junction) don't implement `Extract`; dedicated `Database` methods query them by foreign key.
 - List queries fetch the ids first, then every row in one `IN (…)` query — no N+1.
 - Every reference to another table is a declared `FOREIGN KEY` — `PRAGMA foreign_keys = ON` enforces only declared ones.
-- Times are stored as unix seconds; a nullable time is read as `Option<i64>` — `convert_to_system_time` fails on NULL.
+- Times are stored as `INTEGER` unix seconds and read with `read_time` (must have a value — NULL is an error naming the column) or `read_optional_time` (NULL is `None`).
+- A column is nullable exactly when its Rust field is an `Option`.
 - Back up SQLite with `VACUUM INTO`, never by copying the file — under WAL a plain copy is not a valid backup.
 - Schema changes: a new numbered `.sql` in `migrations/`, registered in `MIGRATIONS`; an applied migration is never edited. Early-development exception: migration 0001 is edited in place and the database wiped.
 

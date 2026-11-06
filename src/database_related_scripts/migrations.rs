@@ -81,7 +81,75 @@ pub fn run(conn: &mut Connection) -> Result<(), DatabaseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::memory_connection;
+    use crate::test_support::{insert_user, memory_connection};
+    use rusqlite::params;
+
+    #[test]
+    fn deleting_a_user_deletes_only_their_auth_rows() {
+        let conn = memory_connection();
+        let alice = insert_user(&conn, "alice");
+        let bob = insert_user(&conn, "bob");
+
+        for user_id in [alice, bob] {
+            let unique = format!("for-{user_id}");
+            conn.execute(
+                "INSERT INTO email_verification (user_id, email_verification_token, expires_at) \
+                 VALUES (?1, ?2, 0)",
+                params![user_id, unique],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO reset_password_requests \
+                 (user_id, reset_token, cancelation_token, expires_at) VALUES (?1, ?2, ?2, 0)",
+                params![user_id, unique],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO sessions (user_id, device_id, device_name, platform, \
+                 refresh_token_hashed, refresh_token_valid_until, session_token_hashed, \
+                 session_token_valid_until, last_used_at) \
+                 VALUES (?1, ?2, 'phone', 'ios', ?2, 0, ?2, 0, 0)",
+                params![user_id, unique],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO recovery_codes (user_id, code_hash) VALUES (?1, ?2)",
+                params![user_id, unique],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO totp (user_id, authentication_secret) VALUES (?1, 'secret')",
+                params![user_id],
+            )
+            .unwrap();
+        }
+
+        conn.execute("DELETE FROM users WHERE id = ?1", [alice])
+            .unwrap();
+
+        for table in [
+            "email_verification",
+            "reset_password_requests",
+            "sessions",
+            "recovery_codes",
+            "totp",
+        ] {
+            let count = |user_id: i64| -> i64 {
+                conn.query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE user_id = ?1"),
+                    [user_id],
+                    |row| row.get(0),
+                )
+                .unwrap()
+            };
+            assert_eq!(
+                count(alice),
+                0,
+                "{table} still has rows of the deleted user"
+            );
+            assert_eq!(count(bob), 1, "{table} lost rows of another user");
+        }
+    }
 
     #[test]
     fn running_the_migrations_again_changes_nothing() {

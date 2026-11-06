@@ -86,12 +86,17 @@ impl Insert for LibraryMetadata {
 
 impl Insert for UserMetadata {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
-        let query = "INSERT INTO users (username, password_hash, email) VALUES (?1, ?2, ?3)";
+        let query = "INSERT INTO users (username, password_hash, email, email_verified, \
+            is_admin, created_at, last_login) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
 
         let params = params![
-            self.username.clone(),
-            self.password_hash.clone(),
-            self.email.clone()
+            self.username,
+            self.password_hash,
+            self.email,
+            self.email_verified,
+            self.is_admin,
+            convert_system_time_to_unix_time(self.created_at),
+            self.last_login.map(convert_system_time_to_unix_time),
         ];
 
         conn.execute(query, params)
@@ -212,5 +217,293 @@ impl Insert for RecoveryCodes {
             .map_err(|_| DatabaseError::InsertionFailure)?;
         let id = conn.last_insert_rowid();
         Ok(id)
+    }
+}
+
+// Round trips: write a row through the model, read it back by its key, then update and
+// delete it by its key — the path every auth handler takes.
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use super::*;
+    use crate::{
+        database_related_scripts::db::Database,
+        models::{
+            DatabaseTypes, EmailVerificationDatabaseColumns, QuerySeparator, RecoveryCodesColumns,
+            SessionsDatabaseColumns, TOTPDatabaseColumns, UserDatabaseColumns,
+        },
+        test_support::{insert_user, memory_connection},
+    };
+
+    // Whole seconds only: the columns store unix seconds, so anything finer is dropped.
+    fn at(secs: u64) -> SystemTime {
+        UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    fn user(username: &str, email: &str) -> UserMetadata {
+        UserMetadata {
+            user_id: 0,
+            username: username.to_string(),
+            password_hash: "hash".to_string(),
+            email: email.to_string(),
+            email_verified: true,
+            is_admin: true,
+            created_at: at(1_700_000_000),
+            last_login: None,
+        }
+    }
+
+    #[test]
+    fn user_round_trip() {
+        let conn = memory_connection();
+        let id =
+            Database::insert_with_connection(&conn, &user("alice", "alice@example.com")).unwrap();
+
+        let stored = Database::get_entry_with_connection::<UserMetadata>(&conn, id).unwrap();
+        assert_eq!(stored.user_id, id);
+        assert_eq!(stored.username, "alice");
+        assert_eq!(stored.email, "alice@example.com");
+        assert!(
+            stored.email_verified,
+            "the verified flag must reach the database"
+        );
+        assert!(stored.is_admin, "the admin flag must reach the database");
+        assert_eq!(stored.created_at, at(1_700_000_000));
+        assert_eq!(stored.last_login, None);
+
+        let changed = Database::update_value_with_connection::<UserMetadata>(
+            &conn,
+            UserDatabaseColumns::LastLogin,
+            &1_700_000_500_i64,
+            id,
+        )
+        .unwrap();
+        assert_eq!(changed, 1);
+        let stored = Database::get_entry_with_connection::<UserMetadata>(&conn, id).unwrap();
+        assert_eq!(stored.last_login, Some(at(1_700_000_500)));
+
+        let removed =
+            Database::remove_entry_with_connection(&conn, DatabaseTypes::Users, id).unwrap();
+        assert_eq!(removed, 1);
+        assert!(matches!(
+            Database::get_entry_with_connection::<UserMetadata>(&conn, id),
+            Err(DatabaseError::EntryNotFound)
+        ));
+    }
+
+    #[test]
+    fn a_user_written_with_the_column_defaults_reads_back() {
+        let conn = memory_connection();
+        let id = insert_user(&conn, "alice");
+
+        let stored = Database::get_entry_with_connection::<UserMetadata>(&conn, id).unwrap();
+        let now = SystemTime::now();
+        assert!(stored.created_at <= now && stored.created_at > now - Duration::from_secs(60));
+        assert_eq!(stored.last_login, None);
+        assert!(!stored.is_admin);
+        assert!(!stored.email_verified);
+    }
+
+    #[test]
+    fn a_user_is_found_by_the_id_column() {
+        let conn = memory_connection();
+        let id = insert_user(&conn, "alice");
+
+        let found = Database::search_for_single_row_with_connection::<UserMetadata>(
+            &conn,
+            &[UserDatabaseColumns::UserId],
+            &[&id],
+            QuerySeparator::And,
+        )
+        .unwrap()
+        .expect("the user exists");
+        assert_eq!(found.username, "alice");
+    }
+
+    #[test]
+    fn email_and_username_ignore_case() {
+        let conn = memory_connection();
+        Database::insert_with_connection(&conn, &user("Alice", "Alice@Example.com")).unwrap();
+
+        let found = Database::search_for_single_row_with_connection::<UserMetadata>(
+            &conn,
+            &[UserDatabaseColumns::Email],
+            &[&"alice@example.com"],
+            QuerySeparator::And,
+        )
+        .unwrap();
+        assert!(found.is_some(), "an email lookup must ignore case");
+
+        let same_email = Database::insert_with_connection(&conn, &user("bob", "ALICE@EXAMPLE.COM"));
+        assert!(
+            same_email.is_err(),
+            "an email differing only in case is taken"
+        );
+
+        let same_name =
+            Database::insert_with_connection(&conn, &user("ALICE", "other@example.com"));
+        assert!(
+            same_name.is_err(),
+            "a username differing only in case is taken"
+        );
+    }
+
+    #[test]
+    fn session_round_trip() {
+        let conn = memory_connection();
+        let user_id = insert_user(&conn, "alice");
+        let session = Sessions {
+            session_id: 0,
+            user_id,
+            device_id: "device-1".to_string(),
+            device_name: "phone".to_string(),
+            platform: "ios".to_string(),
+            refresh_token: "refresh-hash".to_string(),
+            session_token: "session-hash".to_string(),
+            refresh_token_expiration_date: at(1_702_592_000),
+            session_token_expiration_date: at(1_700_000_900),
+            created_at: at(1_700_000_000),
+            last_used_at: at(1_700_000_000),
+            authentication_completed: true,
+        };
+        let id = Database::insert_with_connection(&conn, &session).unwrap();
+
+        let stored = Database::get_entry_with_connection::<Sessions>(&conn, id).unwrap();
+        assert_eq!(stored.session_id, id);
+        assert_eq!(stored.user_id, user_id);
+        assert_eq!(stored.device_id, "device-1");
+        assert_eq!(stored.device_name, "phone");
+        assert_eq!(stored.platform, "ios");
+        assert_eq!(stored.refresh_token, "refresh-hash");
+        assert_eq!(stored.session_token, "session-hash");
+        assert_eq!(stored.refresh_token_expiration_date, at(1_702_592_000));
+        assert_eq!(stored.session_token_expiration_date, at(1_700_000_900));
+        assert_eq!(stored.created_at, at(1_700_000_000));
+        assert_eq!(stored.last_used_at, at(1_700_000_000));
+        assert!(stored.authentication_completed);
+
+        let changed = Database::update_value_with_connection::<Sessions>(
+            &conn,
+            SessionsDatabaseColumns::LastUsedAt,
+            &1_700_000_600_i64,
+            id,
+        )
+        .unwrap();
+        assert_eq!(changed, 1);
+        let stored = Database::get_entry_with_connection::<Sessions>(&conn, id).unwrap();
+        assert_eq!(stored.last_used_at, at(1_700_000_600));
+
+        let removed =
+            Database::remove_entry_with_connection(&conn, DatabaseTypes::Session, id).unwrap();
+        assert_eq!(removed, 1);
+        assert!(matches!(
+            Database::get_entry_with_connection::<Sessions>(&conn, id),
+            Err(DatabaseError::EntryNotFound)
+        ));
+    }
+
+    #[test]
+    fn totp_round_trip() {
+        let conn = memory_connection();
+        let user_id = insert_user(&conn, "alice");
+        let totp = TOTP {
+            user_id,
+            authentication_secret: "secret".to_string(),
+            created_at: at(1_700_000_000),
+        };
+        Database::insert_with_connection(&conn, &totp).unwrap();
+
+        let stored = Database::get_entry_with_connection::<TOTP>(&conn, user_id).unwrap();
+        assert_eq!(stored.user_id, user_id);
+        assert_eq!(stored.authentication_secret, "secret");
+        assert_eq!(stored.created_at, at(1_700_000_000));
+
+        let changed = Database::update_value_with_connection::<TOTP>(
+            &conn,
+            TOTPDatabaseColumns::AuthenticationSecret,
+            &"new-secret",
+            user_id,
+        )
+        .unwrap();
+        assert_eq!(changed, 1);
+        let stored = Database::get_entry_with_connection::<TOTP>(&conn, user_id).unwrap();
+        assert_eq!(stored.authentication_secret, "new-secret");
+
+        let removed =
+            Database::remove_entry_with_connection(&conn, DatabaseTypes::Totp, user_id).unwrap();
+        assert_eq!(removed, 1);
+    }
+
+    #[test]
+    fn recovery_code_round_trip() {
+        let conn = memory_connection();
+        let user_id = insert_user(&conn, "alice");
+        let code = RecoveryCodes {
+            recovery_id: 0,
+            user_id,
+            code_hashed: "code-hash".to_string(),
+            used: false,
+        };
+        let id = Database::insert_with_connection(&conn, &code).unwrap();
+
+        let stored = Database::get_entry_with_connection::<RecoveryCodes>(&conn, id).unwrap();
+        assert_eq!(stored.recovery_id, id);
+        assert_eq!(stored.user_id, user_id);
+        assert_eq!(stored.code_hashed, "code-hash");
+        assert!(!stored.used);
+
+        let changed = Database::update_value_with_connection::<RecoveryCodes>(
+            &conn,
+            RecoveryCodesColumns::Used,
+            &true,
+            id,
+        )
+        .unwrap();
+        assert_eq!(changed, 1);
+        let stored = Database::get_entry_with_connection::<RecoveryCodes>(&conn, id).unwrap();
+        assert!(stored.used);
+
+        let removed =
+            Database::remove_entry_with_connection(&conn, DatabaseTypes::RecoveryCodes, id)
+                .unwrap();
+        assert_eq!(removed, 1);
+    }
+
+    #[test]
+    fn email_verification_round_trip() {
+        let conn = memory_connection();
+        let user_id = insert_user(&conn, "alice");
+        let verification = EmailVerification {
+            user_id,
+            verification_token: "code-hash".to_string(),
+            expiration_date: at(1_700_000_900),
+            invalidated: false,
+        };
+        Database::insert_with_connection(&conn, &verification).unwrap();
+
+        let stored =
+            Database::get_entry_with_connection::<EmailVerification>(&conn, user_id).unwrap();
+        assert_eq!(stored.user_id, user_id);
+        assert_eq!(stored.verification_token, "code-hash");
+        assert_eq!(stored.expiration_date, at(1_700_000_900));
+        assert!(!stored.invalidated);
+
+        let changed = Database::update_value_with_connection::<EmailVerification>(
+            &conn,
+            EmailVerificationDatabaseColumns::Invalidated,
+            &true,
+            user_id,
+        )
+        .unwrap();
+        assert_eq!(changed, 1);
+
+        let removed = Database::remove_entry_with_connection(
+            &conn,
+            DatabaseTypes::EmailVerificationType,
+            user_id,
+        )
+        .unwrap();
+        assert_eq!(removed, 1);
     }
 }

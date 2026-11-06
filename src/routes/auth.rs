@@ -38,11 +38,11 @@ pub fn create_new_user(
         user_id: 0,
         username: request.username,
         password_hash: hashed_password.hashed_string,
-        email: Some(request.email),
+        email: request.email,
         email_verified: false,
         is_admin: first_user.make_admin,
         created_at: SystemTime::now(),
-        last_login: SystemTime::now(),
+        last_login: None,
     };
 
     let id = Database::insert_with_connection(conn, &user).map_err(|err| {
@@ -107,11 +107,13 @@ pub fn validate_new_user(
         QuerySeparator::Or,
     )
     .map_err(|_| AuthenticationError::DatabaseSearchFailure)?;
+    // ASCII-only, like SQLite's NOCASE on both columns: the database found this row
+    // case-insensitively, so the comparison here must agree with it.
     if let Some(user) = existing_user {
-        if user.email == Some(request.email) {
+        if user.email.eq_ignore_ascii_case(&request.email) {
             return Err(AuthenticationError::EmailTaken);
         }
-        if user.username == request.username {
+        if user.username.eq_ignore_ascii_case(&request.username) {
             return Err(AuthenticationError::UsernameTaken);
         }
     }
@@ -186,11 +188,7 @@ pub async fn create_verification_email(
 
     let mail_info: EmailInformation = EmailInformation {
         username: information.user.username.clone(),
-        email: information
-            .user
-            .email
-            .clone()
-            .ok_or(EmailErrors::MissingEmail)?,
+        email: information.user.email.clone(),
         body,
         subject,
     };
@@ -546,4 +544,51 @@ fn hash_string_securely(to_hash: &str) -> Result<HashedString, AuthenticationErr
         normal_string: to_hash.to_owned(),
         hashed_string: hash.to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::memory_connection;
+
+    fn sign_up(username: &str, email: &str) -> UserCreationRequest {
+        UserCreationRequest {
+            email: email.to_string(),
+            username: username.to_string(),
+            password: "correct horse battery".to_string(),
+            password_repeat: "correct horse battery".to_string(),
+        }
+    }
+
+    fn with_alice() -> Connection {
+        let conn = memory_connection();
+        conn.execute(
+            "INSERT INTO users (username, password_hash, email) \
+             VALUES ('Alice', 'hash', 'Alice@Example.com')",
+            [],
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn an_email_differing_only_in_case_is_taken() {
+        let conn = with_alice();
+        let result = validate_new_user(&conn, sign_up("bob", "alice@example.com"));
+        assert!(matches!(result, Err(AuthenticationError::EmailTaken)));
+    }
+
+    #[test]
+    fn a_username_differing_only_in_case_is_taken() {
+        let conn = with_alice();
+        let result = validate_new_user(&conn, sign_up("ALICE", "other@example.com"));
+        assert!(matches!(result, Err(AuthenticationError::UsernameTaken)));
+    }
+
+    #[test]
+    fn a_new_username_and_email_pass() {
+        let conn = with_alice();
+        let result = validate_new_user(&conn, sign_up("bob", "bob@example.com"));
+        assert!(result.is_ok());
+    }
 }

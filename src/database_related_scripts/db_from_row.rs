@@ -1,7 +1,10 @@
 //! `rusqlite::Row` → model conversions. Columns are read by name rather than by
 //! position, so the mapping stays explicit and independent of column order.
 
-use rusqlite::Row;
+use rusqlite::{
+    types::{FromSql, FromSqlError, FromSqlResult, ValueRef},
+    Row,
+};
 
 use crate::models::{
     BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, EmailVerification, LibraryMetadata,
@@ -22,7 +25,7 @@ impl FromRow for BookMetadata {
             .get::<_, Option<i64>>("file_size")?
             .map(|size| size as u64);
 
-        let time = Some(convert_to_system_time(row, "last_modified", 14)?);
+        let time = read_optional_time(row, "last_modified")?;
 
         let tags: Vec<String> = row
             .get::<_, String>("tags")?
@@ -78,8 +81,8 @@ impl FromRow for LibraryMetadata {
 
 impl FromRow for UserMetadata {
     fn from_row(row: &Row) -> rusqlite::Result<Self> {
-        let created_at = convert_to_system_time(row, "created_at", 6)?;
-        let last_login = convert_to_system_time(row, "last_login", 7)?;
+        let created_at = read_time(row, "created_at")?;
+        let last_login = read_optional_time(row, "last_login")?;
         Ok(Self {
             user_id: row.get("id")?,
             username: row.get("username")?,
@@ -95,7 +98,7 @@ impl FromRow for UserMetadata {
 
 impl FromRow for TOTP {
     fn from_row(row: &Row) -> rusqlite::Result<Self> {
-        let created_at = convert_to_system_time(row, "created_at", 2)?;
+        let created_at = read_time(row, "created_at")?;
 
         Ok(Self {
             user_id: row.get("user_id")?,
@@ -108,7 +111,7 @@ impl FromRow for TOTP {
 impl FromRow for RecoveryCodes {
     fn from_row(row: &Row) -> rusqlite::Result<Self> {
         Ok(Self {
-            recovery_id: row.get("rocovery_id")?,
+            recovery_id: row.get("recovery_id")?,
             user_id: row.get("user_id")?,
             code_hashed: row.get("code_hash")?,
             used: row.get("used")?,
@@ -118,12 +121,10 @@ impl FromRow for RecoveryCodes {
 
 impl FromRow for Sessions {
     fn from_row(row: &Row) -> rusqlite::Result<Self> {
-        let refresh_token_valid_until =
-            convert_to_system_time(row, "refresh_token_valid_until", 6)?;
-        let session_token_valid_until =
-            convert_to_system_time(row, "session_token_valid_until", 8)?;
-        let created_at = convert_to_system_time(row, "created_at", 9)?;
-        let last_used_at = convert_to_system_time(row, "last_used_at", 10)?;
+        let refresh_token_valid_until = read_time(row, "refresh_token_valid_until")?;
+        let session_token_valid_until = read_time(row, "session_token_valid_until")?;
+        let created_at = read_time(row, "created_at")?;
+        let last_used_at = read_time(row, "last_used_at")?;
 
         Ok(Self {
             session_id: row.get("session_id")?,
@@ -144,7 +145,7 @@ impl FromRow for Sessions {
 
 impl FromRow for EmailVerification {
     fn from_row(row: &Row) -> rusqlite::Result<Self> {
-        let expires_at = convert_to_system_time(row, "expires_at", 2)?;
+        let expires_at = read_time(row, "expires_at")?;
 
         Ok(Self {
             user_id: row.get("user_id")?,
@@ -157,8 +158,8 @@ impl FromRow for EmailVerification {
 
 impl FromRow for ResetPasswordRequest {
     fn from_row(row: &Row) -> rusqlite::Result<Self> {
-        let expires_at = convert_to_system_time(row, "expires_at", 5)?;
-        let email_sent_at = convert_to_system_time(row, "email_sent_at", 4)?;
+        let expires_at = read_time(row, "expires_at")?;
+        let email_sent_at = read_time(row, "email_sent_at")?;
 
         Ok(Self {
             user_id: row.get("user_id")?,
@@ -172,19 +173,114 @@ impl FromRow for ResetPasswordRequest {
     }
 }
 
-/// Reads a Unix-seconds column as a `SystemTime`, treating `NULL` as an error.
-/// `index` is only used in that error: `InvalidColumnType` takes a column
-/// position rather than a name.
-fn convert_to_system_time(
-    row: &Row,
-    column: &str,
-    index: usize,
-) -> Result<SystemTime, rusqlite::Error> {
-    let secs: Option<i64> = row.get(column)?;
-    secs.map(|s| UNIX_EPOCH + Duration::from_secs(s as u64))
-        .ok_or(rusqlite::Error::InvalidColumnType(
-            index,
-            "timestamp".into(),
-            rusqlite::types::Type::Null,
-        ))
+/// Reads a unix-seconds column that must have a value. A NULL becomes rusqlite's own
+/// `InvalidColumnType` error, with the column's real position and name.
+fn read_time(row: &Row, column: &str) -> rusqlite::Result<SystemTime> {
+    Ok(row.get::<_, UnixSeconds>(column)?.0)
+}
+
+/// Reads a unix-seconds column that may be NULL.
+fn read_optional_time(row: &Row, column: &str) -> rusqlite::Result<Option<SystemTime>> {
+    Ok(row
+        .get::<_, Option<UnixSeconds>>(column)?
+        .map(|time| time.0))
+}
+
+/// A unix-seconds column as a `SystemTime`. A wrapper, because Rust only allows a
+/// trait impl where the crate owns the trait or the type, and rusqlite owns `FromSql`
+/// while std owns `SystemTime`.
+struct UnixSeconds(SystemTime);
+
+impl FromSql for UnixSeconds {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        let secs = i64::column_result(value)?;
+        // Negative or past `SystemTime`'s range: rusqlite turns `OutOfRange` into an
+        // error naming the column, where plain `+` would panic.
+        u64::try_from(secs)
+            .ok()
+            .and_then(|secs| UNIX_EPOCH.checked_add(Duration::from_secs(secs)))
+            .map(UnixSeconds)
+            .ok_or(FromSqlError::OutOfRange(secs))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::{types::Type, Connection};
+
+    fn read_one<T>(
+        sql: &str,
+        read: impl FnOnce(&Row) -> rusqlite::Result<T>,
+    ) -> rusqlite::Result<T> {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.query_row(sql, [], read)
+    }
+
+    #[test]
+    fn a_time_is_read_as_unix_seconds() {
+        let time = read_one("SELECT 1700000000 AS created_at", |row| {
+            read_time(row, "created_at")
+        })
+        .unwrap();
+        assert_eq!(time, UNIX_EPOCH + Duration::from_secs(1_700_000_000));
+    }
+
+    #[test]
+    fn a_missing_required_time_reports_its_real_column() {
+        let err = read_one("SELECT 1 AS id, NULL AS created_at", |row| {
+            read_time(row, "created_at")
+        })
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                rusqlite::Error::InvalidColumnType(1, ref name, Type::Null) if name == "created_at"
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_optional_time_is_none() {
+        let time = read_one("SELECT NULL AS last_login", |row| {
+            read_optional_time(row, "last_login")
+        })
+        .unwrap();
+        assert_eq!(time, None);
+    }
+
+    #[test]
+    fn a_present_optional_time_is_some() {
+        let time = read_one("SELECT 1700000000 AS last_login", |row| {
+            read_optional_time(row, "last_login")
+        })
+        .unwrap();
+        assert_eq!(time, Some(UNIX_EPOCH + Duration::from_secs(1_700_000_000)));
+    }
+
+    #[test]
+    fn a_negative_time_is_an_error_not_a_panic() {
+        let err = read_one("SELECT 1 AS id, -5 AS created_at", |row| {
+            read_time(row, "created_at")
+        })
+        .unwrap_err();
+        assert!(
+            matches!(err, rusqlite::Error::IntegralValueOutOfRange(1, -5)),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn a_negative_optional_time_is_an_error_too() {
+        let err = read_one("SELECT -5 AS last_login", |row| {
+            read_optional_time(row, "last_login")
+        })
+        .unwrap_err();
+        assert!(
+            matches!(err, rusqlite::Error::IntegralValueOutOfRange(0, -5)),
+            "got {err:?}"
+        );
+    }
 }

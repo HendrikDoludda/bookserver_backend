@@ -50,19 +50,19 @@ CREATE TABLE IF NOT EXISTS series (
 -- ============= Setup Users Table =================
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL UNIQUE,
+    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
     password_hash TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE,
+    email TEXT NOT NULL UNIQUE COLLATE NOCASE,
     email_verified BOOLEAN NOT NULL DEFAULT FALSE,
     is_admin BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_login DATETIME
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+    last_login INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS email_verification (
     user_id INTEGER PRIMARY KEY,
     email_verification_token TEXT NOT NULL UNIQUE,
-    expires_at DATETIME NOT NULL,
+    expires_at INTEGER NOT NULL,
     invalidated BOOLEAN NOT NULL DEFAULT FALSE,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
@@ -72,8 +72,8 @@ CREATE TABLE IF NOT EXISTS reset_password_requests (
     reset_token TEXT NOT NULL UNIQUE,
     cancelation_token TEXT NOT NULL UNIQUE,
     attempt_count INTEGER NOT NULL DEFAULT 0,
-    email_sent_at DATETIME,
-    expires_at DATETIME NOT NULL,
+    email_sent_at INTEGER,
+    expires_at INTEGER NOT NULL,
     invalidated BOOLEAN NOT NULL DEFAULT FALSE,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
@@ -84,13 +84,13 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_id INTEGER NOT NULL,
     device_id BINARY(16) NOT NULL UNIQUE,
     device_name TEXT NOT NULL,
-    platform TEXT,
+    platform TEXT NOT NULL,
     refresh_token_hashed TEXT NOT NULL UNIQUE,
-    refresh_token_valid_until DATETIME NOT NULL,
+    refresh_token_valid_until INTEGER NOT NULL,
     session_token_hashed TEXT NOT NULL,
-    session_token_valid_until DATETIME NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_used_at DATETIME,
+    session_token_valid_until INTEGER NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+    last_used_at INTEGER NOT NULL,
     authentication_completed BOOLEAN NOT NULL DEFAULT FALSE,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 ); --automatically refresh the refresh token when it get's used
@@ -99,13 +99,13 @@ CREATE TABLE IF NOT EXISTS recovery_codes (
     recovery_id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     code_hash TEXT UNIQUE NOT NULL,
-    used BOOLEAN DEFAULT FALSE,
+    used BOOLEAN NOT NULL DEFAULT FALSE,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS totp (
     user_id INTEGER PRIMARY KEY,
     authentication_secret TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
