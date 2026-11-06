@@ -13,16 +13,18 @@ use crate::{data_models::models::BookFormat, error_types::CoverImageError};
 const COVER_DIR: &str = "./cover_images/";
 const DEFAULT_IMAGE: &str = "example-cover.png";
 
+/// Extracts a cover image for the file at `path` into `./cover_images/`, named by
+/// the file's content hash, and returns the cover's path.
 pub fn get_cover_image(
-    path: &PathBuf,
+    path: &Path,
     format: BookFormat,
-    _hash: &str,
+    hash: &str,
 ) -> Result<PathBuf, CoverImageError> {
     match format {
-        BookFormat::Pdf => get_pdf_cover_image(path, None, _hash),
-        BookFormat::Cbz => get_cbz_cover_image(path, _hash),
-        BookFormat::Epub => get_epub_cover_image(path, _hash),
-        BookFormat::ImageComic => get_image_comic_cover_image(path, _hash),
+        BookFormat::Pdf => get_pdf_cover_image(path, None, hash),
+        BookFormat::Cbz => get_cbz_cover_image(path, hash),
+        BookFormat::Epub => get_epub_cover_image(path, hash),
+        BookFormat::ImageComic => get_image_comic_cover_image(path, hash),
         BookFormat::None => Ok(get_fallback_cover()),
     }
 }
@@ -31,7 +33,7 @@ fn get_fallback_cover() -> PathBuf {
     Path::new(COVER_DIR).join(DEFAULT_IMAGE)
 }
 
-fn get_cbz_cover_image(path: &PathBuf, _hash: &str) -> Result<PathBuf, CoverImageError> {
+fn get_cbz_cover_image(path: &Path, hash: &str) -> Result<PathBuf, CoverImageError> {
     let cbz = File::open(path).map_err(|_| CoverImageError::FileCouldNotBeRead)?;
     let mut archive = ZipArchive::new(cbz).map_err(|_| CoverImageError::ZipArchiveFailure)?;
 
@@ -65,19 +67,19 @@ fn get_cbz_cover_image(path: &PathBuf, _hash: &str) -> Result<PathBuf, CoverImag
         image::guess_format(&image_data).map_err(|_| CoverImageError::ImageFormatFailed)?;
     let extension = format.extensions_str().first().copied().unwrap_or("png");
 
-    let final_path = get_cover_output_path(_hash, extension)?;
+    let final_path = get_cover_output_path(hash, extension)?;
 
     let result = create_image_at_location(&final_path, &image_data)?;
 
     Ok(result)
 }
 
-//TODO: Pdfium needs to be bundled to this project in order for it to work on all operating systems
-//should also be included so that on a mac you can run this without symlinking
+// TODO: bundle the PDFium library with the project so PDF covers work on every OS
+// (and on macOS without symlinking the dylib).
 fn get_pdf_cover_image(
-    path: &PathBuf,
+    path: &Path,
     password: Option<&str>,
-    _hash: &str,
+    hash: &str,
 ) -> Result<PathBuf, CoverImageError> {
     let pdfium = Pdfium::default();
 
@@ -104,8 +106,7 @@ fn get_pdf_cover_image(
         .map_err(|_| CoverImageError::CoverCreationFailed)?
         .into_rgb8();
 
-    let extension = "jpg";
-    let final_path = get_cover_output_path(_hash, &extension)?;
+    let final_path = get_cover_output_path(hash, "jpg")?;
     if final_path.exists() {
         return Ok(final_path);
     }
@@ -116,7 +117,7 @@ fn get_pdf_cover_image(
     Ok(final_path)
 }
 
-fn get_epub_cover_image(path: &PathBuf, _hash: &str) -> Result<PathBuf, CoverImageError> {
+fn get_epub_cover_image(path: &Path, hash: &str) -> Result<PathBuf, CoverImageError> {
     let epub = Epub::parse(path).map_err(|_| CoverImageError::FileNotFound)?;
     let cover = epub
         .images
@@ -131,7 +132,7 @@ fn get_epub_cover_image(path: &PathBuf, _hash: &str) -> Result<PathBuf, CoverIma
         .nth(1)
         .ok_or(CoverImageError::CoverCreationFailed)?;
 
-    let final_path = get_cover_output_path(_hash, &extension.to_string())?;
+    let final_path = get_cover_output_path(hash, extension)?;
     if final_path.exists() {
         return Ok(final_path);
     }
@@ -140,7 +141,7 @@ fn get_epub_cover_image(path: &PathBuf, _hash: &str) -> Result<PathBuf, CoverIma
     Ok(result)
 }
 
-fn get_image_comic_cover_image(path: &PathBuf, _hash: &str) -> Result<PathBuf, CoverImageError> {
+fn get_image_comic_cover_image(path: &Path, hash: &str) -> Result<PathBuf, CoverImageError> {
     let first = fs::read_dir(path)
         .map_err(|_| CoverImageError::GeneralError)?
         .filter_map(|e| e.ok())
@@ -160,12 +161,12 @@ fn get_image_comic_cover_image(path: &PathBuf, _hash: &str) -> Result<PathBuf, C
         .unwrap_or("unknown")
         .to_string();
 
-    let final_path = get_cover_output_path(_hash, &extension)?;
+    let final_path = get_cover_output_path(hash, &extension)?;
     if final_path.exists() {
         return Ok(final_path);
     }
 
-    let result = copy_image_to_cover_location(first.as_path(), &final_path.as_path())?;
+    let result = copy_image_to_cover_location(first.as_path(), final_path.as_path())?;
 
     Ok(result)
 }
@@ -180,7 +181,7 @@ fn is_image_file(path: &Path) -> bool {
 }
 
 fn create_image_at_location(path: &Path, data: &[u8]) -> Result<PathBuf, CoverImageError> {
-    fs::write(&path, data).map_err(|_| CoverImageError::CoverCreationFailed)?;
+    fs::write(path, data).map_err(|_| CoverImageError::CoverCreationFailed)?;
     Ok(path.to_path_buf())
 }
 
@@ -192,9 +193,9 @@ fn copy_image_to_cover_location(
     Ok(final_file.to_path_buf())
 }
 
-fn get_cover_output_path(_hash: &str, extension: &str) -> Result<PathBuf, CoverImageError> {
+fn get_cover_output_path(hash: &str, extension: &str) -> Result<PathBuf, CoverImageError> {
     fs::create_dir_all(COVER_DIR).map_err(|_| CoverImageError::GeneralError)?;
 
-    let final_file = Path::new(COVER_DIR).join(_hash).with_extension(extension);
+    let final_file = Path::new(COVER_DIR).join(hash).with_extension(extension);
     Ok(final_file)
 }

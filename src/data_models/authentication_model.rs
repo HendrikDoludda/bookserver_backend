@@ -73,5 +73,3 @@ pub struct AuthResponse {
     pub session_token_expiration: SystemTime,
     pub refresh_token_expiration_time: SystemTime,
 }
-
-//for the authentication use the axum extractors auth: AuthSession or something like that

@@ -10,12 +10,13 @@ use crate::{
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde::Serialize;
 
+/// Read rows by id into a model. Each type supplies `TABLE` and `COLUMNS`;
+/// the queries are assembled from those by the default methods.
 pub trait Extract: FromRow {
-    // The building blocks each type supplies; queries are assembled from these.
     const TABLE: &'static str;
     const COLUMNS: &'static str;
 
-    // Fetch a single row by id.
+    /// Fetch a single row by id.
     fn extract(conn: &Connection, id: i64) -> Result<Option<Self>, DatabaseError> {
         let query = format!(
             "SELECT {} FROM {} WHERE id = ?1",
@@ -28,8 +29,8 @@ pub trait Extract: FromRow {
             .map_err(|_| DatabaseError::QueryFailure)
     }
 
-    // Fetch many rows by id in a single query. Returns each row paired with its
-    // id; rows whose id doesn't exist are simply absent from the result.
+    /// Fetch many rows by id in a single query. Returns each row paired with its
+    /// id; rows whose id doesn't exist are simply absent from the result.
     fn extract_batch(conn: &Connection, ids: &[i64]) -> Result<Vec<WithId<Self>>, DatabaseError>
     where
         Self: Serialize,
@@ -105,8 +106,9 @@ impl Extract for RecoveryCodes {
 
 impl Extract for Sessions {
     const TABLE: &'static str = "sessions";
-    const COLUMNS: &'static str =
-        "session_id, user_id, device_id, device_name, platform, refresh_token_hashed, refresh_token_valid_until, session_token_hashed, session_token_valid_until, created_at, last_used_at, authentication_completed";
+    const COLUMNS: &'static str = "session_id, user_id, device_id, device_name, platform, \
+        refresh_token_hashed, refresh_token_valid_until, session_token_hashed, \
+        session_token_valid_until, created_at, last_used_at, authentication_completed";
 }
 
 impl Extract for EmailVerification {

@@ -10,13 +10,17 @@ use directories::ProjectDirs;
 use rand::rngs::SysRng;
 use rand::TryRng;
 
+/// Server secrets persisted in `secrets.toml` in the OS config directory.
 #[derive(Serialize, Deserialize)]
-struct Secrets {
+pub struct Secrets {
     token_signing_key: String,
     previous_token_signing_key: Option<String>,
     previous_token_signing_key_expiration_date: Option<DateTime<Utc>>,
 }
 
+/// Loads `secrets.toml`, generating it with a fresh 256-bit key on first run.
+/// The file is written to a temp path and then renamed, so a crash mid-write
+/// can't leave a half-written secrets file behind.
 pub fn set_up_config_file() -> Result<Arc<Secrets>, ApplicationSetUpErrors> {
     let project_dirs = ProjectDirs::from("com", "placeholder_organization", "bookserver_backend")
         .ok_or(ApplicationSetUpErrors::NoConfigDirectory)?;
@@ -31,7 +35,7 @@ pub fn set_up_config_file() -> Result<Arc<Secrets>, ApplicationSetUpErrors> {
         let contents = create_new_set_up_secrets()?;
         let contents_string = toml::to_string_pretty(&contents)
             .map_err(|_| ApplicationSetUpErrors::SecretConversionFailure)?;
-        //For the future the file should be marked as restricted so only the author is allowed to open the file not other users.
+        // TODO: restrict the file to owner-only (0600) so other local users can't read it.
         fs::write(&secrets_tmp_path, contents_string)
             .map_err(|_| ApplicationSetUpErrors::DocumentWritingFailure)?;
         fs::rename(&secrets_tmp_path, &secrets_path)
@@ -53,7 +57,7 @@ fn create_new_set_up_secrets() -> Result<Secrets, ApplicationSetUpErrors> {
     let secret = Secrets {
         token_signing_key: signing_key,
         previous_token_signing_key: None,
-        previous_token_signing_key_expiration_date: None, //Utc::now()
+        previous_token_signing_key_expiration_date: None,
     };
     Ok(secret)
 }
@@ -68,7 +72,7 @@ pub fn get_port() -> u16 {
 pub fn get_books_dirs() -> Vec<String> {
     env::var("BOOK_DIRS")
         .unwrap_or_else(|_| "../Downloads".to_string())
-        .split(':') // Assuming ':' as separator; adjust if needed
+        .split(':')
         .map(|s| s.trim().to_string())
         .collect()
 }

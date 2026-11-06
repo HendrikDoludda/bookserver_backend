@@ -1,5 +1,5 @@
-//add the conversion from row to model into here.
-// we can use the column names to make it more explicit when converting between the two
+//! `rusqlite::Row` → model conversions. Columns are read by name rather than by
+//! position, so the mapping stays explicit and independent of column order.
 
 use rusqlite::Row;
 
@@ -37,7 +37,7 @@ impl FromRow for BookMetadata {
             language: BookLanguage::from_code(&language),
             cover_image: row.get("cover_image")?,
             description: row.get("description")?,
-            tags: tags,
+            tags,
             file_path: row.get("file_path")?,
             page_count: row.get("page_count")?,
             volume_number: row.get("volume_number")?,
@@ -45,7 +45,7 @@ impl FromRow for BookMetadata {
             page_number: row.get("page_number")?,
             file_hash: row.get("file_hash")?,
             last_modified: time,
-            file_size: file_size,
+            file_size,
             series: row.get("series")?,
         })
     }
@@ -135,8 +135,8 @@ impl FromRow for Sessions {
             refresh_token_expiration_date: refresh_token_valid_until,
             session_token: row.get("session_token_hashed")?,
             session_token_expiration_date: session_token_valid_until,
-            created_at: created_at,
-            last_used_at: last_used_at,
+            created_at,
+            last_used_at,
             authentication_completed: row.get("authentication_completed")?,
         })
     }
@@ -172,6 +172,9 @@ impl FromRow for ResetPasswordRequest {
     }
 }
 
+/// Reads a Unix-seconds column as a `SystemTime`, treating `NULL` as an error.
+/// `index` is only used in that error: `InvalidColumnType` takes a column
+/// position rather than a name.
 fn convert_to_system_time(
     row: &Row,
     column: &str,
@@ -180,7 +183,6 @@ fn convert_to_system_time(
     let secs: Option<i64> = row.get(column)?;
     secs.map(|s| UNIX_EPOCH + Duration::from_secs(s as u64))
         .ok_or(rusqlite::Error::InvalidColumnType(
-            //requires a usize instead of str
             index,
             "timestamp".into(),
             rusqlite::types::Type::Null,

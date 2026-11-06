@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, time::SystemTime};
 use strum_macros::EnumIter;
 
-//============  Row id + metadata wrapper =================
+// === Row id + metadata wrapper ===============================================
 // Metadata structs don't store their own row id, but list endpoints need it so
 // the client can drill down (e.g. fetch a library's series). This pairs the id
 // with the metadata and flattens both into a single JSON object.
@@ -13,7 +13,7 @@ pub struct WithId<T: Serialize> {
     pub data: T,
 }
 
-// ===========Database models =================
+// === Database models =========================================================
 #[derive(Debug, Clone, Serialize, EnumIter, PartialEq, Deserialize)]
 pub enum DatabaseTypes {
     Books,
@@ -49,7 +49,7 @@ impl DatabaseTypes {
     }
 }
 
-//============  Library model =================
+// === Library type ============================================================
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LibraryType {
     Books,
@@ -60,6 +60,10 @@ pub enum LibraryType {
 }
 
 impl LibraryType {
+    #[allow(
+        clippy::should_implement_trait,
+        reason = "infallible: unknown values map to `Others`, so `FromStr` doesn't fit"
+    )]
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "books" => LibraryType::Books,
@@ -80,7 +84,7 @@ impl LibraryType {
     }
 }
 
-//============  Book format model =================
+// === Book format model =======================================================
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BookFormat {
     Pdf,
@@ -91,6 +95,10 @@ pub enum BookFormat {
 }
 
 impl BookFormat {
+    #[allow(
+        clippy::should_implement_trait,
+        reason = "infallible: unknown values map to `None`, so `FromStr` doesn't fit"
+    )]
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "pdf" => BookFormat::Pdf,
@@ -111,7 +119,7 @@ impl BookFormat {
     }
 }
 
-//============  Book language model =================
+// === Book language model =====================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BookLanguage {
@@ -160,7 +168,7 @@ impl BookLanguage {
     }
 }
 
-//============  Book metadata model =================
+// === Book metadata model =====================================================
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BookMetadata {
     pub title: String,
@@ -223,7 +231,7 @@ impl AsRef<str> for BookDatabaseColumns {
     }
 }
 
-//============  Book series metadata model =================
+// === Book series metadata model ==============================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BookSeriesMetadata {
@@ -254,7 +262,7 @@ impl AsRef<str> for SeriesDatabaseColumns {
     }
 }
 
-//============  User metadata model =================
+// === User metadata model =====================================================
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserMetadata {
     pub user_id: i64,
@@ -290,7 +298,7 @@ impl AsRef<str> for UserDatabaseColumns {
     }
 }
 
-//============  Library metadata model =================
+// === Library metadata model ==================================================
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LibraryMetadata {
     pub name: String,
@@ -317,7 +325,7 @@ impl AsRef<str> for LibraryDatabaseColumns {
     }
 }
 
-//============  Column Selector enum =================
+// === Column Selector enum ====================================================
 pub enum ColumnSelector {
     Book(BookDatabaseColumns),
     Library(LibraryDatabaseColumns),
@@ -349,7 +357,7 @@ impl From<UserDatabaseColumns> for ColumnSelector {
     }
 }
 
-//============  Series-Library connection model =================
+// === Series-Library connection model =========================================
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeriesLibraryConnection {
     pub series_id: i64,
@@ -370,7 +378,7 @@ impl AsRef<str> for SeriesLibraryConnectionDatabaseColumns {
     }
 }
 
-//============Parsed Name model =================
+// === Parsed Name model =======================================================
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedName {
     pub title: String,
@@ -395,7 +403,7 @@ pub enum DatabaseEntry {
     User(UserMetadata),
 }
 
-//====================Email Verification====================
+// === Email Verification ======================================================
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmailVerification {
     pub user_id: i64,
@@ -422,7 +430,7 @@ impl AsRef<str> for EmailVerificationDatabaseColumns {
     }
 }
 
-//===============Sessions==================
+// === Sessions ================================================================
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Sessions {
     pub session_id: i64,
@@ -430,8 +438,8 @@ pub struct Sessions {
     pub device_id: String,
     pub device_name: String,
     pub platform: String,
-    pub refresh_token: String, //rename to hashed
-    pub session_token: String, // rename to hashed
+    pub refresh_token: String, // hashed; TODO: rename to `refresh_token_hashed`
+    pub session_token: String, // hashed; TODO: rename to `session_token_hashed`
     pub refresh_token_expiration_date: SystemTime,
     pub session_token_expiration_date: SystemTime,
     pub created_at: SystemTime,
@@ -473,7 +481,7 @@ impl AsRef<str> for SessionsDatabaseColumns {
     }
 }
 
-//===============Recovery codes================
+// === Recovery codes ==========================================================
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveryCodes {
     pub recovery_id: i64,
@@ -500,7 +508,7 @@ impl AsRef<str> for RecoveryCodesColumns {
     }
 }
 
-//===================TOTP======================
+// === TOTP ====================================================================
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TOTP {
     pub user_id: i64,
@@ -524,6 +532,7 @@ impl AsRef<str> for TOTPDatabaseColumns {
     }
 }
 
+// === Email configuration =====================================================
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EmailConfig {
     pub host: String,
@@ -534,6 +543,9 @@ pub struct EmailConfig {
     pub from_name: String,
 }
 
+// === Query building ==========================================================
+
+/// How multiple column conditions are joined in a `WHERE` clause.
 pub enum QuerySeparator {
     And,
     Or,
@@ -548,11 +560,13 @@ impl QuerySeparator {
     }
 }
 
+/// Which columns a search selects: `*`, or only the columns being matched on.
 pub enum SelectionMethod {
     Everything,
     PassedInColumns,
 }
 
+// === Password reset requests =================================================
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ResetPasswordRequest {
     pub user_id: i64,

@@ -1,24 +1,27 @@
-use crate::data_models::models::ColumnSelector;
-use crate::data_models::models::DatabaseTypes;
-use crate::data_models::models::WithId;
-use crate::database_related_scripts::db_delete::Delete;
-use crate::database_related_scripts::db_search::Search;
-use crate::database_related_scripts::db_update::Update;
-use crate::database_related_scripts::extract::Extract;
-use crate::database_related_scripts::insert::Insert;
-use crate::database_related_scripts::migrations;
-use crate::error_types::AppErrors;
-use crate::error_types::DatabaseError;
-use crate::models::QuerySeparator;
-use crate::models::SelectionMethod;
+use std::path::Path;
+use std::time::SystemTime;
+
 use r2d2::{ManageConnection, Pool};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Connection, Result, ToSql};
 use serde::Serialize;
-use std::path::Path;
-use std::time::SystemTime;
-//TODO: Check if the filtering should happen in the backend or the frontend. I think both are valid but I imagine that backend is better
-//So probably pass in filtering options with the request and then filter somewhere here
+
+use crate::data_models::models::{
+    ColumnSelector, DatabaseTypes, QuerySeparator, SelectionMethod, WithId,
+};
+use crate::database_related_scripts::{
+    db_delete::Delete, db_search::Search, db_update::Update, extract::Extract, insert::Insert,
+    migrations,
+};
+use crate::error_types::{AppErrors, DatabaseError};
+
+/// Handle to the SQLite database: an r2d2 connection pool plus every query the
+/// app runs. Most operations come in two flavours: a plain method that takes a
+/// connection from the pool, and a `*_with_connection` variant that runs on a
+/// caller-supplied connection so several operations can share one transaction
+/// (see [`Database::setup_new_transaction`]).
+// TODO: decide whether filtering happens here or in the frontend. Leaning towards
+// the backend: pass filter options in with the request and apply them in the query.
 pub struct Database {
     pool: r2d2::Pool<SqliteConnectionManager>,
 }
@@ -75,7 +78,7 @@ impl Database {
         conn: &Connection,
         data: &impl Insert,
     ) -> Result<i64, DatabaseError> {
-        let id: i64 = data.insert(&conn)?;
+        let id: i64 = data.insert(conn)?;
         Ok(id)
     }
 
@@ -104,7 +107,7 @@ impl Database {
     where
         U: Update,
     {
-        U::update(&conn, column, new_value, id)
+        U::update(conn, column, new_value, id)
     }
 
     pub fn update_multiple_values<U>(
@@ -132,7 +135,7 @@ impl Database {
     where
         U: Update,
     {
-        U::update_multiple(&conn, columns, new_values, id)
+        U::update_multiple(conn, columns, new_values, id)
     }
 
     pub fn remove_entry(&self, db_type: DatabaseTypes, id: i64) -> Result<(), DatabaseError> {
@@ -148,15 +151,15 @@ impl Database {
         db_type: DatabaseTypes,
         id: i64,
     ) -> Result<(), DatabaseError> {
+        // The junction table has no `id` column; use `remove_entry_from_library_elements`.
         if db_type == DatabaseTypes::LibraryElements {
-            return Err(DatabaseError::LibrarySeriesException); // Prevent direct deletion from junction table
-        } else {
-            let table_name = db_type.get_table_name();
-            let query = format!("DELETE FROM {} WHERE id = ?1", table_name);
-            conn.execute(&query, rusqlite::params![id])
-                .map_err(|_| DatabaseError::ConnectionExecutableFailure)?;
-            Ok(())
+            return Err(DatabaseError::LibrarySeriesException);
         }
+        let table_name = db_type.get_table_name();
+        let query = format!("DELETE FROM {} WHERE id = ?1", table_name);
+        conn.execute(&query, rusqlite::params![id])
+            .map_err(|_| DatabaseError::ConnectionExecutableFailure)?;
+        Ok(())
     }
 
     pub fn remove_entry_with_connection_based_on_columns<T>(
@@ -186,11 +189,11 @@ impl Database {
     where
         T: Extract,
     {
-        T::extract(&conn, id)?.ok_or(DatabaseError::EntryNotFound)
+        T::extract(conn, id)?.ok_or(DatabaseError::EntryNotFound)
     }
 
-    // Fetch many rows by id in a single query, each paired with its id.
-    // Returns an empty Vec for an empty id list (no query is run).
+    /// Fetch many rows by id in a single query, each paired with its id.
+    /// Returns an empty Vec for an empty id list (no query is run).
     pub fn get_entries_batch<T>(&self, ids: &[i64]) -> Result<Vec<WithId<T>>, DatabaseError>
     where
         T: Extract + Serialize,
@@ -245,7 +248,7 @@ impl Database {
     where
         T: Search,
     {
-        T::search_for_row(&conn, columns, values, query_separator, selection_method)
+        T::search_for_row(conn, columns, values, query_separator, selection_method)
     }
 
     pub fn search_for_multiple_rows<T>(
@@ -281,7 +284,7 @@ impl Database {
     where
         T: Search,
     {
-        T::search_for_multiple_rows(&conn, columns, values, query_separator, selection_method)
+        T::search_for_multiple_rows(conn, columns, values, query_separator, selection_method)
     }
 
     pub fn get_all_libraries(&self) -> Result<Vec<i64>, DatabaseError> {
@@ -332,7 +335,7 @@ impl Database {
         library_id: i64,
     ) -> Result<(), DatabaseError> {
         let query = "DELETE FROM library_elements WHERE series_id = ?1 AND library_id = ?2";
-        conn.execute(&query, rusqlite::params![series_id, library_id])
+        conn.execute(query, rusqlite::params![series_id, library_id])
             .map_err(|_| DatabaseError::ConnectionExecutableFailure)?;
         Ok(())
     }
@@ -360,12 +363,13 @@ impl Database {
                 row.get::<_, i64>("series_id")
             })
             .map_err(|_| DatabaseError::OperationFailure)?;
-        let series_ids: Result<Vec<i64>, _> = rows.collect();
-        Ok(series_ids.map_err(|_| DatabaseError::OperationFailure)?)
+        rows.collect::<Result<Vec<i64>, _>>()
+            .map_err(|_| DatabaseError::OperationFailure)
     }
 
+    /// Looks up a row id by a single column value.
+    /// Legacy: new code should not use this; it remains for the folder scanner.
     pub fn get_id_from_table(
-        //should not be used
         &self,
         db_type: DatabaseTypes,
         column: impl Into<ColumnSelector>,
@@ -398,6 +402,8 @@ impl Database {
         }
     }
 
+    /// Runs `operation` inside a single SQLite transaction. It commits if the closure
+    /// returns `Ok`; on `Err` the transaction is dropped, which rolls it back.
     pub fn setup_new_transaction<F, T>(&self, operation: F) -> Result<T, AppErrors>
     where
         F: FnOnce(&Connection) -> Result<T, AppErrors>,
@@ -422,8 +428,10 @@ impl Database {
     }
 }
 
+/// Converts a `SystemTime` to whole seconds since the Unix epoch, the format every
+/// timestamp column uses. Panics for times before 1970.
 pub fn convert_system_time_to_unix_time(time: SystemTime) -> i64 {
-    Some(time)
-        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64)
+    time.duration_since(std::time::UNIX_EPOCH)
         .unwrap()
+        .as_secs() as i64
 }

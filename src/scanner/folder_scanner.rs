@@ -1,24 +1,27 @@
+use std::{
+    fs::File,
+    io,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use blake3::Hasher;
+use log::{error, warn};
+use once_cell::sync::Lazy;
+use regex::Regex;
+use tokio::{fs, sync::Semaphore};
+
 use crate::config;
 use crate::data_models::models::{
-    BookDatabaseColumns, BookFormat, BookMetadata, BookSeriesMetadata, ColumnSelector,
-    DatabaseTypes, FileExtractedMetadata, LibraryMetadata, ParsedName, SeriesLibraryConnection,
+    BookDatabaseColumns, BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata,
+    ColumnSelector, DatabaseTypes, FileExtractedMetadata, LibraryDatabaseColumns, LibraryMetadata,
+    LibraryType, ParsedName, SeriesDatabaseColumns, SeriesLibraryConnection,
 };
 use crate::db::Database;
 use crate::error_types::{DatabaseError, FolderScannerError};
 use crate::scanner::cover_image_retriever::get_cover_image;
-use blake3::Hasher;
-use log::warn;
-use once_cell::sync::Lazy;
-use regex::Regex;
-use std::{
-    fs::File,
-    io::{self},
-    path::{Path, PathBuf},
-    sync::Arc,
-};
-use tokio::{fs, sync::Semaphore};
 
-//preloaded regex expressions that can be used without the need to re-create any
+// Filename patterns, compiled once on first use and then reused.
 static VOLUME_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\b(?:v|vol|volume)[ _]?(\d+)\b").unwrap());
 
@@ -28,27 +31,26 @@ static CHAPTER_REGEX: Lazy<Regex> =
 static PAGE_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\b(?:p|pa|page)[ _]?(\d+)\b").unwrap());
 
-//This function will scan all assigned folders for valid file types
-//creates entries for them in the database
-//should be done async and be able to run multiple in parralel
+/// Scans every directory in `BOOK_DIRS` for supported files and creates database
+/// entries for them. Each directory becomes (or reuses) a library.
 pub async fn scan_all_folders(db: Arc<Database>) -> anyhow::Result<()> {
     let folders = config::get_books_dirs();
 
     for folder in folders {
-        let library_id = get_library_id(folder.clone(), &db.clone())?;
+        let library_id = get_library_id(folder.clone(), &db)?;
         scan_folder(PathBuf::from(folder), db.clone(), library_id).await?;
     }
 
     Ok(())
 }
 
-//This function will scan a single folder for valid file types
-//creates entries for them in the database
+/// Walks one directory tree and creates a book entry for each supported file.
+/// File processing runs on the blocking thread pool, gated by a semaphore.
 pub async fn scan_folder(
     path: PathBuf,
     db: Arc<Database>,
     library_id: i64,
-) -> anyhow::Result<(), FolderScannerError> {
+) -> Result<(), FolderScannerError> {
     let semaphore = Arc::new(Semaphore::new(1)); // limit concurrency
     let mut directories = vec![path];
 
@@ -82,7 +84,7 @@ pub async fn scan_folder(
                     })
                     .await
                     {
-                        eprintln!("Task join error: {e}");
+                        error!("Task join error: {e}");
                     }
                 });
             }
@@ -92,12 +94,13 @@ pub async fn scan_folder(
     Ok(())
 }
 
-//This function will be run when a valid file type has been found
+/// Creates the database entry (plus series and cover image) for one file.
+/// Unsupported files and files already in the database are skipped.
 fn create_book_entry(
     path: &Path,
     db: &Database,
     library_id: i64,
-) -> anyhow::Result<(), FolderScannerError> {
+) -> Result<(), FolderScannerError> {
     if !is_valid_file_type(path) {
         return Ok(());
     }
@@ -117,7 +120,7 @@ fn create_book_entry(
 
     let final_path = get_final_folder_path(path, format.as_str());
     if check_folder_path_exists_in_db(&final_path, db) {
-        //check for modification as well and then update
+        // TODO: also detect modified files and update their entry.
         return Ok(());
     }
 
@@ -138,18 +141,18 @@ fn create_book_entry(
     let metadata_entry = BookMetadata {
         title: parsed_name.title,
         author: metadata.author,
-        format: format,
+        format,
         tags: vec![],
         description: None,
         file_path: final_path.to_string_lossy().to_string(),
         language: metadata.language_code,
         page_count: metadata.page_number,
-        cover_image: cover_image,
+        cover_image,
         series: series_id,
         volume_number: parsed_name.volume_number,
         chapter_number: parsed_name.chapter_number,
         page_number: parsed_name.page_number,
-        file_hash: file_hash,
+        file_hash,
         last_modified: metadata.modified_date,
         file_size: metadata.file_size,
     };
@@ -189,7 +192,7 @@ fn get_file_metadata(file: &File, path: &Path) -> FileExtractedMetadata {
             file_size: Some(file_size),
             modified_date: modified_time,
             page_number: None,
-            language_code: crate::data_models::models::BookLanguage::Other("Unkown".to_string()),
+            language_code: BookLanguage::Other("Unknown".to_string()),
             author: "Unknown Author".to_string(),
         }
     } else {
@@ -197,22 +200,20 @@ fn get_file_metadata(file: &File, path: &Path) -> FileExtractedMetadata {
             file_size: None,
             modified_date: None,
             page_number: None,
-            language_code: crate::data_models::models::BookLanguage::Other("Unkown".to_string()),
+            language_code: BookLanguage::Other("Unknown".to_string()),
             author: "Unknown Author".to_string(),
         }
     }
 }
 
-fn get_cover_image_location(path: &PathBuf, format: BookFormat, hash: &String) -> Option<String> {
-    let cover_image_location = get_cover_image(path, format, hash);
-    let cover_image = match cover_image_location {
-        Ok(path) => path.to_str().map(String::from),
+fn get_cover_image_location(path: &Path, format: BookFormat, hash: &str) -> Option<String> {
+    match get_cover_image(path, format, hash) {
+        Ok(cover_path) => cover_path.to_str().map(String::from),
         Err(e) => {
-            eprintln!("Failed cover creation for path {:?}: {}", path, e);
+            error!("Failed cover creation for path {:?}: {}", path, e);
             None
         }
-    };
-    cover_image
+    }
 }
 
 fn get_final_folder_path(path: &Path, format: &str) -> PathBuf {
@@ -225,17 +226,17 @@ fn get_final_folder_path(path: &Path, format: &str) -> PathBuf {
     path.to_path_buf()
 }
 
-fn check_folder_path_exists_in_db(path: &PathBuf, db: &Database) -> bool {
+fn check_folder_path_exists_in_db(path: &Path, db: &Database) -> bool {
     let result = db.get_id_from_table(
         DatabaseTypes::Books,
         ColumnSelector::Book(BookDatabaseColumns::FilePath),
         &path.to_string_lossy().to_string(),
     );
-    match result {
-        Ok(Some(_)) => true,
-        _ => false,
-    }
+    matches!(result, Ok(Some(_)))
 }
+
+/// Splits a filename like `My_Series v02 c13` into a clean title plus the
+/// volume / chapter / page numbers found in it.
 fn get_final_file_name(path: &Path) -> ParsedName {
     let file_name = path
         .file_stem()
@@ -282,7 +283,7 @@ fn is_valid_file_type(path: &Path) -> bool {
     )
 }
 
-fn get_book_format(path: &Path) -> anyhow::Result<BookFormat, FolderScannerError> {
+fn get_book_format(path: &Path) -> Result<BookFormat, FolderScannerError> {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("pdf") => Ok(BookFormat::Pdf),
         Some("epub") => Ok(BookFormat::Epub),
@@ -305,7 +306,7 @@ fn get_series_id(
 ) -> Result<i64, FolderScannerError> {
     match db.get_id_from_table(
         DatabaseTypes::Series,
-        ColumnSelector::Series(crate::data_models::models::SeriesDatabaseColumns::Name),
+        ColumnSelector::Series(SeriesDatabaseColumns::Name),
         &file_name.to_lowercase(),
     ) {
         Ok(Some(id)) => Ok(id), // found an existing series
@@ -339,8 +340,8 @@ fn link_series_to_default_library(
     db: &Database,
 ) -> Result<(), DatabaseError> {
     let linked_series = SeriesLibraryConnection {
-        series_id: series_id,
-        library_id: library_id,
+        series_id,
+        library_id,
     };
     db.insert(&linked_series)?;
     Ok(())
@@ -349,7 +350,7 @@ fn link_series_to_default_library(
 fn get_library_id(name: String, db: &Database) -> Result<i64, DatabaseError> {
     match db.get_id_from_table(
         DatabaseTypes::Library,
-        ColumnSelector::Library(crate::data_models::models::LibraryDatabaseColumns::Name),
+        ColumnSelector::Library(LibraryDatabaseColumns::Name),
         &name.to_lowercase(),
     ) {
         Ok(Some(result)) => Ok(result),
@@ -360,7 +361,7 @@ fn get_library_id(name: String, db: &Database) -> Result<i64, DatabaseError> {
 fn create_library_entry(name: String, db: &Database) -> Result<i64, DatabaseError> {
     let library_entry = LibraryMetadata {
         name: name.to_lowercase(),
-        library_type: crate::data_models::models::LibraryType::Books,
+        library_type: LibraryType::Books,
         cover_image: None,
         description: None,
     };
