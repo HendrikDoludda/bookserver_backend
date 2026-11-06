@@ -17,6 +17,7 @@
 | Translation catalog (i18n) | F0 | not started | [13-internationalization](features/13-internationalization.md) |
 | Reading files | F1 | in progress | [38-reading-files](features/38-reading-files.md) |
 | Frontend localization | F1 | not started | [57-frontend-localization](features/57-frontend-localization.md) |
+| Flutter app | F1 | not started | [73-flutter-app](features/73-flutter-app.md) |
 | Library & series management | 2 | in progress | [01-library-and-series-management](features/01-library-and-series-management.md) |
 | Directory scanning | 2 | in progress | [34-directory-scanning](features/34-directory-scanning.md) |
 | Scannable directories | 2 | not started | [35-scannable-directories](features/35-scannable-directories.md) |
@@ -27,8 +28,7 @@
 | Search | 3 | not started | [11-search](features/11-search.md) |
 | Plan to read | 3 | not started | [40-plan-to-read](features/40-plan-to-read.md) |
 | Reading position format | 3 | not started | [41-reading-position](features/41-reading-position.md) |
-| Sorting, filtering & paging | 3 | not started | [42-sorting-filtering-and-paging](features/42-sorting-filtering-and-paging.md) |
-| A–Z fast-scroll bar | 3 | not started | [43-a-z-fast-scroll](features/43-a-z-fast-scroll.md) |
+| Sorting, filtering, paging & A–Z bar | 3 | not started | [42-sorting-filtering-and-paging](features/42-sorting-filtering-and-paging.md) |
 | Book metadata | 3 | not started | [63-book-metadata](features/63-book-metadata.md) |
 | Manga metadata | 3 | not started | [64-manga-metadata](features/64-manga-metadata.md) |
 | Comic metadata | 3 | not started | [65-comic-metadata](features/65-comic-metadata.md) |
@@ -40,14 +40,15 @@
 | Translation editor | 4 | not started | [56-translation-editor](features/56-translation-editor.md) |
 | Bulk upload | 4 | not started | [60-bulk-upload](features/60-bulk-upload.md) |
 | Series picker for uploads | 4 | not started | [61-series-picker](features/61-series-picker.md) |
+| Packaging & deployment | 5 | not started | [52-packaging-and-deployment](features/52-packaging-and-deployment.md) |
+| Safe schema upgrades | 5 | not started | [78-safe-schema-upgrades](features/78-safe-schema-upgrades.md) |
 | Security hardening | cross-cutting | not started | [12-security-hardening](features/12-security-hardening.md) |
 | Email & notifications | cross-cutting | in progress | [14-email-and-notifications](features/14-email-and-notifications.md) |
 | Active sessions | cross-cutting | not started | [51-active-sessions](features/51-active-sessions.md) |
-| Packaging & deployment | cross-cutting | not started | [52-packaging-and-deployment](features/52-packaging-and-deployment.md) |
 | File reconciliation | cross-cutting | not started | [53-file-reconciliation](features/53-file-reconciliation.md) |
 | Security audit log | cross-cutting | not started | [55-security-audit-log](features/55-security-audit-log.md) |
-| Video library & direct play | Phase 2 | not started | [20-video](features/20-video.md) |
-| Collaborative documents | Phase 2 | not started | [21-documents](features/21-documents.md) |
+| Video library & direct play | Phase 2 | blocked | [20-video](features/20-video.md) |
+| Collaborative documents | Phase 2 | blocked | [21-documents](features/21-documents.md) |
 | PDF annotations | Phase 2 | not started | [22-pdf-annotations](features/22-pdf-annotations.md) |
 | OPDS catalog feed | Phase 2 | not started | [23-opds-feed](features/23-opds-feed.md) |
 | Download permission | Phase 2 | not started | [24-download-permissions](features/24-download-permissions.md) |
@@ -55,12 +56,11 @@
 | WebDAV for Infuse | Phase 2 | blocked | [70-webdav-for-infuse](features/70-webdav-for-infuse.md) |
 | Video metadata | Phase 2 | blocked | [71-video-metadata](features/71-video-metadata.md) |
 | Office documents | Phase 2 | blocked | [72-office-documents](features/72-office-documents.md) |
-| Native mobile apps | Phase 2 | blocked | [73-native-mobile-apps](features/73-native-mobile-apps.md) |
 | Signed streaming URLs | Phase 2 | blocked | [74-signed-streaming-urls](features/74-signed-streaming-urls.md) |
 | Loan window | Phase 2 | blocked | [75-loan-window](features/75-loan-window.md) |
 | Release pipeline | Phase 2 | blocked | [76-release-pipeline](features/76-release-pipeline.md) |
 | Menu bar / tray app | Phase 2 | not started | [77-tray-app](features/77-tray-app.md) |
-| Safe schema upgrades | Phase 2 | not started | [78-safe-schema-upgrades](features/78-safe-schema-upgrades.md) |
+| Modular core & media modules | Phase 2 | not started | [94-modular-core](features/94-modular-core.md) |
 | Public-exposure hardening | optional | not started | [54-public-exposure-hardening](features/54-public-exposure-hardening.md) |
 | PIN or re-login to open sensitive items | optional | not started | [62-sensitive-pin-or-reauth](features/62-sensitive-pin-or-reauth.md) |
 | Hide sensitive items from default views | optional | not started | [67-hide-sensitive-items](features/67-hide-sensitive-items.md) |
@@ -69,6 +69,5 @@
 | Thumbnails | optional | not started | [91-thumbnails](features/91-thumbnails.md) |
 | Per-library permissions | optional | not started | [92-per-library-permissions](features/92-per-library-permissions.md) |
 | Database backup | optional | not started | [93-database-backup](features/93-database-backup.md) |
-| Modular core & media modules | optional | not started | [94-modular-core](features/94-modular-core.md) |
 | Offline download | — | not started | [39-offline-download](features/39-offline-download.md) |
 | Bugfixes | ongoing | not started | [99-bugfixes](features/99-bugfixes.md) |

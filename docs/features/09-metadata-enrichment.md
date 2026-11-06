@@ -9,22 +9,22 @@ entry. The adapters are [63](63-book-metadata.md) books, [64](64-manga-metadata.
 [65](65-comic-metadata.md) comics.
 
 ## Build
-- [ ] ? h · Store the provider's external id, per the external-id decision, so an entry can be re-fetched without searching again (the TODO at the top of `api_caller.rs` asks for this link) [DB]
-- [ ] ? h · Add an HTTP client with `rustls` features, matching [32](32-https-tls.md); `serde_json` is already a dependency [BE]
-- [ ] ? h · `MetadataProvider`: one adapter per source, chosen from the library's `library_type`, per the provider-chain decision — start with an `enum` and one `match` (an `async fn` trait isn't object-safe without `async-trait`) [BE]
-- [ ] ? h · Title search through the library's provider, returning candidates without writing anything [BE]
-- [ ] ? h · Merge a confirmed candidate — description, cover, tags, release years, author — and store the external id, in one transaction per entry; fetched covers go into `cover_images/` like extracted ones [BE]
-- [ ] ? h · Treat the scanner's placeholders (`"Unknown Author"`, `BookLanguage::Other("Unknown")`) as empty when merging [BE]
-- [ ] ? h · Merge tags into the comma-joined `books.tags` through one split, de-duplicate and re-join helper, per the tags decision [BE]
-- [ ] ? h · Auto-match per the auto-match decision, logging every auto-match [BE]
-- [ ] ? h · Cache provider results per the cache decision, so a repeated scan doesn't call the provider again [DB] [BE]
-- [ ] ? h · Respect each provider's documented rate limit (not one global number); hitting it gives a logged, non-500 outcome [BE]
-- [ ] ? h · Store provider API keys per the key-storage decision; never log a key [BE]
-- [ ] ? h · Sensitive items skip every online lookup: one check in the provider dispatch, not per adapter, so a new adapter can't forget it ([10](10-sensitive-content-controls.md)) [BE]
-- [ ] ? h · Per-entry search and confirm endpoints, per the endpoint decision [BE]
-- [ ] ? h · Bulk enrichment pass behind `POST /scan_metadata`, run in the background — not inline, where an unresponsive provider would stall the response — per the endpoint decision [BE]
-- [ ] ? h · Require `AdminSession` on the enrichment endpoints — today `scan_for_metadata` takes an `AuthSession` [BE]
-- [ ] ? h · Candidate list and confirm screen [FE]
+- [ ] 1 h · Store the provider's external id, per the external-id decision, so an entry can be re-fetched without searching again (the TODO at the top of `api_caller.rs` asks for this link) [DB]
+- [ ] 1 h · Add an HTTP client with `rustls` features, matching [32](32-https-tls.md); `serde_json` is already a dependency [BE]
+- [ ] 3 h · `MetadataProvider`: one adapter per source, chosen from the library's `library_type`, per the provider-chain decision — start with an `enum` and one `match` (an `async fn` trait isn't object-safe without `async-trait`) [BE]
+- [ ] 2 h · Title search through the library's provider, returning candidates without writing anything [BE]
+- [ ] 4 h · Merge a confirmed candidate — description, cover, tags, release years, author — and store the external id, in one transaction per entry; fetched covers go into `cover_images/` like extracted ones [BE]
+- [ ] 1 h · Treat the scanner's placeholders (`"Unknown Author"`, `BookLanguage::Other("Unknown")`) as empty when merging [BE]
+- [ ] 1 h · Merge tags into the comma-joined `books.tags` through one split, de-duplicate and re-join helper, per the tags decision [BE]
+- [ ] 2 h · Auto-match per the auto-match decision, logging every auto-match [BE]
+- [ ] 3 h · Cache provider results per the cache decision, so a repeated scan doesn't call the provider again [DB] [BE]
+- [ ] 2 h · Respect each provider's documented rate limit (not one global number); hitting it gives a logged, non-500 outcome [BE]
+- [ ] 2 h · Store provider API keys per the key-storage decision; never log a key [BE]
+- [ ] 1 h · Sensitive items skip every online lookup: one check in the provider dispatch, not per adapter, so a new adapter can't forget it ([10](10-sensitive-content-controls.md)) [BE]
+- [ ] 3 h · Per-entry search and confirm endpoints, per the endpoint decision [BE]
+- [ ] 4 h · Bulk enrichment pass behind `POST /scan_metadata`, run in the background — not inline, where an unresponsive provider would stall the response — per the endpoint decision [BE]
+- [ ] 0.5 h · Require `AdminSession` on the enrichment endpoints — today `scan_for_metadata` takes an `AuthSession` [BE]
+- [ ] 4 h · Candidate list and confirm screen [FE]
 
 ## Open decisions
 - [ ] External id on `series`, `books`, or both? — blocks: storing the external id. Suggested: `series` first — that is where providers describe things; a per-book id only if single volumes need matching.

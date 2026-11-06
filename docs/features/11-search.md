@@ -6,11 +6,11 @@ One search box across titles, authors and tags, backed by SQLite's built-in full
 (FTS5) — no extra service. `GET /search` already exists as a placeholder.
 
 ## Build
-- [ ] ? h · FTS5 table over `books.title` / `author` / `tags` and `series.name` — pick the tokenizer up front (`porter` for stemming, or `unicode61 remove_diacritics 2`), since changing it means rebuilding the index [DB]
-- [ ] ? h · Keep the index in step with every write, per the index-sync decision [DB]
-- [ ] ? h · `GET /search` handler (now `ping_server`): the term goes in as a bound parameter, wrapped in double quotes so FTS syntax such as `*`, `AND` or `-` is treated as text; results shaped per the result decision [BE]
-- [ ] ? h · Ship an SQLite that has FTS5, per the SQLite decision [BE]
-- [ ] ? h · Search box and results view [FE]
+- [ ] 3 h · FTS5 table over `books.title` / `author` / `tags` and `series.name` — pick the tokenizer up front (`porter` for stemming, or `unicode61 remove_diacritics 2`), since changing it means rebuilding the index [DB]
+- [ ] 3 h · Keep the index in step with every write, per the index-sync decision [DB]
+- [ ] 2 h · `GET /search` handler (now `ping_server`): the term goes in as a bound parameter, wrapped in double quotes so FTS syntax such as `*`, `AND` or `-` is treated as text; results shaped per the result decision [BE]
+- [ ] 1 h · Ship an SQLite that has FTS5, per the SQLite decision [BE]
+- [ ] 4 h · Search box and results view [FE]
 
 ## Open decisions
 - [ ] Keep linking the system SQLite (`rusqlite` has no features today), or ship a bundled one? This Mac's SQLite (3.51) has FTS5, but the Windows and Docker builds give no such guarantee — blocks: shipping an SQLite with FTS5. Suggested: turn on `rusqlite`'s `bundled` feature in the same change as the FTS5 table — it also removes "works on my machine" surprises in packaging.

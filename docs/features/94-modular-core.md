@@ -4,10 +4,11 @@ State: not started
 
 Split the server into a core — users, auth, permissions, libraries, the directory walk, the
 migration runner, the route table — and media modules attached to it: books first,
-[video](20-video.md) and [documents](21-documents.md) later, each owning its tables,
-migrations, endpoints and format-specific code, and each switchable off. Optional: decide when
-video work starts — with books as the only module there is nothing to compare against. The
-route shape it would need is settled in [07](07-api-route-naming.md) either way.
+[video](20-video.md) and [documents](21-documents.md) next, each owning its tables,
+migrations, endpoints and format-specific code, and each switchable off. It comes first in
+Phase 2, so the module interface is designed against a second real module; until then the
+Modules rules in [ARCHITECTURE.md](../ARCHITECTURE.md) keep the boundary clean, and
+[07](07-api-route-naming.md) settles the route shape.
 
 ## Build
 - [ ] ? h · Cargo workspace: `crates/core`, `crates/books` and a thin `crates/server` binary — modules depend on `core`, never the other way round [BE]

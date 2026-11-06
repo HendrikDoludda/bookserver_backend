@@ -1,6 +1,8 @@
 # Collaborative documents
 
-State: not started
+State: blocked
+
+**Blocked:** needs the modular core ([94](94-modular-core.md)) — documents become a module of their own.
 
 Editable markdown / plaintext documents on the server, synced live between devices. A document
 is an ordered list of nodes with unique ids; edits are small append-only ops anchored to

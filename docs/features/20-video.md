@@ -1,6 +1,8 @@
 # Video library & direct play
 
-State: not started
+State: blocked
+
+**Blocked:** needs the modular core ([94](94-modular-core.md)) — video is its second module.
 
 The same server that streams books also streams video: one machine, one copy of the files, no
 second media server. The app plays files directly with range requests and decodes them on the

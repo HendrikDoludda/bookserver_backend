@@ -61,9 +61,11 @@ One row per feature. No description, no rationale, no sub-items, no dates, no co
 ```
 
 `Tier` is where the feature sits in the build order — `—` until one is assigned. It lives in
-this table only. The numbered tiers run in order: finish every feature in one before starting
-the next. `F0` / `F1` are the frontend track, `cross-cutting` rides along with whatever touches
-it, `Phase 2` is parked, `optional` waits for an accept, and `ongoing` never holds anything up.
+this table only. The numbered tiers `0`–`5` are Phase 1, the MVP, and run in order: finish
+every feature in one before starting the next; `5` ends Phase 1 with the first public release.
+`F0` / `F1` are the frontend track — the Flutter app — which opens after Tier 1;
+`cross-cutting` rides along with whatever touches it, `Phase 2` is parked, `optional` waits for
+an accept, and `ongoing` never holds anything up.
 
 Completed rows stay until the developer says that work is released to users — then they go,
 together with the feature doc (see [Deleting](#deleting)).
@@ -220,9 +222,10 @@ matter of taste. Remove each entry once the developer has decided; delete the fi
 
 ## Before you edit
 
-Read the relevant code, tests, configuration and feature doc before changing them. Do not infer
-architecture from filenames or assume a conventional implementation exists. For a change with
-non-trivial behaviour, identify the current behaviour and the intended behaviour before editing.
+Read the relevant code, tests, configuration, feature doc and `docs/ARCHITECTURE.md` before
+changing them. Do not infer architecture from filenames or assume a conventional
+implementation exists. For a change with non-trivial behaviour, identify the current
+behaviour and the intended behaviour before editing.
 
 ## Conflicts
 

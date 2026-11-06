@@ -49,6 +49,11 @@
 - Back up SQLite with `VACUUM INTO`, never by copying the file — under WAL a plain copy is not a valid backup.
 - Schema changes: a new numbered `.sql` in `migrations/`, registered in `MIGRATIONS`; an applied migration is never edited. Early-development exception: migration 0001 is edited in place and the database wiped.
 
+## Modules
+- Core code — auth, users, sessions, settings, email, config, migrations — never imports book-specific types (`BookMetadata`, `BookSeriesMetadata`, `BookFormat`, the filename parser); book code may use core, never the reverse. Today's mixed files (`models.rs`, the per-model trait impls, `api_caller.rs`) get split up by [94](features/94-modular-core.md).
+- Per-user data references `users.id` through a declared foreign key, in the one SQLite database.
+- Format-specific behaviour — filename parsing, cover extraction, reading positions — is chosen by `LibraryType` / `BookFormat` in one place, never spread through core.
+
 ## Frontend
 - Components read design tokens, never literal colours or sizes.
 - Every visible string goes through `t("key")` against the backend's translation catalog.

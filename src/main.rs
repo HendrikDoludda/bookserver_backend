@@ -9,7 +9,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let db = Arc::new(Database::new().context("Failed to initialize the database")?);
-    // Not consumed yet; see docs/features/12-operations-and-security.md.
+    // Not consumed yet; see docs/features/12-security-hardening.md.
     let _secrets = config::set_up_config_file()?;
 
     start_server(db)
