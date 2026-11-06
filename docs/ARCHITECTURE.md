@@ -23,12 +23,14 @@
 - `user_id` always comes from the session (`AuthSession`), never from the request body or path.
 - A permission check is an Axum extractor composed on `AuthSession` (as `AdminSession` is), not an `if` inside handlers.
 - Auth answers never reveal whether an account exists: an unknown user and a wrong password get the same response, and so does a password-reset request for an unknown address.
-- Never return or `Debug`-log a struct that carries secrets — `UserMetadata`, `Sessions`, `TOTP`, `RecoveryCodes` and `EmailConfig` derive `Serialize` / `Debug` over the password hash, the token hashes, the TOTP secret or the SMTP password; build a response struct.
+- Never return or `Debug`-log a struct that carries secrets — `UserMetadata`, `Sessions`, `TOTP`, `RecoveryCodes` and `EmailConfig` derive `Serialize` / `Debug` over the password hash, the token hashes, the TOTP secret or the SMTP password; build a response struct. Request bodies that carry a password or a code don't derive `Debug` at all.
 - List endpoints return `WithId<T>`: the row id plus the metadata, flattened in JSON.
 
 ## Errors
 - One `thiserror` enum per domain, in `error_types.rs`.
-- An error enum that reaches a handler implements `IntoResponse` in the shape of `DatabaseError::into_response`: a status per variant (`EntryNotFound` → 404), and for a 5xx the detail logged server-side and a generic body to the client.
+- Every error answer is JSON `{"error": "<key>"}` — a stable key the app translates; a 500 answers `internal_error` and logs the detail server-side.
+- An error enum that reaches a handler implements `IntoResponse` through a `status_and_key` match with one arm per variant and no `_` arm, so a new variant can't silently become a 500.
+- A handler returns `Result<_, AppErrors>` and uses `?`; an error type without `IntoResponse` (such as `anyhow`) is logged and answered with `internal_error_response()`.
 
 ## Logging
 - Never log a password, a token (plain or hashed), a TOTP secret, a verification, reset or recovery code, the signing key, or an email body — bodies carry codes.

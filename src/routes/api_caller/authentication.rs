@@ -20,7 +20,7 @@ use crate::{
         VerifyEmailRequest,
     },
     db::Database,
-    error_types::{DatabaseError, EmailErrors},
+    error_types::{AppErrors, AuthenticationError, DatabaseError, EmailErrors},
     models::{
         DatabaseTypes, QuerySeparator, ResetPasswordRequest, ResetPasswordRequestColumns,
         UserDatabaseColumns, UserMetadata,
@@ -37,27 +37,19 @@ use crate::{
 
 use super::{
     extractors::{AuthRefreshSession, AuthSession},
-    helpers::{create_auth_response, create_internal_server_error_response},
+    helpers::{create_auth_response, not_implemented_response},
 };
 
 pub async fn sign_up(
     State(db): State<Arc<Database>>,
     Json(request): Json<UserCreationRequest>,
-) -> Response<Body> {
-    let email_info = match db.setup_new_transaction(|conn| {
+) -> Result<Response<Body>, AppErrors> {
+    let email_info = db.setup_new_transaction(|conn| {
         let validated_user = validate_new_user(conn, request.clone())?;
         let user_id = create_new_user(conn, validated_user, request.clone())?;
         let result = send_verification_email(conn, user_id)?;
         Ok(result)
-    }) {
-        Ok(information) => information,
-        Err(err) => {
-            log::error!("Failed the sign up procedure with error: {err}");
-            return create_internal_server_error_response(format!(
-                "Could not create a user due to: {err}"
-            ));
-        }
-    };
+    })?;
 
     let result = create_verification_email(&email_info)
         .await
@@ -68,16 +60,14 @@ pub async fn sign_up(
             err => err,
         });
     match result {
-        Ok(()) => Response::builder()
+        Ok(()) => Ok(Response::builder()
             .status(StatusCode::ACCEPTED)
             .body("Created a user and sent a verification email.".into())
-            .unwrap(),
+            .unwrap()),
         Err(EmailErrors::SentFailedDueToNoConfig { code }) => {
             auto_verify_account(request.email, code, &db, email_info.user.user_id).await
         }
-        Err(err) => create_internal_server_error_response(format!(
-            "Failed to send verification email due to: {err}"
-        )),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -86,7 +76,7 @@ async fn auto_verify_account(
     code: String,
     db: &Arc<Database>,
     user_id: i64,
-) -> Response<Body> {
+) -> Result<Response<Body>, AppErrors> {
     let verify_email_request = VerifyEmailRequest {
         email_verification_token: code,
         email,
@@ -97,8 +87,11 @@ async fn auto_verify_account(
     verify_email_logic(verify_email_request, db, user_id)
 }
 
-pub async fn sign_in(State(db): State<Arc<Database>>, request: LoginRequest) -> Response<Body> {
-    let tokens: CreatedTokensReadable = match db.setup_new_transaction(|conn| {
+pub async fn sign_in(
+    State(db): State<Arc<Database>>,
+    request: LoginRequest,
+) -> Result<Response<Body>, AppErrors> {
+    let tokens: CreatedTokensReadable = db.setup_new_transaction(|conn| {
         let user = search_for_user_using_email_or_username(conn, &request.username_or_email)?;
         let user_totp_settings = log_in(&request, conn, &user)?;
         let device_information = DeviceInformation {
@@ -109,32 +102,21 @@ pub async fn sign_in(State(db): State<Arc<Database>>, request: LoginRequest) -> 
         let token_info =
             create_new_session(conn, user.user_id, device_information, user_totp_settings)?;
         Ok(token_info)
-    }) {
-        Ok(tokens) => tokens,
-        Err(err) => {
-            log::error!("Failed with log in transaction at: {err}");
-            return create_internal_server_error_response(format!(
-                "Failed to sign in due to: {err}"
-            ));
-        }
-    };
-    create_auth_response("Your user account has been logged in", tokens)
+    })?;
+    Ok(create_auth_response(
+        "Your user account has been logged in",
+        tokens,
+    ))
 }
 
 pub async fn verify_email(
     request: VerifyEmailRequest,
     State(db): State<Arc<Database>>,
-) -> Response<Body> {
-    let user = match db.setup_new_transaction(|conn| {
+) -> Result<Response<Body>, AppErrors> {
+    let user = db.setup_new_transaction(|conn| {
         let found_user = search_for_user_using_email_or_username(conn, &request.email)?;
         Ok(found_user)
-    }) {
-        Ok(user) => user,
-        Err(err) => {
-            log::error!("Failed the transaction for auto verifying an account: {err}");
-            return create_internal_server_error_response(format!("failed retrieving user: {err}"));
-        }
-    };
+    })?;
     verify_email_logic(request, &db, user.user_id)
 }
 
@@ -142,8 +124,8 @@ fn verify_email_logic(
     request: VerifyEmailRequest,
     db: &Arc<Database>,
     user_id: i64,
-) -> Response<Body> {
-    let session_information = match db.setup_new_transaction(|conn| {
+) -> Result<Response<Body>, AppErrors> {
+    let session_information = db.setup_new_transaction(|conn| {
         verify_verification_code(conn, &request, user_id)?;
         let device_information = DeviceInformation {
             device_id: &request.device_id,
@@ -155,77 +137,52 @@ fn verify_email_logic(
         };
         let session = create_new_session(conn, user_id, device_information, default_totp_settings)?;
         Ok(session)
-    }) {
-        Ok(session) => session,
-        Err(err) => {
-            log::error!("Failed the transaction for auto verifying an account: {err}");
-            return create_internal_server_error_response(format!(
-                "failed creating a new session: {err}"
-            ));
-        }
-    };
-    create_auth_response("Your user account has been verified. The servers email address needs to be set up so that actual verification can take place", session_information)
+    })?;
+    Ok(create_auth_response("Your user account has been verified. The servers email address needs to be set up so that actual verification can take place", session_information))
 }
 
-pub async fn log_out(session: AuthSession, State(db): State<Arc<Database>>) -> Response<Body> {
-    match db.remove_entry(DatabaseTypes::Session, session.0.session_id) {
-        Ok(_) => (StatusCode::ACCEPTED, "Successfully logged out!").into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to log out properly due to: {err}"),
-        )
-            .into_response(),
-    }
+pub async fn log_out(
+    session: AuthSession,
+    State(db): State<Arc<Database>>,
+) -> Result<Response<Body>, AppErrors> {
+    db.remove_entry(DatabaseTypes::Session, session.0.session_id)?;
+    Ok((StatusCode::ACCEPTED, "Successfully logged out!").into_response())
 }
 
 pub async fn refresh_session(
     session: AuthRefreshSession,
     State(db): State<Arc<Database>>,
-) -> Response<Body> {
-    let tokens: CreatedTokensReadable = match db.setup_new_transaction(|conn| {
+) -> Result<Response<Body>, AppErrors> {
+    let tokens: CreatedTokensReadable = db.setup_new_transaction(|conn| {
         let tokens = update_existing_session(conn, session.0)?;
         Ok(tokens)
-    }) {
-        Ok(new_tokens) => new_tokens,
-        Err(err) => {
-            return create_internal_server_error_response(format!(
-                "Failed the transaction due to: {err}"
-            ));
-        }
-    };
-    create_auth_response("refreshed session", tokens)
+    })?;
+    Ok(create_auth_response("refreshed session", tokens))
 }
 
 pub async fn change_password(
     session: AuthSession,
     State(db): State<Arc<Database>>,
     request: ChangePasswordRequest,
-) -> Response<Body> {
+) -> Result<Response<Body>, AppErrors> {
     if request.new_password != request.new_password_repeat {
-        return create_internal_server_error_response("Password mismatch".to_string());
+        return Err(AuthenticationError::MismatchingPasswords.into());
     }
-    match db.setup_new_transaction(|conn| {
+    db.setup_new_transaction(|conn| {
         let user = Database::get_entry_with_connection::<UserMetadata>(conn, session.0.user_id)?;
         validate_submitted_password(&user, &request.current_password)?;
         update_password_to_new_password(conn, request, user.user_id)?;
         Ok(())
-    }) {
-        Ok(()) => (),
-        Err(err) => {
-            return create_internal_server_error_response(format!(
-                "Failed to change the password for the following reason: {err}"
-            ))
-        }
-    };
-    (StatusCode::ACCEPTED, "Password has been changed").into_response()
+    })?;
+    Ok((StatusCode::ACCEPTED, "Password has been changed").into_response())
 }
 
 pub async fn change_username(
     session: AuthSession,
     State(db): State<Arc<Database>>,
     request: ChangeUserNameRequest,
-) -> Response<Body> {
-    match db.setup_new_transaction(|conn| {
+) -> Result<Response<Body>, AppErrors> {
+    db.setup_new_transaction(|conn| {
         Database::update_value_with_connection::<UserMetadata>(
             conn,
             UserDatabaseColumns::Username,
@@ -233,24 +190,16 @@ pub async fn change_username(
             session.0.user_id,
         )?;
         Ok(())
-    }) {
-        Ok(()) => (),
-        Err(err) => {
-            return create_internal_server_error_response(format!(
-                "Failed to update username due to: {err}"
-            ))
-        }
-    };
-
-    (StatusCode::ACCEPTED, "Username has been changed").into_response()
+    })?;
+    Ok((StatusCode::ACCEPTED, "Username has been changed").into_response())
 }
 
 pub async fn change_email(
     session: AuthSession,
     State(db): State<Arc<Database>>,
     request: ChangeEmailRequest,
-) -> Response<Body> {
-    match db.setup_new_transaction(|conn| {
+) -> Result<Response<Body>, AppErrors> {
+    db.setup_new_transaction(|conn| {
         Database::update_value_with_connection::<UserMetadata>(
             conn,
             UserDatabaseColumns::Email,
@@ -258,16 +207,8 @@ pub async fn change_email(
             session.0.user_id,
         )?;
         Ok(())
-    }) {
-        Ok(()) => (),
-        Err(err) => {
-            return create_internal_server_error_response(format!(
-                "Failed to update email due to: {err}"
-            ))
-        }
-    };
-
-    (StatusCode::ACCEPTED, "Email has been changed").into_response()
+    })?;
+    Ok((StatusCode::ACCEPTED, "Email has been changed").into_response())
 }
 
 pub async fn reset_password(
@@ -281,40 +222,31 @@ pub async fn reset_password(
     // - check that the reset code matches the entry's hashed code
     //   - if yes, change the password
     //   - if no, increment the attempt count and return an unauthorized response
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        "Needs the front end structure in place first so this can match the structure",
-    )
-        .into_response()
+    not_implemented_response()
 }
 
 pub async fn request_reset_password_link(
     request: RequestPasswordResetLinkRequest,
     State(db): State<Arc<Database>>,
-) -> Response<Body> {
-    let tokens = match db.setup_new_transaction(|conn| {
+) -> Result<Response<Body>, AppErrors> {
+    let tokens = db.setup_new_transaction(|conn| {
         let user = search_for_user_using_email_or_username(conn, &request.email)?;
         let reset_and_cancelation_token = generate_password_reset_codes()?;
         store_user_password_reset_token(conn, &reset_and_cancelation_token, user)?;
         Ok(reset_and_cancelation_token)
-    }) {
-        Ok(tokens) => tokens,
-        Err(err) => {
-            return create_internal_server_error_response(format!(
-                "Could not create reset password link due to: {err}"
-            ))
-        }
-    };
+    })?;
 
-    send_reset_password_email(
+    if let Err(err) = send_reset_password_email(
         &tokens.reset_token,
         &tokens.cancelation_token,
         &Url::parse("https://invalid.link").unwrap(),
         &request.email,
     )
     .await
-    .map_err(|err| return create_internal_server_error_response(err.to_string()));
-    (StatusCode::ACCEPTED, "Email has been sent").into_response()
+    {
+        tracing::error!("sending the password-reset email failed: {err}");
+    }
+    Ok((StatusCode::ACCEPTED, "Email has been sent").into_response())
 }
 
 fn store_user_password_reset_token(

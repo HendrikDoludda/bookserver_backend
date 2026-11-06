@@ -1,9 +1,40 @@
+use std::fmt::Display;
+
 use axum::{
     body::Body,
     http::StatusCode,
     response::{IntoResponse, Response},
+    Json,
 };
+use serde::Serialize;
 use thiserror::Error;
+
+/// The body of every error answer: a stable key the app translates through the catalog.
+#[derive(Serialize)]
+struct ErrorBody {
+    error: &'static str,
+}
+
+const INTERNAL: (StatusCode, &str) = (StatusCode::INTERNAL_SERVER_ERROR, "internal_error");
+
+pub fn error_response(status: StatusCode, key: &'static str) -> Response<Body> {
+    (status, Json(ErrorBody { error: key })).into_response()
+}
+
+/// A 500 never tells the client why; the detail goes to the server log instead.
+fn respond(status_and_key: (StatusCode, &'static str), detail: &dyn Display) -> Response<Body> {
+    let (status, key) = status_and_key;
+    if status == StatusCode::INTERNAL_SERVER_ERROR {
+        tracing::error!("request failed: {detail}");
+    }
+    error_response(status, key)
+}
+
+/// The answer for a failure whose error type has no `IntoResponse` (e.g. `anyhow`);
+/// the caller logs the detail.
+pub fn internal_error_response() -> Response<Body> {
+    error_response(INTERNAL.0, INTERNAL.1)
+}
 
 #[derive(Error, Debug)]
 pub enum DatabaseError {
@@ -71,19 +102,38 @@ pub enum DatabaseError {
     UsernameAlreadyExists,
 }
 
+impl DatabaseError {
+    fn status_and_key(&self) -> (StatusCode, &'static str) {
+        match self {
+            DatabaseError::EntryNotFound => (StatusCode::NOT_FOUND, "not_found"),
+            DatabaseError::EmailAlreadyExists => (StatusCode::CONFLICT, "email_taken"),
+            DatabaseError::UsernameAlreadyExists => (StatusCode::CONFLICT, "username_taken"),
+            DatabaseError::DatabaseInitializationFailure
+            | DatabaseError::DirectoryCreationFailure
+            | DatabaseError::FailedToConnectToDatabase
+            | DatabaseError::ConnectionPoolFailure
+            | DatabaseError::PoolConnectionRetrievalFailure
+            | DatabaseError::InsertionFailure
+            | DatabaseError::UpdatingFailure
+            | DatabaseError::LibrarySeriesException
+            | DatabaseError::ConnectionExecutableFailure
+            | DatabaseError::TaskPreparationFailure
+            | DatabaseError::NextRowFailure
+            | DatabaseError::InvalidRequest
+            | DatabaseError::QueryFailure
+            | DatabaseError::IdRetrievalFailure
+            | DatabaseError::TransactionFailure
+            | DatabaseError::OperationFailure
+            | DatabaseError::OperationCommitFailure
+            | DatabaseError::InvalidParameters
+            | DatabaseError::UnexpectedSearchResult => INTERNAL,
+        }
+    }
+}
+
 impl IntoResponse for DatabaseError {
     fn into_response(self) -> Response<Body> {
-        let status = match self {
-            DatabaseError::EntryNotFound => StatusCode::NOT_FOUND,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        };
-        let body = if status.is_server_error() {
-            tracing::error!("database error: {self}");
-            "Internal server error".to_string()
-        } else {
-            self.to_string()
-        };
-        (status, body).into_response()
+        respond(self.status_and_key(), &self)
     }
 }
 
@@ -190,34 +240,6 @@ pub enum StreamReaderErrors {
 }
 
 #[derive(Error, Debug)]
-pub enum RequestErrors {
-    #[error("Failed to authorize the user, so the request couldn't be completed")]
-    AuthorizationFailed,
-
-    #[error("Request failed to retrieve the desired data")]
-    RequestFailed,
-    #[error("You do not have permission to perform this action")]
-    Forbidden,
-}
-
-impl IntoResponse for RequestErrors {
-    fn into_response(self) -> Response<Body> {
-        let status = match self {
-            RequestErrors::AuthorizationFailed => StatusCode::UNAUTHORIZED,
-            RequestErrors::Forbidden => StatusCode::FORBIDDEN,
-            RequestErrors::RequestFailed => StatusCode::BAD_REQUEST,
-        };
-        let body = if status.is_server_error() {
-            log::error!("Request Error: {self}");
-            "Failed request".to_string()
-        } else {
-            self.to_string()
-        };
-        (status, body).into_response()
-    }
-}
-
-#[derive(Error, Debug)]
 pub enum RoutingErrors {
     #[error("Failed to start Axum")]
     AxumInitializationFailed(#[source] std::io::Error),
@@ -269,6 +291,44 @@ pub enum AuthenticationError {
     DatabaseUpdateFailed,
     #[error("Failed to insert a database entry")]
     DatabaseInsertFailed,
+    #[error("You do not have permission to perform this action")]
+    Forbidden,
+}
+
+impl AuthenticationError {
+    fn status_and_key(&self) -> (StatusCode, &'static str) {
+        match self {
+            AuthenticationError::UsernameTaken => (StatusCode::CONFLICT, "username_taken"),
+            AuthenticationError::EmailTaken => (StatusCode::CONFLICT, "email_taken"),
+            AuthenticationError::AccountAlreadyExists => (StatusCode::CONFLICT, "account_exists"),
+            AuthenticationError::IncorrectCredentials => {
+                (StatusCode::UNAUTHORIZED, "incorrect_credentials")
+            }
+            AuthenticationError::ExpiredSession | AuthenticationError::UnauthorizedSession => {
+                (StatusCode::UNAUTHORIZED, "unauthorized")
+            }
+            AuthenticationError::ExpiredAuthenticationCode
+            | AuthenticationError::InvalidValidationCode
+            | AuthenticationError::EmailVerificationNotFound => {
+                (StatusCode::BAD_REQUEST, "invalid_or_expired_code")
+            }
+            AuthenticationError::MismatchingPasswords => {
+                (StatusCode::BAD_REQUEST, "passwords_do_not_match")
+            }
+            AuthenticationError::UserNotFound => (StatusCode::NOT_FOUND, "not_found"),
+            AuthenticationError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
+            AuthenticationError::DatabaseSearchFailure
+            | AuthenticationError::PasswordHashingFailure
+            | AuthenticationError::FailedDataStoring
+            | AuthenticationError::RngCreatorFailed
+            | AuthenticationError::ErrorHashingData
+            | AuthenticationError::ErrorCreatingSalt
+            | AuthenticationError::TokenLifetimeCalculationFailed
+            | AuthenticationError::StringToPasswordHashConversionFailed
+            | AuthenticationError::DatabaseUpdateFailed
+            | AuthenticationError::DatabaseInsertFailed => INTERNAL,
+        }
+    }
 }
 
 #[derive(Error, Debug)]
@@ -300,6 +360,27 @@ pub enum EmailErrors {
     UserEntryNotFound,
 }
 
+impl EmailErrors {
+    fn status_and_key(&self) -> (StatusCode, &'static str) {
+        match self {
+            EmailErrors::EmailSetUpNotFound => {
+                (StatusCode::SERVICE_UNAVAILABLE, "email_not_configured")
+            }
+            EmailErrors::SMTPConnectionFailed
+            | EmailErrors::ClientBuilderFailed
+            | EmailErrors::SendingFailure
+            | EmailErrors::TimeAdjustmentFailure
+            | EmailErrors::DatabaseInsertionFailed
+            | EmailErrors::MissingEmail
+            | EmailErrors::SentFailedDueToNoConfig { .. }
+            | EmailErrors::HashingFailed
+            | EmailErrors::VerificationTokenRemovalFailure
+            | EmailErrors::FailedToRetrieveUserEntry
+            | EmailErrors::UserEntryNotFound => INTERNAL,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum AppErrors {
     #[error(transparent)]
@@ -308,6 +389,22 @@ pub enum AppErrors {
     Authentication(#[from] AuthenticationError),
     #[error(transparent)]
     Email(#[from] EmailErrors),
+}
+
+impl AppErrors {
+    fn status_and_key(&self) -> (StatusCode, &'static str) {
+        match self {
+            AppErrors::Database(err) => err.status_and_key(),
+            AppErrors::Authentication(err) => err.status_and_key(),
+            AppErrors::Email(err) => err.status_and_key(),
+        }
+    }
+}
+
+impl IntoResponse for AppErrors {
+    fn into_response(self) -> Response<Body> {
+        respond(self.status_and_key(), &self)
+    }
 }
 
 #[derive(Error, Debug)]
@@ -330,4 +427,179 @@ pub enum ApplicationSetUpErrors {
     NoConfigDirectory,
     #[error("Renaming file failed")]
     RenamingFileFailure,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    async fn answer(response: Response<Body>) -> (StatusCode, Value) {
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn client_errors_answer_with_their_own_status_and_key() {
+        use AuthenticationError as Auth;
+        let cases: Vec<(AppErrors, StatusCode, &str)> = vec![
+            (
+                Auth::IncorrectCredentials.into(),
+                StatusCode::UNAUTHORIZED,
+                "incorrect_credentials",
+            ),
+            (
+                Auth::UnauthorizedSession.into(),
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+            ),
+            (
+                Auth::ExpiredSession.into(),
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+            ),
+            (Auth::Forbidden.into(), StatusCode::FORBIDDEN, "forbidden"),
+            (Auth::EmailTaken.into(), StatusCode::CONFLICT, "email_taken"),
+            (
+                Auth::UsernameTaken.into(),
+                StatusCode::CONFLICT,
+                "username_taken",
+            ),
+            (
+                Auth::AccountAlreadyExists.into(),
+                StatusCode::CONFLICT,
+                "account_exists",
+            ),
+            (
+                Auth::ExpiredAuthenticationCode.into(),
+                StatusCode::BAD_REQUEST,
+                "invalid_or_expired_code",
+            ),
+            (
+                Auth::InvalidValidationCode.into(),
+                StatusCode::BAD_REQUEST,
+                "invalid_or_expired_code",
+            ),
+            (
+                Auth::EmailVerificationNotFound.into(),
+                StatusCode::BAD_REQUEST,
+                "invalid_or_expired_code",
+            ),
+            (
+                Auth::MismatchingPasswords.into(),
+                StatusCode::BAD_REQUEST,
+                "passwords_do_not_match",
+            ),
+            (
+                Auth::UserNotFound.into(),
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+            (
+                EmailErrors::EmailSetUpNotFound.into(),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "email_not_configured",
+            ),
+            (
+                DatabaseError::EntryNotFound.into(),
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+            (
+                DatabaseError::EmailAlreadyExists.into(),
+                StatusCode::CONFLICT,
+                "email_taken",
+            ),
+            (
+                DatabaseError::UsernameAlreadyExists.into(),
+                StatusCode::CONFLICT,
+                "username_taken",
+            ),
+        ];
+
+        for (error, expected_status, expected_key) in cases {
+            let label = error.to_string();
+            let (status, body) = answer(error.into_response()).await;
+            assert_eq!(status, expected_status, "{label}");
+            assert_eq!(body, json!({ "error": expected_key }), "{label}");
+        }
+    }
+
+    #[tokio::test]
+    async fn internal_failures_answer_500_without_their_detail() {
+        use AuthenticationError as Auth;
+        let cases: Vec<AppErrors> = vec![
+            Auth::DatabaseSearchFailure.into(),
+            Auth::PasswordHashingFailure.into(),
+            Auth::FailedDataStoring.into(),
+            Auth::RngCreatorFailed.into(),
+            Auth::ErrorHashingData.into(),
+            Auth::ErrorCreatingSalt.into(),
+            Auth::TokenLifetimeCalculationFailed.into(),
+            Auth::StringToPasswordHashConversionFailed.into(),
+            Auth::DatabaseUpdateFailed.into(),
+            Auth::DatabaseInsertFailed.into(),
+            EmailErrors::SMTPConnectionFailed.into(),
+            EmailErrors::ClientBuilderFailed.into(),
+            EmailErrors::SendingFailure.into(),
+            EmailErrors::TimeAdjustmentFailure.into(),
+            EmailErrors::DatabaseInsertionFailed.into(),
+            EmailErrors::MissingEmail.into(),
+            EmailErrors::SentFailedDueToNoConfig {
+                code: "SECRET-CODE".to_string(),
+            }
+            .into(),
+            EmailErrors::HashingFailed.into(),
+            EmailErrors::VerificationTokenRemovalFailure.into(),
+            EmailErrors::FailedToRetrieveUserEntry.into(),
+            EmailErrors::UserEntryNotFound.into(),
+            DatabaseError::DatabaseInitializationFailure.into(),
+            DatabaseError::DirectoryCreationFailure.into(),
+            DatabaseError::FailedToConnectToDatabase.into(),
+            DatabaseError::ConnectionPoolFailure.into(),
+            DatabaseError::PoolConnectionRetrievalFailure.into(),
+            DatabaseError::InsertionFailure.into(),
+            DatabaseError::UpdatingFailure.into(),
+            DatabaseError::LibrarySeriesException.into(),
+            DatabaseError::ConnectionExecutableFailure.into(),
+            DatabaseError::TaskPreparationFailure.into(),
+            DatabaseError::NextRowFailure.into(),
+            DatabaseError::InvalidRequest.into(),
+            DatabaseError::QueryFailure.into(),
+            DatabaseError::IdRetrievalFailure.into(),
+            DatabaseError::TransactionFailure.into(),
+            DatabaseError::OperationFailure.into(),
+            DatabaseError::OperationCommitFailure.into(),
+            DatabaseError::InvalidParameters.into(),
+            DatabaseError::UnexpectedSearchResult.into(),
+        ];
+
+        for error in cases {
+            let label = error.to_string();
+            let (status, body) = answer(error.into_response()).await;
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{label}");
+            assert_eq!(body, json!({ "error": "internal_error" }), "{label}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_database_error_answers_in_the_same_shape_on_its_own() {
+        let (status, body) = answer(DatabaseError::EntryNotFound.into_response()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body, json!({ "error": "not_found" }));
+
+        let (status, body) = answer(DatabaseError::QueryFailure.into_response()).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body, json!({ "error": "internal_error" }));
+    }
+
+    #[tokio::test]
+    async fn the_generic_internal_answer_is_json_too() {
+        let (status, body) = answer(internal_error_response()).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body, json!({ "error": "internal_error" }));
+    }
 }

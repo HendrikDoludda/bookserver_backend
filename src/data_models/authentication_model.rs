@@ -2,7 +2,9 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Clone)]
+// The request bodies that carry a password or a code don't derive `Debug`, so a
+// `{:?}` in a log line can't print them.
+#[derive(Deserialize, Clone)]
 pub struct UserCreationRequest {
     pub email: String,
     pub username: String,
@@ -10,7 +12,7 @@ pub struct UserCreationRequest {
     pub password_repeat: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Deserialize, Clone)]
 pub struct VerifyEmailRequest {
     pub email_verification_token: String,
     pub email: String,
@@ -19,7 +21,7 @@ pub struct VerifyEmailRequest {
     pub platform: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Deserialize, Clone)]
 pub struct LoginRequest {
     pub username_or_email: String,
     pub password: String,
@@ -45,7 +47,7 @@ pub struct ChangeUserNameRequest {
     pub new_username: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Deserialize, Clone)]
 pub struct ChangePasswordRequest {
     pub current_password: String,
     pub new_password: String,
@@ -57,7 +59,7 @@ pub struct RequestPasswordResetLinkRequest {
     pub email: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Deserialize, Clone)]
 pub struct ResettingUsersPassword {
     pub verification_token: String,
     pub email: String,

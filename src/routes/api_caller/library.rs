@@ -16,7 +16,7 @@ use axum::{
 
 use crate::{
     db::Database,
-    error_types::DatabaseError,
+    error_types::{internal_error_response, DatabaseError},
     folder_scanner::scan_all_folders,
     models::{BookMetadata, BookSeriesMetadata, DatabaseTypes, LibraryMetadata, WithId},
     stream_reader::streaming_file,
@@ -89,13 +89,13 @@ pub async fn initiate_database() -> Result<&'static str, DatabaseError> {
 }
 
 /// Kick off a scan of every configured book directory.
-pub async fn scan_all_directories(State(db): State<Arc<Database>>) -> impl IntoResponse {
+pub async fn scan_all_directories(State(db): State<Arc<Database>>) -> Response<Body> {
     match scan_all_folders(db).await {
-        Ok(()) => (StatusCode::OK, "Directory scan complete".to_string()),
-        Err(error) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Directory scan failed: {error}"),
-        ),
+        Ok(()) => (StatusCode::OK, "Directory scan complete").into_response(),
+        Err(error) => {
+            tracing::error!("directory scan failed: {error:#}");
+            internal_error_response()
+        }
     }
 }
 
