@@ -5,7 +5,6 @@ use crate::data_models::models::{
     TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, TOTP,
 };
 use crate::error_types::DatabaseError;
-use crate::models::{ResetPasswordRequest, ResetPasswordRequestColumns};
 use rusqlite::{params, params_from_iter, Connection, ToSql};
 
 /// Update one or more columns of the row whose `KEY` column equals `id`.
@@ -90,12 +89,6 @@ impl Update for UserMetadata {
 impl Update for EmailVerification {
     type Column = EmailVerificationDatabaseColumns;
     const TABLE: &'static str = "email_verification";
-    const KEY: &'static str = "user_id";
-}
-
-impl Update for ResetPasswordRequest {
-    type Column = ResetPasswordRequestColumns;
-    const TABLE: &'static str = "reset_password_requests";
     const KEY: &'static str = "user_id";
 }
 

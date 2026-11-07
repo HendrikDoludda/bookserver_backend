@@ -23,7 +23,6 @@ pub enum DatabaseTypes {
     Users,
     EmailVerificationType,
     Session,
-    ResetPasswordRequest,
     Totp,
     RecoveryCodes,
 }
@@ -38,7 +37,6 @@ impl DatabaseTypes {
             DatabaseTypes::LibraryElements => "library_elements",
             DatabaseTypes::EmailVerificationType => "email_verification",
             DatabaseTypes::Session => "sessions",
-            DatabaseTypes::ResetPasswordRequest => "reset_password_requests",
             DatabaseTypes::Totp => "totp",
             DatabaseTypes::RecoveryCodes => "recovery_codes",
         }
@@ -53,9 +51,7 @@ impl DatabaseTypes {
             | DatabaseTypes::Series
             | DatabaseTypes::Users => Some("id"),
             DatabaseTypes::LibraryElements => None,
-            DatabaseTypes::EmailVerificationType
-            | DatabaseTypes::ResetPasswordRequest
-            | DatabaseTypes::Totp => Some("user_id"),
+            DatabaseTypes::EmailVerificationType | DatabaseTypes::Totp => Some("user_id"),
             DatabaseTypes::Session => Some("session_id"),
             DatabaseTypes::RecoveryCodes => Some("recovery_id"),
         }
@@ -591,38 +587,35 @@ impl QuerySeparator {
     }
 }
 
-// === Password reset requests =================================================
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ResetPasswordRequest {
-    pub user_id: i64,
-    pub reset_token: String,
-    pub cancelation_token: String,
-    pub attempt_count: i64,
-    pub email_sent_at: SystemTime,
-    pub expiration_date: SystemTime,
-    pub invalidated: bool,
+// === Emailed codes ===========================================================
+/// What an emailed code is for; stored as text in `email_codes.purpose`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodePurpose {
+    ResetPassword,
+    VerifyEmail,
 }
 
-pub enum ResetPasswordRequestColumns {
-    UserID,
-    ResetToken,
-    CancelationToken,
-    AttemptCount,
-    EmailSentAt,
-    ExpirationDate,
-    Invalidated,
-}
-
-impl AsRef<str> for ResetPasswordRequestColumns {
-    fn as_ref(&self) -> &str {
+impl CodePurpose {
+    pub fn as_str(&self) -> &'static str {
         match self {
-            ResetPasswordRequestColumns::UserID => "user_id",
-            ResetPasswordRequestColumns::ResetToken => "reset_token",
-            ResetPasswordRequestColumns::CancelationToken => "cancelation_token",
-            ResetPasswordRequestColumns::AttemptCount => "attempt_count",
-            ResetPasswordRequestColumns::EmailSentAt => "email_sent_at",
-            ResetPasswordRequestColumns::ExpirationDate => "expires_at",
-            ResetPasswordRequestColumns::Invalidated => "invalidated",
+            CodePurpose::ResetPassword => "reset_password",
+            CodePurpose::VerifyEmail => "verify_email",
         }
     }
+}
+
+/// One row of `email_codes`. No `Debug`: it carries a code hash.
+#[derive(Clone)]
+pub struct EmailCode {
+    pub user_id: i64,
+    pub purpose: CodePurpose,
+    /// Argon2 hash of the code; the code itself only ever exists in the email.
+    pub code_hash: String,
+    pub expires_at: SystemTime,
+    /// Tries on the current code, counted before each check.
+    pub attempts: i64,
+    pub last_sent_at: SystemTime,
+    /// Mails sent since `window_started_at`, for the daily cap.
+    pub sent_in_window: i64,
+    pub window_started_at: SystemTime,
 }

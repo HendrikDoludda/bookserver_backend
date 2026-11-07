@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{sync::Arc, time::SystemTime};
 
 use axum::{
     body::Body,
@@ -10,35 +7,31 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use rusqlite::Connection;
-use url::Url;
 
 use crate::{
     data_models::authentication_model::{
-        ChangeEmailRequest, ChangePasswordRequest, ChangeUserNameRequest, DeviceInformation,
-        LoginRequest, RequestPasswordResetLinkRequest, ResettingUsersPassword, UserCreationRequest,
-        VerifyEmailRequest,
+        ChangeEmailRequest, ChangePasswordRequest, ChangeUserNameRequest,
+        ConfirmPasswordResetRequest, DeviceInformation, LoginRequest, PasswordResetRequest,
+        UserCreationRequest, VerifyEmailRequest,
     },
     db::Database,
-    error_types::{AppErrors, AuthenticationError, DatabaseError, EmailErrors},
-    models::{
-        DatabaseTypes, QuerySeparator, ResetPasswordRequest, ResetPasswordRequestColumns,
-        UserDatabaseColumns, UserMetadata,
-    },
+    error_types::{AppErrors, AuthenticationError, EmailErrors},
+    models::{DatabaseTypes, UserDatabaseColumns, UserMetadata},
     routes::auth::{
-        create_new_session, create_new_user, create_verification_email,
-        generate_password_reset_codes, log_in, search_for_user_using_email_or_username,
-        send_reset_password_email, send_verification_email, update_existing_session,
+        create_new_session, create_new_user, create_verification_email, log_in,
+        search_for_user_using_email_or_username, send_verification_email, update_existing_session,
         update_password_to_new_password, validate_new_user, validate_submitted_password,
-        verify_verification_code, CreatedTokensReadable, ResetAndCancelationTokens,
-        UserTotpEnabledResult,
+        verify_verification_code, CreatedTokensReadable, UserTotpEnabledResult,
     },
-    routes::email_helper::Mailer,
+    routes::{
+        email_helper::Mailer,
+        password_reset::{confirm_reset, send_reset_code},
+    },
 };
 
 use super::{
     extractors::{AuthRefreshSession, AuthSession},
-    helpers::{create_auth_response, not_implemented_response},
+    helpers::create_auth_response,
 };
 
 pub async fn sign_up(
@@ -213,71 +206,30 @@ pub async fn change_email(
     Ok((StatusCode::ACCEPTED, "Email has been changed").into_response())
 }
 
-pub async fn reset_password(
-    _request: ResettingUsersPassword,
-    State(_db): State<Arc<Database>>,
-) -> Response<Body> {
-    // Planned flow:
-    // - get the user using the email address
-    // - check for an existing reset-password entry using the user id
-    // - check that the attempt count is below five
-    // - check that the reset code matches the entry's hashed code
-    //   - if yes, change the password
-    //   - if no, increment the attempt count and return an unauthorized response
-    not_implemented_response()
-}
-
-pub async fn request_reset_password_link(
-    request: RequestPasswordResetLinkRequest,
+/// `POST /api/v1/auth/password_reset`: answers 202 before the address is even looked up,
+/// so known and unknown addresses can't be told apart; the code goes out in the background.
+pub async fn request_password_reset(
     State(db): State<Arc<Database>>,
     State(mailer): State<Mailer>,
-) -> Result<Response<Body>, AppErrors> {
-    let tokens = db.setup_new_transaction(|conn| {
-        let user = search_for_user_using_email_or_username(conn, &request.email)?;
-        let reset_and_cancelation_token = generate_password_reset_codes()?;
-        store_user_password_reset_token(conn, &reset_and_cancelation_token, user)?;
-        Ok(reset_and_cancelation_token)
-    })?;
-
-    if let Err(err) = send_reset_password_email(
-        &mailer,
-        &tokens.reset_token,
-        &tokens.cancelation_token,
-        &Url::parse("https://invalid.link").unwrap(),
-        &request.email,
-    )
-    .await
-    {
-        tracing::error!("sending the password-reset email failed: {err}");
+    Json(request): Json<PasswordResetRequest>,
+) -> Result<StatusCode, AppErrors> {
+    if !mailer.is_enabled() {
+        return Err(EmailErrors::EmailSetUpNotFound.into());
     }
-    Ok((StatusCode::ACCEPTED, "Email has been sent").into_response())
+    tokio::spawn(send_reset_code(
+        db,
+        mailer,
+        request.email,
+        SystemTime::now(),
+    ));
+    Ok(StatusCode::ACCEPTED)
 }
 
-fn store_user_password_reset_token(
-    conn: &Connection,
-    tokens: &ResetAndCancelationTokens,
-    user: UserMetadata,
-) -> Result<(), DatabaseError> {
-    Database::remove_entry_with_connection_based_on_columns::<ResetPasswordRequest>(
-        conn,
-        &[ResetPasswordRequestColumns::UserID],
-        &[&user.user_id],
-        QuerySeparator::And,
-    )?;
-    let expiration_time = SystemTime::now()
-        .checked_add(Duration::from_mins(15))
-        .ok_or(return Err(DatabaseError::OperationFailure))?;
-    Database::insert_with_connection(
-        conn,
-        &ResetPasswordRequest {
-            user_id: user.user_id,
-            reset_token: tokens.reset_token_hashed,
-            cancelation_token: tokens.cancelation_token_hashed,
-            attempt_count: 0,
-            email_sent_at: SystemTime::UNIX_EPOCH,
-            expiration_date: expiration_time,
-            invalidated: false,
-        },
-    )?;
-    Ok(())
+/// `POST /api/v1/auth/password_reset/confirm`
+pub async fn confirm_password_reset(
+    State(db): State<Arc<Database>>,
+    Json(request): Json<ConfirmPasswordResetRequest>,
+) -> Result<StatusCode, AppErrors> {
+    confirm_reset(db, request, SystemTime::now()).await?;
+    Ok(StatusCode::OK)
 }

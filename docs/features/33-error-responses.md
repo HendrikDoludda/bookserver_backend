@@ -14,5 +14,6 @@ enums turn into responses at all, and the auth handlers put raw error text into 
 - [x] 2 h · Remove `create_internal_server_error_response`, which puts the raw error text into every 500 body, once the handlers return `AppErrors` [BE]
 - [x] 2 h · The extractors reject with `AppErrors`, and `RequestErrors` goes — its `RequestFailed` answers 400 for a failed database lookup too. Client faults become 401/403, server faults 500 [BE]
 - [x] 1 h · `scan_all_directories` and `log_out` build their 500 bodies inline with `format!`, putting the error text in — log it and answer with a generic message [BE]
+- [ ] 1.5 h · A body that can't be read (malformed JSON, a missing field, no `Content-Type`) is rejected by axum's own `Json` extractor with a plain-text 400/415/422 quoting the parse error — add our own `Json` extractor that rejects with `AppErrors` (400 `invalid_request`) and use it in every handler, before the app starts calling the API [BE]
 - [ ] 1 h · The hollow handlers behind `PUT /update_entry`, `POST /insert_entry` and `POST /scan_metadata` answer 200 with "Failed to get response" (`failed_getting_response`) — answer 501 until they are built, like the TOTP stubs [BE]
 - [ ] 1 h · Move the `log::` call sites to `tracing::` and drop the `log` dependency — consistency only; both already reach the output [BE]

@@ -293,6 +293,10 @@ pub enum AuthenticationError {
     DatabaseInsertFailed,
     #[error("You do not have permission to perform this action")]
     Forbidden,
+    #[error("The new password is too short")]
+    PasswordTooShort,
+    #[error("The new password is too long")]
+    PasswordTooLong,
 }
 
 impl AuthenticationError {
@@ -315,6 +319,10 @@ impl AuthenticationError {
             AuthenticationError::MismatchingPasswords => {
                 (StatusCode::BAD_REQUEST, "passwords_do_not_match")
             }
+            AuthenticationError::PasswordTooShort => {
+                (StatusCode::BAD_REQUEST, "password_too_short")
+            }
+            AuthenticationError::PasswordTooLong => (StatusCode::BAD_REQUEST, "password_too_long"),
             AuthenticationError::UserNotFound => (StatusCode::NOT_FOUND, "not_found"),
             AuthenticationError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             AuthenticationError::DatabaseSearchFailure
@@ -500,6 +508,16 @@ mod tests {
                 Auth::MismatchingPasswords.into(),
                 StatusCode::BAD_REQUEST,
                 "passwords_do_not_match",
+            ),
+            (
+                Auth::PasswordTooShort.into(),
+                StatusCode::BAD_REQUEST,
+                "password_too_short",
+            ),
+            (
+                Auth::PasswordTooLong.into(),
+                StatusCode::BAD_REQUEST,
+                "password_too_long",
             ),
             (
                 Auth::UserNotFound.into(),

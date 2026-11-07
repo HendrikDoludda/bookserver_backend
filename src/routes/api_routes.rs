@@ -10,6 +10,7 @@ use crate::{
     config::get_port,
     error_types::RoutingErrors,
     routes::api_caller::{
+        authentication::{confirm_password_reset, request_password_reset},
         helpers::ping_server,
         library::{
             delete_library, get_libraries, get_series_children, get_series_in_library,
@@ -63,7 +64,9 @@ pub fn set_up_routes() -> Router<AppState> {
         .route("/scan_directory/{id}", post(ping_server))
         .route("/get_cover/{kind}/{id}", get(ping_server))
         .route("/scan/status", get(ping_server))
-        .route("/search", get(ping_server));
+        .route("/search", get(ping_server))
+        .route("/auth/password_reset", post(request_password_reset))
+        .route("/auth/password_reset/confirm", post(confirm_password_reset));
 
     Router::new()
         .route("/health", get(ping_server))
@@ -79,7 +82,12 @@ mod tests {
     use tower::ServiceExt;
 
     use super::set_up_routes;
-    use crate::{routes::email_helper::Mailer, test_support::TempDatabase};
+    use std::time::Duration;
+
+    use crate::{
+        routes::email_helper::Mailer,
+        test_support::{insert_user, TempDatabase},
+    };
 
     #[tokio::test]
     async fn health_answers_pong_through_the_router() {
@@ -127,5 +135,80 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(body, serde_json::json!({ "error": "not_found" }));
+    }
+
+    fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
+        Request::post(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_reset_request_without_email_configured_answers_503() {
+        let (status, body) = json_answer(post_json(
+            "/api/v1/auth/password_reset",
+            serde_json::json!({ "email": "alice@example.com" }),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body, serde_json::json!({ "error": "email_not_configured" }));
+    }
+
+    #[tokio::test]
+    async fn known_and_unknown_addresses_get_the_same_answer_and_only_one_mail_goes_out() {
+        let temp = TempDatabase::open();
+        temp.db
+            .setup_new_transaction(|conn| Ok(insert_user(conn, "alice")))
+            .unwrap();
+        let (mailer, sent) = Mailer::capture();
+        let app = set_up_routes().with_state(temp.state(mailer));
+
+        let mut answers = Vec::new();
+        for email in ["alice@example.com", "nobody@example.com"] {
+            let response = app
+                .clone()
+                .oneshot(post_json(
+                    "/api/v1/auth/password_reset",
+                    serde_json::json!({ "email": email }),
+                ))
+                .await
+                .unwrap();
+            let status = response.status();
+            let body = to_bytes(response.into_body(), 1024).await.unwrap();
+            answers.push((status, body));
+        }
+        assert_eq!(answers[0].0, StatusCode::ACCEPTED);
+        assert_eq!(answers[0], answers[1], "the two answers must be identical");
+
+        // The mail goes out in a background task; give it up to two seconds.
+        for _ in 0..200 {
+            if !sent.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].email, "alice@example.com");
+    }
+
+    #[tokio::test]
+    async fn a_reset_with_a_bad_code_answers_400_json() {
+        let (status, body) = json_answer(post_json(
+            "/api/v1/auth/password_reset/confirm",
+            serde_json::json!({
+                "email": "nobody@example.com",
+                "code": "ABCD2345",
+                "new_password": "new password 456",
+                "new_password_repeat": "new password 456",
+            }),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            body,
+            serde_json::json!({ "error": "invalid_or_expired_code" })
+        );
     }
 }

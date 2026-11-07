@@ -421,7 +421,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
- "url",
  "uuid",
  "walkdir",
  "zip 8.6.0",

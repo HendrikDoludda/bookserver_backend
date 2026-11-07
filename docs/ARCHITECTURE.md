@@ -7,8 +7,8 @@
 - `src/app_state.rs` — `AppState`, the router state (database + mailer); handlers take their part through `FromRef` (`State<Arc<Database>>`, `State<Mailer>`).
 - `src/routes/api_routes.rs` — the route table (`set_up_routes`) and `start_server`.
 - `src/routes/api_caller/` — the handlers, one file per area (`authentication.rs`, `totp.rs`, `library.rs`); `extractors.rs` holds the session extractors (`AuthSession`, `AdminSession`, `AuthTOTPLoginSession`, `AuthRefreshSession`), and `helpers.rs` the shared response builders and `ping_server`, the liveness check and the placeholder for routes without a handler.
-- `src/routes/auth.rs` — account, password and session logic; `totp_management.rs` — TOTP flows; `email_helper.rs` — `Mailer`, the one sender every email goes through.
-- `src/database_related_scripts/` — `db.rs` (`Database`: the r2d2 pool and every DB operation), one file per operation trait, `migrations.rs`.
+- `src/routes/auth.rs` — account, password and session logic; `password_reset.rs` — the reset flow; `email_codes.rs` — making emailed codes and the limits on mailing them; `totp_management.rs` — TOTP flows; `email_helper.rs` — `Mailer`, the one sender every email goes through.
+- `src/database_related_scripts/` — `db.rs` (`Database`: the r2d2 pool and every DB operation), one file per operation trait, `db_email_codes.rs` (the `email_codes` table), `migrations.rs`.
 - `src/data_models/` — `models.rs` (domain structs, `*DatabaseColumns` enums, `WithId<T>`) and the request/response bodies.
 - `src/error_types.rs` — the typed error enums, one per domain.
 - `src/scanner/` — `folder_scanner.rs` (walks the book folders, parses filenames), `cover_image_retriever.rs` (one cover per format), `metadata_fetcher.rs` (placeholder).
@@ -33,6 +33,10 @@
 - An error enum that reaches a handler implements `IntoResponse` through a `status_and_key` match with one arm per variant and no `_` arm, so a new variant can't silently become a 500.
 - A handler returns `Result<_, AppErrors>` and uses `?`; an error type without `IntoResponse` (such as `anyhow`) is logged and answered with `internal_error_response()`.
 
+## Email
+- Mail someone waits for (a verification code) is sent inline; mail nobody waits for (a reset code, upload notices) goes out from a background task after the commit.
+- Mail goes to the address stored on the account, never to an address taken from the request.
+
 ## Logging
 - Never log a password, a token (plain or hashed), a TOTP secret, a verification, reset or recovery code, the signing key, or an email body — bodies carry codes.
 
@@ -47,10 +51,11 @@
 - Every `Database` method has a `*_with_connection` twin taking `&Connection`, so several operations can share one transaction (`setup_new_transaction`).
 - A transaction holds only SQL: it starts `IMMEDIATE`, an async handler runs it through `Database::transact` (on Tokio's blocking pool), Argon2 runs in `spawn_blocking` outside it, and mail goes out after the commit.
 - Inside a transaction closure, use the `conn` it was given — a pooled `db.*` call opens a second connection that waits on the first one's write lock.
+- A try at a secret (a code, later a TOTP code) is counted and committed before the secret is checked — counted in the same transaction as a failed check, it is rolled back with it; the final write is conditional and must change exactly one row.
 - Every connection is set up by `db::configure` — SQLite applies `foreign_keys` per connection, not per file.
 - Values are always bound parameters; table and column names are interpolated only from trusted enums and consts, never from request input.
 - Each table names its key column (`KEY` on `Extract` and `Update`, `DatabaseTypes::get_key_column`); nothing assumes it is `id`.
-- Tables without a single key column (the `library_elements` junction) don't implement `Extract`; dedicated `Database` methods query them by foreign key.
+- Tables without a single key column (the `library_elements` junction, `email_codes`) don't implement `Extract`; dedicated functions query them — `Database` methods for the junction, `db_email_codes.rs` for the codes.
 - List queries fetch the ids first, then every row in one `IN (…)` query — no N+1.
 - Every reference to another table is a declared `FOREIGN KEY` — `PRAGMA foreign_keys = ON` enforces only declared ones.
 - Times are stored as `INTEGER` unix seconds and read with `read_time` (must have a value — NULL is an error naming the column) or `read_optional_time` (NULL is `None`).

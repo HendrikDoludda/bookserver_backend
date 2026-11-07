@@ -6,9 +6,8 @@ use crate::{
     models::{
         BookDatabaseColumns, BookMetadata, BookSeriesMetadata, EmailVerification,
         EmailVerificationDatabaseColumns, LibraryDatabaseColumns, LibraryMetadata, QuerySeparator,
-        RecoveryCodes, RecoveryCodesColumns, ResetPasswordRequest, ResetPasswordRequestColumns,
-        SeriesDatabaseColumns, Sessions, SessionsDatabaseColumns, TOTPDatabaseColumns,
-        UserDatabaseColumns, UserMetadata, TOTP,
+        RecoveryCodes, RecoveryCodesColumns, SeriesDatabaseColumns, Sessions,
+        SessionsDatabaseColumns, TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, TOTP,
     },
 };
 
@@ -63,11 +62,6 @@ impl Delete for UserMetadata {
 impl Delete for EmailVerification {
     type Column = EmailVerificationDatabaseColumns;
     const TABLE: &'static str = "email_verification";
-}
-
-impl Delete for ResetPasswordRequest {
-    type Column = ResetPasswordRequestColumns;
-    const TABLE: &'static str = "reset_password_requests";
 }
 
 impl Delete for Sessions {

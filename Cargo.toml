@@ -44,7 +44,6 @@ uuid = {version="1.26.0", features=["v4",]}
 chrono = {version="0.4.45", features=["serde"]}
 directories = "6.0.0"
 totp-rs = "6.0.0"
-url = "2.5.8"
 
 # Unoptimised Argon2 takes seconds per hash, and the tests hash a lot.
 [profile.dev.package.argon2]

@@ -67,15 +67,19 @@ CREATE TABLE IF NOT EXISTS email_verification (
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS reset_password_requests (
-    user_id INTEGER PRIMARY KEY,
-    reset_token TEXT NOT NULL UNIQUE,
-    cancelation_token TEXT NOT NULL UNIQUE,
-    attempt_count INTEGER NOT NULL DEFAULT 0,
-    email_sent_at INTEGER,
+-- One live emailed code per user and purpose ('reset_password', 'verify_email').
+-- The row outlives its code: it carries the counters for the resend limits.
+CREATE TABLE IF NOT EXISTS email_codes (
+    user_id INTEGER NOT NULL,
+    purpose TEXT NOT NULL,
+    code_hash TEXT NOT NULL,
     expires_at INTEGER NOT NULL,
-    invalidated BOOLEAN NOT NULL DEFAULT FALSE,
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_sent_at INTEGER NOT NULL,
+    sent_in_window INTEGER NOT NULL,
+    window_started_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, purpose),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 

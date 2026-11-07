@@ -54,15 +54,17 @@ pub struct ChangePasswordRequest {
     pub new_password_repeat: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct RequestPasswordResetLinkRequest {
+/// `POST /api/v1/auth/password_reset`
+#[derive(Debug, Deserialize)]
+pub struct PasswordResetRequest {
     pub email: String,
 }
 
-#[derive(Deserialize, Clone)]
-pub struct ResettingUsersPassword {
-    pub verification_token: String,
+/// `POST /api/v1/auth/password_reset/confirm`
+#[derive(Deserialize)]
+pub struct ConfirmPasswordResetRequest {
     pub email: String,
+    pub code: String,
     pub new_password: String,
     pub new_password_repeat: String,
 }

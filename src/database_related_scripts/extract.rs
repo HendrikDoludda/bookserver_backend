@@ -5,7 +5,6 @@ use crate::{
     },
     database_related_scripts::db_from_row::FromRow,
     error_types::DatabaseError,
-    models::ResetPasswordRequest,
 };
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde::Serialize;
@@ -125,12 +124,6 @@ impl Extract for EmailVerification {
     const TABLE: &'static str = "email_verification";
     const KEY: &'static str = "user_id";
     const COLUMNS: &'static str = "user_id, email_verification_token, expires_at, invalidated";
-}
-
-impl Extract for ResetPasswordRequest {
-    const TABLE: &'static str = "reset_password_requests";
-    const KEY: &'static str = "user_id";
-    const COLUMNS: &'static str = "user_id, reset_token, expires_at, invalidated";
 }
 
 #[cfg(test)]

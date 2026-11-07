@@ -5,14 +5,13 @@
 use argon2::password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier};
 use argon2::Argon2;
 use rusqlite::{Connection, ToSql};
-use url::Url;
 
 use crate::data_models::authentication_model::{
     ChangePasswordRequest, DeviceInformation, LoginRequest, VerifyEmailRequest,
 };
 use crate::database_related_scripts::db::Database;
 use crate::db::convert_system_time_to_unix_time;
-use crate::error_types::{AppErrors, AuthenticationError, EmailErrors};
+use crate::error_types::{AppErrors, AuthenticationError, DatabaseError, EmailErrors};
 use crate::models::{
     DatabaseTypes, EmailVerification, EmailVerificationDatabaseColumns, QuerySeparator, Sessions,
     SessionsDatabaseColumns, TOTPDatabaseColumns, TOTP,
@@ -22,6 +21,7 @@ use crate::{
     data_models::authentication_model::UserCreationRequest,
     models::{UserDatabaseColumns, UserMetadata},
 };
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 
 use rand::distr::{Alphanumeric, SampleString};
@@ -84,13 +84,6 @@ pub struct NewSessionTokenData {
 
 pub struct UserTotpEnabledResult {
     pub user_has_totp_enabled: bool,
-}
-
-pub struct ResetAndCancelationTokens {
-    pub reset_token: String,
-    pub cancelation_token: String,
-    pub reset_token_hashed: String,
-    pub cancelation_token_hashed: String,
 }
 
 pub fn validate_new_user(
@@ -327,60 +320,67 @@ pub fn validate_submitted_password(
 
 // === Password changes & resets ===============================================
 
-pub fn generate_password_reset_codes() -> Result<ResetAndCancelationTokens, AuthenticationError> {
-    //create email body for resetting email
-    //create a reset token
-    //create link that redirects to reset password
-    //attach to email body
-    //send to user
-    //if email is valid or invalid always display the same message
-    //"If email is valid an email has been sent"
-    let reset_token = create_crypto_code(8);
-    let cancelation_token = create_crypto_code(32);
+pub const MIN_PASSWORD_CHARS: usize = 12;
+pub const MAX_PASSWORD_CHARS: usize = 128;
 
-    let reset_token_hashed = hash_string_securely(&reset_token)
-        .map_err(|_| AuthenticationError::ErrorHashingData)?
-        .hashed_string;
-    let cancelation_token_hashed = hash_string_securely(&cancelation_token)
-        .map_err(|_| AuthenticationError::ErrorHashingData)?
-        .hashed_string;
-
-    Ok(ResetAndCancelationTokens {
-        reset_token,
-        cancelation_token,
-        reset_token_hashed,
-        cancelation_token_hashed,
-    })
+/// The one check every new password passes: sign-up, password change and reset.
+pub fn check_new_password(password: &str, repeat: &str) -> Result<(), AuthenticationError> {
+    if password != repeat {
+        return Err(AuthenticationError::MismatchingPasswords);
+    }
+    let length = password.chars().count();
+    if length < MIN_PASSWORD_CHARS {
+        return Err(AuthenticationError::PasswordTooShort);
+    }
+    if length > MAX_PASSWORD_CHARS {
+        return Err(AuthenticationError::PasswordTooLong);
+    }
+    Ok(())
 }
 
-pub async fn send_reset_password_email(
-    mailer: &Mailer,
-    reset_token: &str,
-    cancelation_token: &str,
-    server_address: &Url,
-    email: &str,
-) -> Result<(), EmailErrors> {
-    //must look into getting the server address even if it is just storing the value somewhere
-    let mut cancelation_link = server_address
-        .join("/password-reset/cancel")
-        .map_err(|_| EmailErrors::MissingEmail)?;
-    cancelation_link
-        .query_pairs_mut()
-        .append_pair("token", cancelation_token);
-    let body = format!("Hello,
-    \n You have requested to reset your password. Use this code in the app to apply the new password.
-    \n {}
-    \nIn case you did not request the password reset use this link to invalidate the request: {}",reset_token,cancelation_link);
-    let subject = "Password Reset".to_string();
+/// Argon2-hashes `secret` on Tokio's blocking pool: a hash takes tens of milliseconds,
+/// which would stall an async worker thread.
+pub async fn hash_secret(secret: String) -> Result<String, AuthenticationError> {
+    tokio::task::spawn_blocking(move || {
+        hash_string_securely(&secret).map(|hashed| hashed.hashed_string)
+    })
+    .await
+    .map_err(|_| AuthenticationError::ErrorHashingData)?
+}
 
-    let email_info = EmailInformation {
-        username: "Anonymous".to_owned(),
-        email: email.to_owned(),
-        body,
-        subject,
-    };
+/// Checks `secret` against an Argon2 hash on the blocking pool. Without a hash it checks
+/// against a dummy one, so a missing account takes as long to reject as a wrong secret.
+pub async fn secret_matches(
+    secret: String,
+    stored_hash: Option<String>,
+) -> Result<bool, AuthenticationError> {
+    tokio::task::spawn_blocking(move || {
+        let stored_hash = match stored_hash {
+            Some(hash) => hash,
+            None => dummy_hash()?.to_string(),
+        };
+        let parsed = PasswordHash::new(&stored_hash).map_err(|err| {
+            log::error!("a stored hash is not a valid PHC string: {err}");
+            AuthenticationError::StringToPasswordHashConversionFailed
+        })?;
+        Ok(Argon2::default()
+            .verify_password(secret.as_bytes(), &parsed)
+            .is_ok())
+    })
+    .await
+    .map_err(|_| AuthenticationError::ErrorHashingData)?
+}
 
-    mailer.send(email_info).await
+static DUMMY_HASH: OnceLock<String> = OnceLock::new();
+
+/// A hash of a random secret, made with the default parameters so checking against it
+/// costs exactly what a real check costs.
+fn dummy_hash() -> Result<&'static str, AuthenticationError> {
+    if let Some(hash) = DUMMY_HASH.get() {
+        return Ok(hash);
+    }
+    let hash = hash_string_securely(&create_new_token()?.normal_string)?.hashed_string;
+    Ok(DUMMY_HASH.get_or_init(|| hash))
 }
 
 pub fn update_password_to_new_password(
@@ -403,21 +403,20 @@ pub fn update_password_to_new_password(
     Ok(())
 }
 
-pub fn reset_password() {
-    //requires the same new password twice and verify new password
-    //if the token is valid continue
-    //remove reset token
-    //store new password for the user.
-}
-
 fn verify_new_password() {
     //requires the same new password twice
     //if the new passwords are the same continue
     //if the new password is not the same as the old password continue
 }
 
-fn password_changed() {
-    //remove all active sessions and refresh tokens.
+/// Ends every session of the user, e.g. after their password changed.
+pub fn end_all_sessions(conn: &Connection, user_id: i64) -> Result<usize, DatabaseError> {
+    Database::remove_entry_with_connection_based_on_columns::<Sessions>(
+        conn,
+        &[SessionsDatabaseColumns::UserId],
+        &[&user_id],
+        QuerySeparator::And,
+    )
 }
 
 // === Sessions ================================================================
@@ -592,5 +591,72 @@ mod tests {
         let conn = with_alice();
         let result = validate_new_user(&conn, sign_up("bob", "bob@example.com"));
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn a_new_password_needs_12_to_128_characters_and_a_matching_repeat() {
+        let check = |password: &str| check_new_password(password, password);
+
+        assert!(matches!(
+            check(&"a".repeat(11)),
+            Err(AuthenticationError::PasswordTooShort)
+        ));
+        assert!(check(&"a".repeat(12)).is_ok());
+        assert!(check(&"a".repeat(128)).is_ok());
+        assert!(matches!(
+            check(&"a".repeat(129)),
+            Err(AuthenticationError::PasswordTooLong)
+        ));
+        // Characters, not bytes: twelve `ü` are 24 bytes but one valid 12-character password.
+        assert!(check(&"ü".repeat(12)).is_ok());
+
+        assert!(matches!(
+            check_new_password("correct horse battery", "correct horse batterY"),
+            Err(AuthenticationError::MismatchingPasswords)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_hashed_secret_matches_only_itself_and_the_dummy_matches_nothing() {
+        let hash = hash_secret("correct horse battery".to_string())
+            .await
+            .unwrap();
+
+        assert!(
+            secret_matches("correct horse battery".to_string(), Some(hash.clone()))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !secret_matches("wrong horse battery".to_string(), Some(hash))
+                .await
+                .unwrap()
+        );
+        assert!(!secret_matches("correct horse battery".to_string(), None)
+            .await
+            .unwrap());
+    }
+
+    #[test]
+    fn ending_all_sessions_leaves_other_users_alone() {
+        let conn = memory_connection();
+        let alice = crate::test_support::insert_user(&conn, "alice");
+        let bob = crate::test_support::insert_user(&conn, "bob");
+        for (user_id, token) in [(alice, "a1"), (alice, "a2"), (bob, "b1")] {
+            conn.execute(
+                "INSERT INTO sessions (user_id, device_id, device_name, platform, \
+                 refresh_token_hashed, refresh_token_valid_until, session_token_hashed, \
+                 session_token_valid_until, last_used_at) \
+                 VALUES (?1, ?2, 'phone', 'ios', ?2, 0, ?2, 0, 0)",
+                rusqlite::params![user_id, token],
+            )
+            .unwrap();
+        }
+
+        assert_eq!(end_all_sessions(&conn, alice).unwrap(), 2);
+        let left: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(left, 1);
     }
 }

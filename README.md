@@ -125,6 +125,10 @@ Implemented endpoints:
 | `POST` | `/api/v1/scan_all_directories` | Scan `BOOK_DIRS` and catalog new files |
 | `POST` | `/api/v1/setup_db` | Run any pending migrations |
 | `DELETE` | `/api/v1/delete_library/{id}` | Delete a library |
+| `POST` | `/api/v1/auth/password_reset` | Mail a password-reset code; always `202`, so it never reveals whether an address has an account |
+| `POST` | `/api/v1/auth/password_reset/confirm` | Set a new password with the emailed code; ends every session |
+
+Errors answer with JSON `{"error": "<key>"}` and a matching status code.
 
 The other registered routes are placeholders for upcoming features. Known issues that still
 affect some of these endpoints are tracked in

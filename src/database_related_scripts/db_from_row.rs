@@ -7,8 +7,8 @@ use rusqlite::{
 };
 
 use crate::models::{
-    BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, EmailVerification, LibraryMetadata,
-    LibraryType, RecoveryCodes, ResetPasswordRequest, Sessions, UserMetadata, TOTP,
+    BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, EmailCode, EmailVerification,
+    LibraryMetadata, LibraryType, RecoveryCodes, Sessions, UserMetadata, TOTP,
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -156,19 +156,17 @@ impl FromRow for EmailVerification {
     }
 }
 
-impl FromRow for ResetPasswordRequest {
+impl FromRow for EmailCode {
     fn from_row(row: &Row) -> rusqlite::Result<Self> {
-        let expires_at = read_time(row, "expires_at")?;
-        let email_sent_at = read_time(row, "email_sent_at")?;
-
         Ok(Self {
             user_id: row.get("user_id")?,
-            reset_token: row.get("reset_token")?,
-            cancelation_token: row.get("cancelation_token")?,
-            attempt_count: row.get("attempt_count")?,
-            email_sent_at,
-            expiration_date: expires_at,
-            invalidated: row.get("invalidated")?,
+            purpose: row.get("purpose")?,
+            code_hash: row.get("code_hash")?,
+            expires_at: read_time(row, "expires_at")?,
+            attempts: row.get("attempts")?,
+            last_sent_at: read_time(row, "last_sent_at")?,
+            sent_in_window: row.get("sent_in_window")?,
+            window_started_at: read_time(row, "window_started_at")?,
         })
     }
 }

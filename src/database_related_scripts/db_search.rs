@@ -6,7 +6,6 @@ use crate::data_models::models::{
 };
 use crate::database_related_scripts::db_from_row::FromRow;
 use crate::error_types::DatabaseError;
-use crate::models::{ResetPasswordRequest, ResetPasswordRequestColumns};
 use rusqlite::{Connection, Result, ToSql};
 
 /// Find rows by arbitrary column values, joined with `AND` or `OR`.
@@ -99,11 +98,6 @@ impl Search for UserMetadata {
 impl Search for EmailVerification {
     type Column = EmailVerificationDatabaseColumns;
     const TABLE: &'static str = "email_verification";
-}
-
-impl Search for ResetPasswordRequest {
-    type Column = ResetPasswordRequestColumns;
-    const TABLE: &'static str = "reset_password_requests";
 }
 
 impl Search for Sessions {

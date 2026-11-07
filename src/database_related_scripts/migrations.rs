@@ -99,8 +99,9 @@ mod tests {
             )
             .unwrap();
             conn.execute(
-                "INSERT INTO reset_password_requests \
-                 (user_id, reset_token, cancelation_token, expires_at) VALUES (?1, ?2, ?2, 0)",
+                "INSERT INTO email_codes (user_id, purpose, code_hash, expires_at, \
+                 last_sent_at, sent_in_window, window_started_at) \
+                 VALUES (?1, 'reset_password', ?2, 0, 0, 1, 0)",
                 params![user_id, unique],
             )
             .unwrap();
@@ -129,7 +130,7 @@ mod tests {
 
         for table in [
             "email_verification",
-            "reset_password_requests",
+            "email_codes",
             "sessions",
             "recovery_codes",
             "totp",
