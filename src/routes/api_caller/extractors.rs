@@ -4,7 +4,7 @@
 
 use std::{sync::Arc, time::SystemTime};
 
-use axum::extract::FromRequestParts;
+use axum::extract::{FromRef, FromRequestParts};
 use tower_cookies::Cookies;
 
 use crate::{
@@ -19,14 +19,19 @@ use crate::{
 /// A fully authenticated session whose user is an admin.
 pub struct AdminSession(pub Sessions);
 
-impl FromRequestParts<Arc<Database>> for AdminSession {
+impl<S> FromRequestParts<S> for AdminSession
+where
+    S: Send + Sync,
+    Arc<Database>: FromRef<S>,
+{
     type Rejection = AppErrors;
 
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
-        db: &Arc<Database>,
+        state: &S,
     ) -> Result<Self, Self::Rejection> {
-        let AuthSession(session) = AuthSession::from_request_parts(parts, db).await?;
+        let AuthSession(session) = AuthSession::from_request_parts(parts, state).await?;
+        let db = Arc::<Database>::from_ref(state);
         let user = db.get_entry::<UserMetadata>(session.user_id)?;
         if !user.is_admin {
             return Err(Forbidden.into());
@@ -38,17 +43,21 @@ impl FromRequestParts<Arc<Database>> for AdminSession {
 /// A valid, fully authenticated session, looked up by the `session_token` cookie.
 pub struct AuthSession(pub Sessions);
 
-impl FromRequestParts<Arc<Database>> for AuthSession {
+impl<S> FromRequestParts<S> for AuthSession
+where
+    S: Send + Sync,
+    Arc<Database>: FromRef<S>,
+{
     type Rejection = AppErrors;
 
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
-        db: &Arc<Database>,
+        state: &S,
     ) -> Result<Self, Self::Rejection> {
-        let cookies = Cookies::from_request_parts(parts, db)
+        let cookies = Cookies::from_request_parts(parts, state)
             .await
             .map_err(|_| UnauthorizedSession)?;
-        let session = authorized(cookies, db)?;
+        let session = authorized(cookies, &Arc::<Database>::from_ref(state))?;
         Ok(AuthSession(session))
     }
 }
@@ -79,16 +88,20 @@ fn authorized(cookies: Cookies, db: &Arc<Database>) -> Result<Sessions, AppError
 /// A session that passed the password step but is still waiting for its TOTP code.
 pub struct AuthTOTPLoginSession(pub Sessions);
 
-impl FromRequestParts<Arc<Database>> for AuthTOTPLoginSession {
+impl<S> FromRequestParts<S> for AuthTOTPLoginSession
+where
+    S: Send + Sync,
+    Arc<Database>: FromRef<S>,
+{
     type Rejection = AppErrors;
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
-        db: &Arc<Database>,
+        state: &S,
     ) -> Result<Self, Self::Rejection> {
-        let cookies = Cookies::from_request_parts(parts, db)
+        let cookies = Cookies::from_request_parts(parts, state)
             .await
             .map_err(|_| UnauthorizedSession)?;
-        let session = validate_totp_login_session(cookies, db)?;
+        let session = validate_totp_login_session(cookies, &Arc::<Database>::from_ref(state))?;
         Ok(AuthTOTPLoginSession(session))
     }
 }
@@ -122,16 +135,20 @@ fn validate_totp_login_session(
 /// A session looked up by the `refresh_token` cookie, used to rotate the token pair.
 pub struct AuthRefreshSession(pub Sessions);
 
-impl FromRequestParts<Arc<Database>> for AuthRefreshSession {
+impl<S> FromRequestParts<S> for AuthRefreshSession
+where
+    S: Send + Sync,
+    Arc<Database>: FromRef<S>,
+{
     type Rejection = AppErrors;
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
-        db: &Arc<Database>,
+        state: &S,
     ) -> Result<Self, Self::Rejection> {
-        let cookies = Cookies::from_request_parts(parts, db)
+        let cookies = Cookies::from_request_parts(parts, state)
             .await
             .map_err(|_| UnauthorizedSession)?;
-        let session = refresh_authorized(cookies, db)?;
+        let session = refresh_authorized(cookies, &Arc::<Database>::from_ref(state))?;
         Ok(AuthRefreshSession(session))
     }
 }

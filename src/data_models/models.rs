@@ -554,12 +554,22 @@ impl AsRef<str> for TOTPDatabaseColumns {
 }
 
 // === Email configuration =====================================================
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// How the SMTP connection is encrypted (`SMTP_TLS`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SmtpTls {
+    StartTls,
+    Implicit,
+    Off,
+}
+
+/// No `Debug`: it carries the SMTP password.
+#[derive(Clone)]
 pub struct EmailConfig {
     pub host: String,
     pub port: u16,
-    pub username: String,
-    pub password: String,
+    pub tls: SmtpTls,
+    /// Username and password; `None` for a server that takes mail without a login.
+    pub credentials: Option<(String, String)>,
     pub from: String,
     pub from_name: String,
 }

@@ -33,6 +33,7 @@ use crate::{
         verify_verification_code, CreatedTokensReadable, ResetAndCancelationTokens,
         UserTotpEnabledResult,
     },
+    routes::email_helper::Mailer,
 };
 
 use super::{
@@ -42,6 +43,7 @@ use super::{
 
 pub async fn sign_up(
     State(db): State<Arc<Database>>,
+    State(mailer): State<Mailer>,
     Json(request): Json<UserCreationRequest>,
 ) -> Result<Response<Body>, AppErrors> {
     let email_info = db.setup_new_transaction(|conn| {
@@ -51,7 +53,7 @@ pub async fn sign_up(
         Ok(result)
     })?;
 
-    let result = create_verification_email(&email_info)
+    let result = create_verification_email(&mailer, &email_info)
         .await
         .map_err(|err| match err {
             EmailErrors::EmailSetUpNotFound => EmailErrors::SentFailedDueToNoConfig {
@@ -228,6 +230,7 @@ pub async fn reset_password(
 pub async fn request_reset_password_link(
     request: RequestPasswordResetLinkRequest,
     State(db): State<Arc<Database>>,
+    State(mailer): State<Mailer>,
 ) -> Result<Response<Body>, AppErrors> {
     let tokens = db.setup_new_transaction(|conn| {
         let user = search_for_user_using_email_or_username(conn, &request.email)?;
@@ -237,6 +240,7 @@ pub async fn request_reset_password_link(
     })?;
 
     if let Err(err) = send_reset_password_email(
+        &mailer,
         &tokens.reset_token,
         &tokens.cancelation_token,
         &Url::parse("https://invalid.link").unwrap(),

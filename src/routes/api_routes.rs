@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::{
     routing::{delete, get, patch, post, put},
     Router,
@@ -8,8 +6,8 @@ use tokio::net::TcpListener;
 use tracing::info;
 
 use crate::{
+    app_state::AppState,
     config::get_port,
-    db::Database,
     error_types::RoutingErrors,
     routes::api_caller::{
         helpers::ping_server,
@@ -22,8 +20,8 @@ use crate::{
 };
 
 /// Binds to `0.0.0.0:$PORT` and serves the API until the process stops.
-pub async fn start_server(db: Arc<Database>) -> Result<(), RoutingErrors> {
-    let app = set_up_routes().with_state(db);
+pub async fn start_server(state: AppState) -> Result<(), RoutingErrors> {
+    let app = set_up_routes().with_state(state);
 
     let port = get_port();
     let address = format!("0.0.0.0:{}", port);
@@ -42,7 +40,7 @@ pub async fn start_server(db: Arc<Database>) -> Result<(), RoutingErrors> {
 
 /// The route table. Everything except `/health` lives under `/api/v1`.
 /// Routes mapped to `ping_server` are placeholders whose handlers don't exist yet.
-pub fn set_up_routes() -> Router<Arc<Database>> {
+pub fn set_up_routes() -> Router<AppState> {
     let api = Router::new()
         .route("/get_libraries", get(get_libraries))
         .route("/get_series_from_library/{id}", get(get_series_in_library))
@@ -81,12 +79,12 @@ mod tests {
     use tower::ServiceExt;
 
     use super::set_up_routes;
-    use crate::test_support::TempDatabase;
+    use crate::{routes::email_helper::Mailer, test_support::TempDatabase};
 
     #[tokio::test]
     async fn health_answers_pong_through_the_router() {
         let temp = TempDatabase::open();
-        let app = set_up_routes().with_state(temp.db.clone());
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
 
         let response = app
             .oneshot(Request::get("/health").body(Body::empty()).unwrap())
@@ -100,7 +98,7 @@ mod tests {
 
     async fn json_answer(request: Request<Body>) -> (StatusCode, serde_json::Value) {
         let temp = TempDatabase::open();
-        let app = set_up_routes().with_state(temp.db.clone());
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
         let response = app.oneshot(request).await.unwrap();
         let status = response.status();
         let body = to_bytes(response.into_body(), 1024).await.unwrap();

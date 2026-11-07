@@ -9,9 +9,13 @@ use std::{
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
-use crate::database_related_scripts::{
-    db::{configure, Database},
-    migrations,
+use crate::{
+    app_state::AppState,
+    database_related_scripts::{
+        db::{configure, Database},
+        migrations,
+    },
+    routes::email_helper::Mailer,
 };
 
 /// A fresh in-memory database with every migration applied.
@@ -52,6 +56,14 @@ impl TempDatabase {
 
     pub fn path(&self) -> &Path {
         &self._file.0
+    }
+
+    /// Router state on this database, with the given mailer.
+    pub fn state(&self, mailer: Mailer) -> AppState {
+        AppState {
+            db: Arc::clone(&self.db),
+            mailer,
+        }
     }
 }
 

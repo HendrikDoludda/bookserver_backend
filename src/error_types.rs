@@ -427,6 +427,14 @@ pub enum ApplicationSetUpErrors {
     NoConfigDirectory,
     #[error("Renaming file failed")]
     RenamingFileFailure,
+    #[error("the setting {0} is missing; it is required when SMTP_HOST is set")]
+    MissingSetting(&'static str),
+    #[error("the setting {0} has an invalid value")]
+    InvalidSetting(&'static str),
+    #[error("SMTP_USERNAME and SMTP_PASSWORD must be set together")]
+    IncompleteSmtpLogin,
+    #[error("SMTP_TLS=none would send the SMTP password unencrypted")]
+    PlaintextSmtpLogin,
 }
 
 #[cfg(test)]

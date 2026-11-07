@@ -4,9 +4,10 @@
 - `src/main.rs` — entry point: tracing, database, `start_server`.
 - `src/lib.rs` — module declarations; re-exports `data_models::models` and `database_related_scripts::db`, so `crate::models::…` and `crate::db::…` resolve.
 - `src/config.rs` — env-var readers and the generated `secrets.toml` (in the OS config directory).
+- `src/app_state.rs` — `AppState`, the router state (database + mailer); handlers take their part through `FromRef` (`State<Arc<Database>>`, `State<Mailer>`).
 - `src/routes/api_routes.rs` — the route table (`set_up_routes`) and `start_server`.
 - `src/routes/api_caller/` — the handlers, one file per area (`authentication.rs`, `totp.rs`, `library.rs`); `extractors.rs` holds the session extractors (`AuthSession`, `AdminSession`, `AuthTOTPLoginSession`, `AuthRefreshSession`), and `helpers.rs` the shared response builders and `ping_server`, the liveness check and the placeholder for routes without a handler.
-- `src/routes/auth.rs` — account, password and session logic; `totp_management.rs` — TOTP flows; `email_helper.rs` — SMTP sending.
+- `src/routes/auth.rs` — account, password and session logic; `totp_management.rs` — TOTP flows; `email_helper.rs` — `Mailer`, the one sender every email goes through.
 - `src/database_related_scripts/` — `db.rs` (`Database`: the r2d2 pool and every DB operation), one file per operation trait, `migrations.rs`.
 - `src/data_models/` — `models.rs` (domain structs, `*DatabaseColumns` enums, `WithId<T>`) and the request/response bodies.
 - `src/error_types.rs` — the typed error enums, one per domain.
@@ -23,7 +24,7 @@
 - `user_id` always comes from the session (`AuthSession`), never from the request body or path.
 - A permission check is an Axum extractor composed on `AuthSession` (as `AdminSession` is), not an `if` inside handlers.
 - Auth answers never reveal whether an account exists: an unknown user and a wrong password get the same response, and so does a password-reset request for an unknown address.
-- Never return or `Debug`-log a struct that carries secrets — `UserMetadata`, `Sessions`, `TOTP`, `RecoveryCodes` and `EmailConfig` derive `Serialize` / `Debug` over the password hash, the token hashes, the TOTP secret or the SMTP password; build a response struct. Request bodies that carry a password or a code don't derive `Debug` at all.
+- Never return or `Debug`-log a struct that carries secrets — `UserMetadata`, `Sessions`, `TOTP` and `RecoveryCodes` derive `Serialize` / `Debug` over the password hash, the token hashes or the TOTP secret; build a response struct. Request bodies that carry a password or a code, `EmailConfig` (the SMTP password) and `EmailInformation` (a body carries codes) don't derive `Debug` at all.
 - List endpoints return `WithId<T>`: the row id plus the metadata, flattened in JSON.
 
 ## Errors

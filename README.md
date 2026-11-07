@@ -36,11 +36,12 @@ anyhow · argon2 · blake3 · pdfium-render · zip · image · mail-send · trac
 src/
 ├── main.rs                     entry point: logging, database, server
 ├── config.rs                   env-var config + generated secrets file
+├── app_state.rs                router state: database + mailer
 ├── routes/
 │   ├── api_routes.rs           route table (/health, /api/v1/…)
 │   ├── api_caller/             request handlers per area + auth extractors
 │   ├── auth.rs                 account, session and token logic
-│   └── email_helper.rs         SMTP delivery
+│   └── email_helper.rs         Mailer: SMTP delivery
 ├── database_related_scripts/
 │   ├── db.rs                   Database: connection pool + queries
 │   ├── extract.rs, insert.rs,
@@ -102,7 +103,12 @@ Extracted covers are written to `./cover_images/`.
 | --- | --- | --- |
 | `PORT` | `8080` | HTTP port |
 | `BOOK_DIRS` | `../Downloads` | `:`-separated list of directories to scan |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_FROM_NAME` | unset | Outgoing email for account verification and password resets |
+| `SMTP_HOST` | unset | Mail server for verification and password-reset codes; email is off while unset |
+| `SMTP_PORT`, `SMTP_FROM`, `SMTP_FROM_NAME` | unset | Required once `SMTP_HOST` is set |
+| `SMTP_USERNAME`, `SMTP_PASSWORD` | unset | The mail server's login, set together; leave both out for a server without one |
+| `SMTP_TLS` | `starttls` | `starttls`, `implicit` (usually port 465) or `none` (a local catcher such as Mailpit only; refused together with a password) |
+
+An incomplete mail setup stops the server at start, naming the missing setting.
 
 ## API
 

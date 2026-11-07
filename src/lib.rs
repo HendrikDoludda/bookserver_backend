@@ -1,3 +1,4 @@
+pub mod app_state;
 pub mod config;
 pub mod data_models;
 pub mod database_related_scripts;

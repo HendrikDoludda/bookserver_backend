@@ -17,7 +17,7 @@ use crate::models::{
     DatabaseTypes, EmailVerification, EmailVerificationDatabaseColumns, QuerySeparator, Sessions,
     SessionsDatabaseColumns, TOTPDatabaseColumns, TOTP,
 };
-use crate::routes::email_helper::{create_new_email, EmailInformation};
+use crate::routes::email_helper::{EmailInformation, Mailer};
 use crate::{
     data_models::authentication_model::UserCreationRequest,
     models::{UserDatabaseColumns, UserMetadata},
@@ -178,6 +178,7 @@ pub fn send_verification_email(
 /// Sends the verification email; calling it again re-sends one with a new token.
 // TODO: replace the text with i18n strings once the catalog exists.
 pub async fn create_verification_email(
+    mailer: &Mailer,
     information: &VerificationEmailInformation,
 ) -> Result<(), EmailErrors> {
     let body = format!(
@@ -193,7 +194,7 @@ pub async fn create_verification_email(
         subject,
     };
 
-    create_new_email(mail_info).await
+    mailer.send(mail_info).await
 }
 
 pub fn search_for_user_using_email_or_username(
@@ -353,6 +354,7 @@ pub fn generate_password_reset_codes() -> Result<ResetAndCancelationTokens, Auth
 }
 
 pub async fn send_reset_password_email(
+    mailer: &Mailer,
     reset_token: &str,
     cancelation_token: &str,
     server_address: &Url,
@@ -378,7 +380,7 @@ pub async fn send_reset_password_email(
         subject,
     };
 
-    create_new_email(email_info).await
+    mailer.send(email_info).await
 }
 
 pub fn update_password_to_new_password(
