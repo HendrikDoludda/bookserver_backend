@@ -7,8 +7,8 @@
 - `src/app_state.rs` — `AppState`, the router state (database + mailer); handlers take their part through `FromRef` (`State<Arc<Database>>`, `State<Mailer>`).
 - `src/routes/api_routes.rs` — the route table (`set_up_routes`) and `start_server`.
 - `src/routes/api_caller/` — the handlers, one file per area (`authentication.rs`, `totp.rs`, `library.rs`); `extractors.rs` holds the session extractors (`AuthSession`, `AdminSession`, `AuthTOTPLoginSession`, `AuthRefreshSession`), and `helpers.rs` the shared response builders and `ping_server`, the liveness check and the placeholder for routes without a handler.
-- `src/routes/auth.rs` — account, password and session logic; `password_reset.rs` — the reset flow; `email_codes.rs` — making emailed codes and the limits on mailing them; `totp_management.rs` — TOTP flows; `email_helper.rs` — `Mailer`, the one sender every email goes through.
-- `src/database_related_scripts/` — `db.rs` (`Database`: the r2d2 pool and every DB operation), one file per operation trait, `db_email_codes.rs` (the `email_codes` table), `migrations.rs`.
+- `src/routes/auth.rs` — account, password and session building blocks; `login.rs` — login, refresh and logout; `password_reset.rs` — the reset flow; `email_codes.rs` — making emailed codes and the limits on mailing them; `totp_management.rs` — TOTP flows; `email_helper.rs` — `Mailer`, the one sender every email goes through.
+- `src/database_related_scripts/` — `db.rs` (`Database`: the r2d2 pool and every DB operation), one file per operation trait, `db_email_codes.rs` / `db_login_challenges.rs` / `db_login_throttle.rs` (one table each), `db_sessions.rs` (the session writes the traits can't express), `migrations.rs`.
 - `src/data_models/` — `models.rs` (domain structs, `*DatabaseColumns` enums, `WithId<T>`) and the request/response bodies.
 - `src/error_types.rs` — the typed error enums, one per domain.
 - `src/scanner/` — `folder_scanner.rs` (walks the book folders, parses filenames), `cover_image_retriever.rs` (one cover per format), `metadata_fetcher.rs` (placeholder).
@@ -22,6 +22,8 @@
 - Every route lives under `/api/v1/`, except `/health`.
 - A handler takes at most one body extractor (`Json<T>`), and it comes last.
 - `user_id` always comes from the session (`AuthSession`), never from the request body or path.
+- Session, refresh and challenge tokens travel as `Authorization: Bearer <token>`; every failed token check answers the same 401, and a response that carries tokens sends `Cache-Control: no-store`.
+- Tokens are stored only as `hash_token` (BLAKE3) hashes and looked up by hash; passwords and emailed codes, which people choose or type, are Argon2-hashed.
 - A permission check is an Axum extractor composed on `AuthSession` (as `AdminSession` is), not an `if` inside handlers.
 - Auth answers never reveal whether an account exists: an unknown user and a wrong password get the same response, and so does a password-reset request for an unknown address.
 - Never return or `Debug`-log a struct that carries secrets — `UserMetadata`, `Sessions`, `TOTP` and `RecoveryCodes` derive `Serialize` / `Debug` over the password hash, the token hashes or the TOTP secret; build a response struct. Request bodies that carry a password or a code, `EmailConfig` (the SMTP password) and `EmailInformation` (a body carries codes) don't derive `Debug` at all.
@@ -49,6 +51,7 @@
 ## Database
 - One trait per operation — `Extract`, `Insert`, `Update`, `Search`, `Delete`, `FromRow` — implemented per model; `Database` methods wrap them with a pooled connection.
 - Every `Database` method has a `*_with_connection` twin taking `&Connection`, so several operations can share one transaction (`setup_new_transaction`).
+- A read-only lookup runs through `Database::read` — no transaction, so it never waits for the write lock.
 - A transaction holds only SQL: it starts `IMMEDIATE`, an async handler runs it through `Database::transact` (on Tokio's blocking pool), Argon2 runs in `spawn_blocking` outside it, and mail goes out after the commit.
 - Inside a transaction closure, use the `conn` it was given — a pooled `db.*` call opens a second connection that waits on the first one's write lock.
 - A try at a secret (a code, later a TOTP code) is counted and committed before the secret is checked — counted in the same transaction as a failed check, it is rolled back with it; the final write is conditional and must change exactly one row.

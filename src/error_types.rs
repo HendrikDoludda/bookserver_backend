@@ -297,6 +297,10 @@ pub enum AuthenticationError {
     PasswordTooShort,
     #[error("The new password is too long")]
     PasswordTooLong,
+    #[error("Too many failed tries; wait a while before trying again")]
+    TooManyAttempts,
+    #[error("The email address is not verified yet")]
+    EmailNotVerified,
 }
 
 impl AuthenticationError {
@@ -323,6 +327,10 @@ impl AuthenticationError {
                 (StatusCode::BAD_REQUEST, "password_too_short")
             }
             AuthenticationError::PasswordTooLong => (StatusCode::BAD_REQUEST, "password_too_long"),
+            AuthenticationError::TooManyAttempts => {
+                (StatusCode::TOO_MANY_REQUESTS, "too_many_attempts")
+            }
+            AuthenticationError::EmailNotVerified => (StatusCode::FORBIDDEN, "email_not_verified"),
             AuthenticationError::UserNotFound => (StatusCode::NOT_FOUND, "not_found"),
             AuthenticationError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             AuthenticationError::DatabaseSearchFailure
@@ -518,6 +526,16 @@ mod tests {
                 Auth::PasswordTooLong.into(),
                 StatusCode::BAD_REQUEST,
                 "password_too_long",
+            ),
+            (
+                Auth::TooManyAttempts.into(),
+                StatusCode::TOO_MANY_REQUESTS,
+                "too_many_attempts",
+            ),
+            (
+                Auth::EmailNotVerified.into(),
+                StatusCode::FORBIDDEN,
+                "email_not_verified",
             ),
             (
                 Auth::UserNotFound.into(),

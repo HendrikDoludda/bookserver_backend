@@ -437,6 +437,28 @@ impl Database {
                 DatabaseError::TransactionFailure
             })?
     }
+
+    /// Runs read-only work on a pooled connection on Tokio's blocking pool. No transaction:
+    /// an `IMMEDIATE` one takes the write lock, and every request's session lookup would
+    /// queue behind every write.
+    pub async fn read<F, T>(self: Arc<Self>, operation: F) -> Result<T, AppErrors>
+    where
+        F: FnOnce(&Connection) -> Result<T, AppErrors> + Send + 'static,
+        T: Send + 'static,
+    {
+        tokio::task::spawn_blocking(move || {
+            let conn = self.pool.get().map_err(|err| {
+                log::error!("Got an error when trying to set up a new connection: {err}");
+                DatabaseError::PoolConnectionRetrievalFailure
+            })?;
+            operation(&conn)
+        })
+        .await
+        .map_err(|err| {
+            log::error!("The read task did not finish: {err}");
+            DatabaseError::TransactionFailure
+        })?
+    }
 }
 
 /// Converts a `SystemTime` to whole seconds since the Unix epoch, the format every

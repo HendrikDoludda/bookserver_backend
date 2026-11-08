@@ -1,46 +1,73 @@
-//! Adding one of these as a handler argument makes Axum validate the request's
-//! cookies before the handler body runs; a failed check rejects with 401 or 403,
-//! a database failure with 500.
+//! Adding one of these as a handler argument makes Axum check the request's
+//! `Authorization: Bearer` token before the handler body runs. Every failure — no header,
+//! another scheme, an unknown or expired token — gets the same 401; a non-admin gets 403.
 
 use std::{sync::Arc, time::SystemTime};
 
-use axum::extract::{FromRef, FromRequestParts};
-use tower_cookies::Cookies;
+use axum::{
+    extract::{FromRef, FromRequestParts},
+    http::{header::AUTHORIZATION, request::Parts, HeaderMap},
+};
 
 use crate::{
+    database_related_scripts::db_login_challenges,
     db::Database,
     error_types::{
         AppErrors,
         AuthenticationError::{ExpiredSession, Forbidden, UnauthorizedSession},
     },
-    models::{QuerySeparator, Sessions, SessionsDatabaseColumns, UserMetadata},
+    models::{LoginChallenge, QuerySeparator, Sessions, SessionsDatabaseColumns, UserMetadata},
+    routes::auth::hash_token,
 };
 
-/// A fully authenticated session whose user is an admin.
-pub struct AdminSession(pub Sessions);
-
-impl<S> FromRequestParts<S> for AdminSession
-where
-    S: Send + Sync,
-    Arc<Database>: FromRef<S>,
-{
-    type Rejection = AppErrors;
-
-    async fn from_request_parts(
-        parts: &mut axum::http::request::Parts,
-        state: &S,
-    ) -> Result<Self, Self::Rejection> {
-        let AuthSession(session) = AuthSession::from_request_parts(parts, state).await?;
-        let db = Arc::<Database>::from_ref(state);
-        let user = db.get_entry::<UserMetadata>(session.user_id)?;
-        if !user.is_admin {
-            return Err(Forbidden.into());
-        }
-        Ok(AdminSession(session))
-    }
+/// The token of an `Authorization: Bearer <token>` header; the scheme is case-insensitive.
+pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    let value = headers.get(AUTHORIZATION)?.to_str().ok()?;
+    let (scheme, token) = value.split_once(' ')?;
+    let token = token.trim();
+    (scheme.eq_ignore_ascii_case("bearer") && !token.is_empty()).then_some(token)
 }
 
-/// A valid, fully authenticated session, looked up by the `session_token` cookie.
+#[derive(Clone, Copy)]
+enum TokenKind {
+    Session,
+    Refresh,
+}
+
+/// The one lookup behind `AuthSession` and `AuthRefreshSession`.
+async fn find_session(
+    parts: &Parts,
+    db: Arc<Database>,
+    kind: TokenKind,
+) -> Result<Sessions, AppErrors> {
+    let token = bearer_token(&parts.headers).ok_or(UnauthorizedSession)?;
+    let hash = hash_token(token);
+    let column = match kind {
+        TokenKind::Session => SessionsDatabaseColumns::SessionToken,
+        TokenKind::Refresh => SessionsDatabaseColumns::RefreshToken,
+    };
+    let session = db
+        .read(move |conn| {
+            Ok(Database::search_for_single_row_with_connection::<Sessions>(
+                conn,
+                &[column],
+                &[&hash],
+                QuerySeparator::And,
+            )?)
+        })
+        .await?
+        .ok_or(UnauthorizedSession)?;
+    let expires_at = match kind {
+        TokenKind::Session => session.session_token_expiration_date,
+        TokenKind::Refresh => session.refresh_token_expiration_date,
+    };
+    if expires_at <= SystemTime::now() {
+        return Err(ExpiredSession.into());
+    }
+    Ok(session)
+}
+
+/// A valid session, found by its session token.
 pub struct AuthSession(pub Sessions);
 
 impl<S> FromRequestParts<S> for AuthSession
@@ -50,89 +77,42 @@ where
 {
     type Rejection = AppErrors;
 
-    async fn from_request_parts(
-        parts: &mut axum::http::request::Parts,
-        state: &S,
-    ) -> Result<Self, Self::Rejection> {
-        let cookies = Cookies::from_request_parts(parts, state)
-            .await
-            .map_err(|_| UnauthorizedSession)?;
-        let session = authorized(cookies, &Arc::<Database>::from_ref(state))?;
-        Ok(AuthSession(session))
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let db = Arc::<Database>::from_ref(state);
+        Ok(AuthSession(
+            find_session(parts, db, TokenKind::Session).await?,
+        ))
     }
 }
 
-fn authorized(cookies: Cookies, db: &Arc<Database>) -> Result<Sessions, AppErrors> {
-    let session_token_cookie = cookies.get("session_token").ok_or(UnauthorizedSession)?;
-    let hashed_session_token = blake3::hash(session_token_cookie.value().as_bytes())
-        .to_hex()
-        .to_string();
-    db.setup_new_transaction(|conn| {
-        let session = Database::search_for_single_row_with_connection::<Sessions>(
-            conn,
-            &[SessionsDatabaseColumns::SessionToken],
-            &[&hashed_session_token],
-            QuerySeparator::And,
-        )?
-        .ok_or(UnauthorizedSession)?;
-        if session.session_token_expiration_date < SystemTime::now() {
-            return Err(ExpiredSession.into());
-        }
-        if !session.authentication_completed {
-            return Err(UnauthorizedSession.into());
-        }
-        Ok(session)
-    })
-}
+/// A valid session whose user is an admin.
+pub struct AdminSession(pub Sessions);
 
-/// A session that passed the password step but is still waiting for its TOTP code.
-pub struct AuthTOTPLoginSession(pub Sessions);
-
-impl<S> FromRequestParts<S> for AuthTOTPLoginSession
+impl<S> FromRequestParts<S> for AdminSession
 where
     S: Send + Sync,
     Arc<Database>: FromRef<S>,
 {
     type Rejection = AppErrors;
-    async fn from_request_parts(
-        parts: &mut axum::http::request::Parts,
-        state: &S,
-    ) -> Result<Self, Self::Rejection> {
-        let cookies = Cookies::from_request_parts(parts, state)
-            .await
-            .map_err(|_| UnauthorizedSession)?;
-        let session = validate_totp_login_session(cookies, &Arc::<Database>::from_ref(state))?;
-        Ok(AuthTOTPLoginSession(session))
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let AuthSession(session) = AuthSession::from_request_parts(parts, state).await?;
+        let user_id = session.user_id;
+        let user = Arc::<Database>::from_ref(state)
+            .read(move |conn| {
+                Ok(Database::get_entry_with_connection::<UserMetadata>(
+                    conn, user_id,
+                )?)
+            })
+            .await?;
+        if !user.is_admin {
+            return Err(Forbidden.into());
+        }
+        Ok(AdminSession(session))
     }
 }
 
-fn validate_totp_login_session(
-    cookies: Cookies,
-    db: &Arc<Database>,
-) -> Result<Sessions, AppErrors> {
-    let session_token_cookie = cookies.get("session_token").ok_or(UnauthorizedSession)?;
-    let hashed_session_token = blake3::hash(session_token_cookie.value().as_bytes())
-        .to_hex()
-        .to_string();
-    db.setup_new_transaction(|conn| {
-        let session = Database::search_for_single_row_with_connection::<Sessions>(
-            conn,
-            &[SessionsDatabaseColumns::SessionToken],
-            &[&hashed_session_token],
-            QuerySeparator::And,
-        )?
-        .ok_or(UnauthorizedSession)?;
-        if session.session_token_expiration_date < SystemTime::now() {
-            return Err(ExpiredSession.into());
-        }
-        if session.authentication_completed {
-            return Err(UnauthorizedSession.into());
-        }
-        Ok(session)
-    })
-}
-
-/// A session looked up by the `refresh_token` cookie, used to rotate the token pair.
+/// A session found by its refresh token, for rotating the token pair.
 pub struct AuthRefreshSession(pub Sessions);
 
 impl<S> FromRequestParts<S> for AuthRefreshSession
@@ -141,37 +121,33 @@ where
     Arc<Database>: FromRef<S>,
 {
     type Rejection = AppErrors;
-    async fn from_request_parts(
-        parts: &mut axum::http::request::Parts,
-        state: &S,
-    ) -> Result<Self, Self::Rejection> {
-        let cookies = Cookies::from_request_parts(parts, state)
-            .await
-            .map_err(|_| UnauthorizedSession)?;
-        let session = refresh_authorized(cookies, &Arc::<Database>::from_ref(state))?;
-        Ok(AuthRefreshSession(session))
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let db = Arc::<Database>::from_ref(state);
+        Ok(AuthRefreshSession(
+            find_session(parts, db, TokenKind::Refresh).await?,
+        ))
     }
 }
 
-fn refresh_authorized(cookies: Cookies, db: &Arc<Database>) -> Result<Sessions, AppErrors> {
-    let refresh_token_cookie = cookies.get("refresh_token").ok_or(UnauthorizedSession)?;
-    let hashed_refresh_token = blake3::hash(refresh_token_cookie.value().as_bytes())
-        .to_hex()
-        .to_string();
-    db.setup_new_transaction(|conn| {
-        let session = Database::search_for_single_row_with_connection::<Sessions>(
-            conn,
-            &[SessionsDatabaseColumns::RefreshToken],
-            &[&hashed_refresh_token],
-            QuerySeparator::And,
-        )?
-        .ok_or(UnauthorizedSession)?;
-        if session.refresh_token_expiration_date < SystemTime::now() {
-            return Err(ExpiredSession.into());
-        }
-        if !session.authentication_completed {
-            return Err(UnauthorizedSession.into());
-        }
-        Ok(session)
-    })
+/// A login waiting for its TOTP code, found by its challenge token.
+pub struct AuthTOTPLoginSession(pub LoginChallenge);
+
+impl<S> FromRequestParts<S> for AuthTOTPLoginSession
+where
+    S: Send + Sync,
+    Arc<Database>: FromRef<S>,
+{
+    type Rejection = AppErrors;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let token = bearer_token(&parts.headers).ok_or(UnauthorizedSession)?;
+        let hash = hash_token(token);
+        let now = SystemTime::now();
+        let challenge = Arc::<Database>::from_ref(state)
+            .read(move |conn| Ok(db_login_challenges::find_live(conn, &hash, now)?))
+            .await?
+            .ok_or(UnauthorizedSession)?;
+        Ok(AuthTOTPLoginSession(challenge))
+    }
 }

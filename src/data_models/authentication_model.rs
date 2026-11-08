@@ -21,12 +21,14 @@ pub struct VerifyEmailRequest {
     pub platform: String,
 }
 
+/// `POST /api/v1/auth/login`
 #[derive(Deserialize, Clone)]
 pub struct LoginRequest {
     pub username_or_email: String,
     pub password: String,
     pub device_name: String,
-    pub device_id: String,
+    /// The id this server gave the device at an earlier login; absent on a first login.
+    pub device_id: Option<String>,
     pub platform: String,
 }
 
@@ -67,6 +69,28 @@ pub struct ConfirmPasswordResetRequest {
     pub code: String,
     pub new_password: String,
     pub new_password_repeat: String,
+}
+
+/// A session's tokens, as login and refresh return them. Times are unix seconds.
+#[derive(Serialize)]
+pub struct SessionTokens {
+    pub session_token: String,
+    pub session_expires_at: i64,
+    pub refresh_token: String,
+    pub refresh_expires_at: i64,
+    pub device_id: String,
+}
+
+/// The answer to a correct password: `{"status": "ok", …tokens}`, or
+/// `{"status": "totp_required", challenge_token, challenge_expires_at}`.
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum LoginResponse {
+    Ok(SessionTokens),
+    TotpRequired {
+        challenge_token: String,
+        challenge_expires_at: i64,
+    },
 }
 
 #[derive(Serialize)]

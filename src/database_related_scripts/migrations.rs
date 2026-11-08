@@ -123,6 +123,12 @@ mod tests {
                 params![user_id],
             )
             .unwrap();
+            conn.execute(
+                "INSERT INTO login_challenges (user_id, token_hashed, expires_at, device_id, \
+                 device_name, platform) VALUES (?1, ?2, 0, 'device', 'phone', 'ios')",
+                params![user_id, unique],
+            )
+            .unwrap();
         }
 
         conn.execute("DELETE FROM users WHERE id = ?1", [alice])
@@ -134,6 +140,7 @@ mod tests {
             "sessions",
             "recovery_codes",
             "totp",
+            "login_challenges",
         ] {
             let count = |user_id: i64| -> i64 {
                 conn.query_row(

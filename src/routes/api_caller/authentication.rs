@@ -3,7 +3,7 @@ use std::{sync::Arc, time::SystemTime};
 use axum::{
     body::Body,
     extract::State,
-    http::{Response, StatusCode},
+    http::{HeaderMap, Response, StatusCode},
     response::IntoResponse,
     Json,
 };
@@ -16,22 +16,23 @@ use crate::{
     },
     db::Database,
     error_types::{AppErrors, AuthenticationError, EmailErrors},
-    models::{DatabaseTypes, UserDatabaseColumns, UserMetadata},
+    models::{UserDatabaseColumns, UserMetadata},
     routes::auth::{
-        create_new_session, create_new_user, create_verification_email, log_in,
-        search_for_user_using_email_or_username, send_verification_email, update_existing_session,
+        create_new_session, create_new_user, create_verification_email,
+        search_for_user_using_email_or_username, send_verification_email,
         update_password_to_new_password, validate_new_user, validate_submitted_password,
-        verify_verification_code, CreatedTokensReadable, UserTotpEnabledResult,
+        verify_verification_code,
     },
     routes::{
         email_helper::Mailer,
+        login::{end_session, log_in, refresh},
         password_reset::{confirm_reset, send_reset_code},
     },
 };
 
 use super::{
-    extractors::{AuthRefreshSession, AuthSession},
-    helpers::create_auth_response,
+    extractors::{bearer_token, AuthRefreshSession, AuthSession},
+    helpers::{create_auth_response, no_store},
 };
 
 pub async fn sign_up(
@@ -82,26 +83,13 @@ async fn auto_verify_account(
     verify_email_logic(verify_email_request, db, user_id)
 }
 
+/// `POST /api/v1/auth/login`
 pub async fn sign_in(
     State(db): State<Arc<Database>>,
-    request: LoginRequest,
+    Json(request): Json<LoginRequest>,
 ) -> Result<Response<Body>, AppErrors> {
-    let tokens: CreatedTokensReadable = db.setup_new_transaction(|conn| {
-        let user = search_for_user_using_email_or_username(conn, &request.username_or_email)?;
-        let user_totp_settings = log_in(&request, conn, &user)?;
-        let device_information = DeviceInformation {
-            device_id: &request.device_id,
-            device_name: &request.device_name,
-            platform: &request.platform,
-        };
-        let token_info =
-            create_new_session(conn, user.user_id, device_information, user_totp_settings)?;
-        Ok(token_info)
-    })?;
-    Ok(create_auth_response(
-        "Your user account has been logged in",
-        tokens,
-    ))
+    let response = log_in(db, request, SystemTime::now()).await?;
+    Ok(no_store(Json(response)))
 }
 
 pub async fn verify_email(
@@ -127,32 +115,29 @@ fn verify_email_logic(
             device_name: &request.device_name,
             platform: &request.platform,
         };
-        let default_totp_settings = UserTotpEnabledResult {
-            user_has_totp_enabled: false,
-        };
-        let session = create_new_session(conn, user_id, device_information, default_totp_settings)?;
+        let session = create_new_session(conn, user_id, device_information, SystemTime::now())?;
         Ok(session)
     })?;
     Ok(create_auth_response("Your user account has been verified. The servers email address needs to be set up so that actual verification can take place", session_information))
 }
 
+/// `POST /api/v1/auth/logout` with either token as Bearer. No session extractor: an expired
+/// token must still log out, and the answer is 204 whether or not a session was found.
 pub async fn log_out(
-    session: AuthSession,
     State(db): State<Arc<Database>>,
-) -> Result<Response<Body>, AppErrors> {
-    db.remove_entry(DatabaseTypes::Session, session.0.session_id)?;
-    Ok((StatusCode::ACCEPTED, "Successfully logged out!").into_response())
+    headers: HeaderMap,
+) -> Result<StatusCode, AppErrors> {
+    end_session(db, bearer_token(&headers).map(str::to_string)).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
+/// `POST /api/v1/auth/refresh` with the refresh token as Bearer.
 pub async fn refresh_session(
     session: AuthRefreshSession,
     State(db): State<Arc<Database>>,
 ) -> Result<Response<Body>, AppErrors> {
-    let tokens: CreatedTokensReadable = db.setup_new_transaction(|conn| {
-        let tokens = update_existing_session(conn, session.0)?;
-        Ok(tokens)
-    })?;
-    Ok(create_auth_response("refreshed session", tokens))
+    let tokens = refresh(db, session.0, SystemTime::now()).await?;
+    Ok(no_store(Json(tokens)))
 }
 
 pub async fn change_password(

@@ -141,8 +141,8 @@ impl Insert for Sessions {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
         let query = "INSERT INTO sessions (user_id, device_id, device_name, platform, \
             refresh_token_hashed, refresh_token_valid_until, session_token_hashed, \
-            session_token_valid_until, created_at, last_used_at, authentication_completed) \
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)";
+            session_token_valid_until, created_at, last_used_at) \
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)";
         let refresh_valid_until =
             convert_system_time_to_unix_time(self.refresh_token_expiration_date);
         let session_valid_until =
@@ -160,7 +160,6 @@ impl Insert for Sessions {
             session_valid_until,
             created_at,
             last_used,
-            self.authentication_completed,
         ];
         conn.execute(query, params)
             .map_err(|_| DatabaseError::InsertionFailure)?;
@@ -342,7 +341,6 @@ mod tests {
             session_token_expiration_date: at(1_700_000_900),
             created_at: at(1_700_000_000),
             last_used_at: at(1_700_000_000),
-            authentication_completed: true,
         };
         let id = Database::insert_with_connection(&conn, &session).unwrap();
 
@@ -358,7 +356,6 @@ mod tests {
         assert_eq!(stored.session_token_expiration_date, at(1_700_000_900));
         assert_eq!(stored.created_at, at(1_700_000_000));
         assert_eq!(stored.last_used_at, at(1_700_000_000));
-        assert!(stored.authentication_completed);
 
         let changed = Database::update_value_with_connection::<Sessions>(
             &conn,

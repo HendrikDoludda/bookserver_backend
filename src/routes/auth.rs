@@ -4,17 +4,16 @@
 
 use argon2::password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier};
 use argon2::Argon2;
-use rusqlite::{Connection, ToSql};
+use rusqlite::Connection;
 
 use crate::data_models::authentication_model::{
-    ChangePasswordRequest, DeviceInformation, LoginRequest, VerifyEmailRequest,
+    ChangePasswordRequest, DeviceInformation, VerifyEmailRequest,
 };
-use crate::database_related_scripts::db::Database;
-use crate::db::convert_system_time_to_unix_time;
+use crate::database_related_scripts::{db::Database, db_login_challenges, db_sessions};
 use crate::error_types::{AppErrors, AuthenticationError, DatabaseError, EmailErrors};
 use crate::models::{
     DatabaseTypes, EmailVerification, EmailVerificationDatabaseColumns, QuerySeparator, Sessions,
-    SessionsDatabaseColumns, TOTPDatabaseColumns, TOTP,
+    SessionsDatabaseColumns,
 };
 use crate::routes::email_helper::{EmailInformation, Mailer};
 use crate::{
@@ -80,10 +79,6 @@ pub struct NewSessionTokenData {
     pub refresh_token_hashed: String,
     pub session_token_valid_until: SystemTime,
     pub refresh_token_valid_until: SystemTime,
-}
-
-pub struct UserTotpEnabledResult {
-    pub user_has_totp_enabled: bool,
 }
 
 pub fn validate_new_user(
@@ -280,27 +275,6 @@ fn evaluate_verification_token(
 
 // === Login ===================================================================
 
-pub fn log_in(
-    request: &LoginRequest,
-    conn: &Connection,
-    user: &UserMetadata,
-) -> Result<UserTotpEnabledResult, AuthenticationError> {
-    validate_submitted_password(user, &request.password)?;
-    let user_totp_settings = Database::search_for_single_row_with_connection::<TOTP>(
-        conn,
-        &[TOTPDatabaseColumns::UserId],
-        &[&user.user_id],
-        QuerySeparator::And,
-    )
-    .map_err(|err| {
-        log::error!("search request failed: {err}");
-        AuthenticationError::DatabaseSearchFailure
-    })?;
-    Ok(UserTotpEnabledResult {
-        user_has_totp_enabled: user_totp_settings.is_some(),
-    })
-}
-
 pub fn validate_submitted_password(
     user: &UserMetadata,
     password: &String,
@@ -409,8 +383,10 @@ fn verify_new_password() {
     //if the new password is not the same as the old password continue
 }
 
-/// Ends every session of the user, e.g. after their password changed.
+/// Ends every session of the user, and every login still waiting for its TOTP code —
+/// e.g. after their password changed.
 pub fn end_all_sessions(conn: &Connection, user_id: i64) -> Result<usize, DatabaseError> {
+    db_login_challenges::delete_for_user(conn, user_id)?;
     Database::remove_entry_with_connection_based_on_columns::<Sessions>(
         conn,
         &[SessionsDatabaseColumns::UserId],
@@ -421,63 +397,14 @@ pub fn end_all_sessions(conn: &Connection, user_id: i64) -> Result<usize, Databa
 
 // === Sessions ================================================================
 
-pub fn log_out() {
-    //delete the session and refresh token entry to inactive
-    //return success
-}
-
-pub fn update_existing_session(
-    conn: &Connection,
-    session: Sessions,
-) -> Result<CreatedTokensReadable, AuthenticationError> {
-    let tokens = create_token_pair()?;
-    let columns = [
-        SessionsDatabaseColumns::RefreshToken,
-        SessionsDatabaseColumns::SessionToken,
-        SessionsDatabaseColumns::RefreshTokenExpirationDate,
-        SessionsDatabaseColumns::SessionTokenExpirationDate,
-        SessionsDatabaseColumns::LastUsedAt,
-    ];
-    let refresh_expiration = convert_system_time_to_unix_time(tokens.refresh_token_valid_until);
-    let session_expiration = convert_system_time_to_unix_time(tokens.session_token_valid_until);
-    let now = convert_system_time_to_unix_time(SystemTime::now());
-    let values: &[&dyn ToSql] = &[
-        &tokens.refresh_token_hashed,
-        &tokens.session_token_hashed,
-        &refresh_expiration,
-        &session_expiration,
-        &now,
-    ];
-    // For more safety, turn this update into a search-and-update that confirms the
-    // stored token is still the one that was presented. That prevents a race where two
-    // concurrent refreshes both overwrite the token. Not needed at this scale, but it
-    // could matter later.
-    Database::update_multiple_values_with_connection::<Sessions>(
-        conn,
-        &columns,
-        values,
-        session.session_id,
-    )
-    .map_err(|err| {
-        log::error!("Failed the updating of the refresh token: {err}");
-        AuthenticationError::DatabaseUpdateFailed
-    })?;
-    Ok(CreatedTokensReadable {
-        session_token: tokens.session_token,
-        refresh_token: tokens.refresh_token,
-        refresh_token_valid_until: tokens.refresh_token_valid_until,
-        session_token_valid_until: tokens.session_token_valid_until,
-    })
-}
-
+/// Starts a session on this device, replacing the session the user had there.
 pub fn create_new_session(
     conn: &Connection,
     user_id: i64,
     device_information: DeviceInformation,
-    user_totp_settings: UserTotpEnabledResult,
+    now: SystemTime,
 ) -> Result<CreatedTokensReadable, AuthenticationError> {
-    let tokens = create_token_pair()?;
-    let authentication_complete = !user_totp_settings.user_has_totp_enabled;
+    let tokens = create_token_pair(now)?;
     let session = Sessions {
         session_id: 0, //will get assigned when entered into the db
         user_id,
@@ -488,12 +415,17 @@ pub fn create_new_session(
         session_token: tokens.session_token_hashed,
         refresh_token_expiration_date: tokens.refresh_token_valid_until,
         session_token_expiration_date: tokens.session_token_valid_until,
-        created_at: SystemTime::now(),
-        last_used_at: SystemTime::now(),
-        authentication_completed: authentication_complete, //will be changed on log in when the user has totp authentication is enabled.
+        created_at: now,
+        last_used_at: now,
     };
-    Database::insert_with_connection(conn, &session)
-        .map_err(|_| AuthenticationError::FailedDataStoring)?;
+    db_sessions::delete_for_device(conn, user_id, device_information.device_id).map_err(|err| {
+        log::error!("removing the device's earlier session failed: {err}");
+        AuthenticationError::FailedDataStoring
+    })?;
+    Database::insert_with_connection(conn, &session).map_err(|err| {
+        log::error!("storing a new session failed: {err}");
+        AuthenticationError::FailedDataStoring
+    })?;
     Ok(CreatedTokensReadable {
         session_token: tokens.session_token,
         refresh_token: tokens.refresh_token,
@@ -502,15 +434,14 @@ pub fn create_new_session(
     })
 }
 
-fn create_token_pair() -> Result<NewSessionTokenData, AuthenticationError> {
+pub fn create_token_pair(now: SystemTime) -> Result<NewSessionTokenData, AuthenticationError> {
     let session_token = create_new_token()?;
     let refresh_token = create_new_token()?;
     let hours_refresh_token_is_valid = 24 * 30; //24 for hours in a day and 30 for valid duration of refresh token,
-    let current_time = SystemTime::now();
-    let refresh_token_expiration_date = current_time
+    let refresh_token_expiration_date = now
         .checked_add(Duration::from_hours(hours_refresh_token_is_valid))
         .ok_or(AuthenticationError::TokenLifetimeCalculationFailed)?;
-    let session_token_expiration_date = current_time
+    let session_token_expiration_date = now
         .checked_add(Duration::from_mins(15))
         .ok_or(AuthenticationError::TokenLifetimeCalculationFailed)?;
     Ok(NewSessionTokenData {
@@ -529,11 +460,18 @@ pub fn create_new_token() -> Result<HashedString, AuthenticationError> {
         .try_fill_bytes(&mut token)
         .map_err(|_| AuthenticationError::RngCreatorFailed)?;
     let final_token = hex::encode(token);
-    let hashed_token = blake3::hash(final_token.as_bytes()).to_hex().to_string();
+    let hashed_token = hash_token(&final_token);
     Ok(HashedString {
         normal_string: final_token,
         hashed_string: hashed_token,
     })
+}
+
+/// How a session, refresh or challenge token is stored and looked up. BLAKE3 without salt
+/// is enough here, and is what makes lookup possible: the tokens are 256 random bits,
+/// so there is nothing to brute-force.
+pub fn hash_token(token: &str) -> String {
+    blake3::hash(token.as_bytes()).to_hex().to_string()
 }
 
 fn hash_string_securely(to_hash: &str) -> Result<HashedString, AuthenticationError> {
@@ -653,10 +591,27 @@ mod tests {
             .unwrap();
         }
 
-        assert_eq!(end_all_sessions(&conn, alice).unwrap(), 2);
-        let left: i64 = conn
-            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+        for (user_id, token) in [(alice, "challenge-a"), (bob, "challenge-b")] {
+            conn.execute(
+                "INSERT INTO login_challenges (user_id, token_hashed, expires_at, device_id, \
+                 device_name, platform) VALUES (?1, ?2, 0, 'device', 'phone', 'ios')",
+                rusqlite::params![user_id, token],
+            )
             .unwrap();
-        assert_eq!(left, 1);
+        }
+
+        assert_eq!(end_all_sessions(&conn, alice).unwrap(), 2);
+        let count = |table: &str| -> i64 {
+            conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap()
+        };
+        assert_eq!(count("sessions"), 1, "bob's session stays");
+        assert_eq!(
+            count("login_challenges"),
+            1,
+            "a pending TOTP login ends too"
+        );
     }
 }

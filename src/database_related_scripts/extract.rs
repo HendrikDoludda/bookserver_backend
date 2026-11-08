@@ -117,7 +117,7 @@ impl Extract for Sessions {
     const KEY: &'static str = "session_id";
     const COLUMNS: &'static str = "session_id, user_id, device_id, device_name, platform, \
         refresh_token_hashed, refresh_token_valid_until, session_token_hashed, \
-        session_token_valid_until, created_at, last_used_at, authentication_completed";
+        session_token_valid_until, created_at, last_used_at";
 }
 
 impl Extract for EmailVerification {

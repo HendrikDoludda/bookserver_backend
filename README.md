@@ -125,6 +125,9 @@ Implemented endpoints:
 | `POST` | `/api/v1/scan_all_directories` | Scan `BOOK_DIRS` and catalog new files |
 | `POST` | `/api/v1/setup_db` | Run any pending migrations |
 | `DELETE` | `/api/v1/delete_library/{id}` | Delete a library |
+| `POST` | `/api/v1/auth/login` | Log in; answers the session and refresh tokens, or a challenge when two-factor auth is on |
+| `POST` | `/api/v1/auth/refresh` | New tokens for a refresh token (`Authorization: Bearer`) |
+| `POST` | `/api/v1/auth/logout` | End the session behind either token; always `204` |
 | `POST` | `/api/v1/auth/password_reset` | Mail a password-reset code; always `202`, so it never reveals whether an address has an account |
 | `POST` | `/api/v1/auth/password_reset/confirm` | Set a new password with the emailed code; ends every session |
 

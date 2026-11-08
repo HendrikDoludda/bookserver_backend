@@ -10,7 +10,9 @@ use crate::{
     config::get_port,
     error_types::RoutingErrors,
     routes::api_caller::{
-        authentication::{confirm_password_reset, request_password_reset},
+        authentication::{
+            confirm_password_reset, log_out, refresh_session, request_password_reset, sign_in,
+        },
         helpers::ping_server,
         library::{
             delete_library, get_libraries, get_series_children, get_series_in_library,
@@ -58,13 +60,14 @@ pub fn set_up_routes() -> Router<AppState> {
             patch(ping_server).get(ping_server),
         )
         .route("/book_metadata/{id}", get(retrieve_metadata))
-        .route("/login", post(ping_server))
         .route("/register_user", post(ping_server))
-        .route("/log_out", post(ping_server))
         .route("/scan_directory/{id}", post(ping_server))
         .route("/get_cover/{kind}/{id}", get(ping_server))
         .route("/scan/status", get(ping_server))
         .route("/search", get(ping_server))
+        .route("/auth/login", post(sign_in))
+        .route("/auth/logout", post(log_out))
+        .route("/auth/refresh", post(refresh_session))
         .route("/auth/password_reset", post(request_password_reset))
         .route("/auth/password_reset/confirm", post(confirm_password_reset));
 
@@ -82,10 +85,15 @@ mod tests {
     use tower::ServiceExt;
 
     use super::set_up_routes;
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use axum::{http::HeaderMap, Router};
 
     use crate::{
-        routes::email_helper::Mailer,
+        routes::{
+            auth::{hash_secret, hash_token},
+            email_helper::Mailer,
+        },
         test_support::{insert_user, TempDatabase},
     };
 
@@ -210,5 +218,213 @@ mod tests {
             body,
             serde_json::json!({ "error": "invalid_or_expired_code" })
         );
+    }
+
+    fn unix_now() -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+    }
+
+    fn add_session(
+        temp: &TempDatabase,
+        user_id: i64,
+        device: &str,
+        session_token: &str,
+        refresh_token: &str,
+        session_expires_at: i64,
+    ) {
+        let device = device.to_string();
+        let session_hash = hash_token(session_token);
+        let refresh_hash = hash_token(refresh_token);
+        temp.db
+            .setup_new_transaction(move |conn| {
+                conn.execute(
+                    "INSERT INTO sessions (user_id, device_id, device_name, platform, \
+                     refresh_token_hashed, refresh_token_valid_until, session_token_hashed, \
+                     session_token_valid_until, last_used_at) \
+                     VALUES (?1, ?2, 'phone', 'ios', ?3, ?4, ?5, ?6, 0)",
+                    rusqlite::params![
+                        user_id,
+                        device,
+                        refresh_hash,
+                        session_expires_at + 3600,
+                        session_hash,
+                        session_expires_at
+                    ],
+                )
+                .unwrap();
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    async fn call(app: &Router, request: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
+        let response = app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = to_bytes(response.into_body(), 4096).await.unwrap().to_vec();
+        (status, headers, body)
+    }
+
+    fn guarded(authorization: Option<&str>) -> Request<Body> {
+        let mut request = Request::put("/api/v1/update_entry");
+        if let Some(value) = authorization {
+            request = request.header("authorization", value);
+        }
+        request.body(Body::empty()).unwrap()
+    }
+
+    fn post_with_bearer(uri: &str, token: &str) -> Request<Body> {
+        Request::post(uri)
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn logging_in_over_http_returns_tokens_that_open_guarded_routes() {
+        let temp = TempDatabase::open();
+        let hash = hash_secret("correct horse battery".to_string())
+            .await
+            .unwrap();
+        temp.db
+            .setup_new_transaction(move |conn| {
+                conn.execute(
+                    "INSERT INTO users (username, password_hash, email, email_verified) \
+                     VALUES ('alice', ?1, 'alice@example.com', 1)",
+                    [hash],
+                )
+                .unwrap();
+                Ok(())
+            })
+            .unwrap();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        let (status, headers, body) = call(
+            &app,
+            post_json(
+                "/api/v1/auth/login",
+                serde_json::json!({
+                    "username_or_email": "alice",
+                    "password": "correct horse battery",
+                    "device_name": "phone",
+                    "platform": "ios",
+                }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers.get("cache-control").unwrap(), "no-store");
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["status"], "ok");
+        assert!(body["session_expires_at"].is_i64());
+        assert!(body["refresh_token"].is_string());
+        assert!(body["device_id"].is_string());
+
+        let session_token = body["session_token"].as_str().unwrap();
+        let (status, _, _) = call(&app, guarded(Some(&format!("Bearer {session_token}")))).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn a_guarded_route_accepts_only_a_live_bearer_session_token() {
+        let temp = TempDatabase::open();
+        let user = temp
+            .db
+            .setup_new_transaction(|conn| Ok(insert_user(conn, "alice")))
+            .unwrap();
+        add_session(
+            &temp,
+            user,
+            "d1",
+            "live-token",
+            "live-refresh",
+            unix_now() + 600,
+        );
+        add_session(
+            &temp,
+            user,
+            "d2",
+            "old-token",
+            "old-refresh",
+            unix_now() - 1,
+        );
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        for accepted in ["Bearer live-token", "bearer live-token"] {
+            let (status, _, _) = call(&app, guarded(Some(accepted))).await;
+            assert_eq!(status, StatusCode::OK, "{accepted}");
+        }
+
+        let mut refusals = Vec::new();
+        for refused in [
+            None,
+            Some("Basic live-token"),
+            Some("Bearer "),
+            Some("Bearer unknown"),
+            Some("Bearer old-token"),
+            Some("Bearer live-refresh"),
+        ] {
+            let (status, _, body) = call(&app, guarded(refused)).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{refused:?}");
+            refusals.push(body);
+        }
+        assert!(
+            refusals.windows(2).all(|pair| pair[0] == pair[1]),
+            "every refusal must look the same"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_and_logout_over_http() {
+        let temp = TempDatabase::open();
+        let user = temp
+            .db
+            .setup_new_transaction(|conn| Ok(insert_user(conn, "alice")))
+            .unwrap();
+        add_session(
+            &temp,
+            user,
+            "d1",
+            "session-1",
+            "refresh-1",
+            unix_now() + 600,
+        );
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        let (status, _, _) =
+            call(&app, post_with_bearer("/api/v1/auth/refresh", "session-1")).await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "a session token is not a refresh token"
+        );
+
+        let (status, headers, body) =
+            call(&app, post_with_bearer("/api/v1/auth/refresh", "refresh-1")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers.get("cache-control").unwrap(), "no-store");
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let new_session = body["session_token"].as_str().unwrap().to_string();
+        let new_refresh = body["refresh_token"].as_str().unwrap().to_string();
+        assert_eq!(body["device_id"], "d1");
+
+        let (status, _, _) = call(&app, guarded(Some(&format!("Bearer {new_session}")))).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, _, _) =
+            call(&app, post_with_bearer("/api/v1/auth/logout", &new_refresh)).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (status, _, _) = call(&app, guarded(Some(&format!("Bearer {new_session}")))).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "logged out");
+
+        let without_token = Request::post("/api/v1/auth/logout")
+            .body(Body::empty())
+            .unwrap();
+        let (status, _, _) = call(&app, without_token).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
     }
 }

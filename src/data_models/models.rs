@@ -461,7 +461,19 @@ pub struct Sessions {
     pub session_token_expiration_date: SystemTime,
     pub created_at: SystemTime,
     pub last_used_at: SystemTime,
-    pub authentication_completed: bool,
+}
+
+/// A login whose password was right but whose TOTP code is still pending. No `Debug`:
+/// it carries a token hash.
+#[derive(Clone)]
+pub struct LoginChallenge {
+    pub challenge_id: i64,
+    pub user_id: i64,
+    pub token_hashed: String,
+    pub expires_at: SystemTime,
+    pub device_id: String,
+    pub device_name: String,
+    pub platform: String,
 }
 
 pub enum SessionsDatabaseColumns {
@@ -476,7 +488,6 @@ pub enum SessionsDatabaseColumns {
     SessionTokenExpirationDate,
     CreatedAt,
     LastUsedAt,
-    AuthenticationCompleted,
 }
 
 impl AsRef<str> for SessionsDatabaseColumns {
@@ -493,7 +504,6 @@ impl AsRef<str> for SessionsDatabaseColumns {
             SessionsDatabaseColumns::SessionTokenExpirationDate => "session_token_valid_until",
             SessionsDatabaseColumns::CreatedAt => "created_at",
             SessionsDatabaseColumns::LastUsedAt => "last_used_at",
-            SessionsDatabaseColumns::AuthenticationCompleted => "authentication_completed",
         }
     }
 }

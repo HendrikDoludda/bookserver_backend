@@ -11,8 +11,12 @@ The developer is new to Rust and to writing security-sensitive code, and this is
 project as much as a product. These three rules come before everything else in this file.
 
 1. **Instructions → plan → approval → build.** The developer gives instructions; Claude answers
-   with a plan that says why each step is needed ([Plan before you build](#plan-before-you-build)),
-   then stops. Nothing is edited until the developer approves.
+   with a plan ([Plan before you build](#plan-before-you-build)), then stops. Nothing is edited
+   until the developer approves. The plan says:
+   - why each step is needed;
+   - what else in the project it affects (callers, schema, API, tests, docs);
+   - for changes to existing code: what the old structure got wrong or could not do, what the
+     new one gains, and what it costs.
 2. **Explain every change in detail.** After each change: what changed, why it is done this way,
    and the Rust or library concept behind it wherever it is new to the developer. The
    explanation goes in the chat, not in code comments ([Code comments](#code-comments)).

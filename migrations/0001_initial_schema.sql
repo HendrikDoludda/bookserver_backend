@@ -86,18 +86,37 @@ CREATE TABLE IF NOT EXISTS email_codes (
 CREATE TABLE IF NOT EXISTS sessions (
     session_id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
-    device_id BINARY(16) NOT NULL UNIQUE,
+    device_id TEXT NOT NULL,
     device_name TEXT NOT NULL,
     platform TEXT NOT NULL,
     refresh_token_hashed TEXT NOT NULL UNIQUE,
     refresh_token_valid_until INTEGER NOT NULL,
-    session_token_hashed TEXT NOT NULL,
+    session_token_hashed TEXT NOT NULL UNIQUE,
     session_token_valid_until INTEGER NOT NULL,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     last_used_at INTEGER NOT NULL,
-    authentication_completed BOOLEAN NOT NULL DEFAULT FALSE,
+    UNIQUE (user_id, device_id),
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-); --automatically refresh the refresh token when it get's used
+);
+
+-- A login whose password was right but whose TOTP code is still pending.
+CREATE TABLE IF NOT EXISTS login_challenges (
+    challenge_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    token_hashed TEXT NOT NULL UNIQUE,
+    expires_at INTEGER NOT NULL,
+    device_id TEXT NOT NULL,
+    device_name TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Login tries per typed name, whether or not the name belongs to an account.
+CREATE TABLE IF NOT EXISTS login_failures (
+    name TEXT PRIMARY KEY,
+    attempts INTEGER NOT NULL,
+    window_started_at INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS recovery_codes (
     recovery_id INTEGER PRIMARY KEY AUTOINCREMENT,
