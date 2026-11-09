@@ -151,12 +151,20 @@ impl Insert for Sessions {
 
 impl Insert for TOTP {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
-        let query =
-            "INSERT INTO totp (user_id, authentication_secret, created_at) VALUES (?1, ?2, ?3)";
+        let query = "INSERT INTO totp (user_id, authentication_secret, confirmed, \
+            last_used_step, failed_attempts, lockouts, last_failed_at, created_at) \
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)";
 
-        let created_at = convert_system_time_to_unix_time(self.created_at);
-
-        let params = params![self.user_id, self.authentication_secret, created_at];
+        let params = params![
+            self.user_id,
+            self.authentication_secret,
+            self.confirmed,
+            self.last_used_step,
+            self.failed_attempts,
+            self.lockouts,
+            self.last_failed_at.map(convert_system_time_to_unix_time),
+            convert_system_time_to_unix_time(self.created_at),
+        ];
 
         conn.execute(query, params)
             .map_err(|_| DatabaseError::InsertionFailure)?;
@@ -365,6 +373,11 @@ mod tests {
         let totp = TOTP {
             user_id,
             authentication_secret: "secret".to_string(),
+            confirmed: true,
+            last_used_step: Some(56_666_666),
+            failed_attempts: 3,
+            lockouts: 2,
+            last_failed_at: Some(at(1_700_000_100)),
             created_at: at(1_700_000_000),
         };
         Database::insert_with_connection(&conn, &totp).unwrap();
@@ -372,6 +385,14 @@ mod tests {
         let stored = Database::get_entry_with_connection::<TOTP>(&conn, user_id).unwrap();
         assert_eq!(stored.user_id, user_id);
         assert_eq!(stored.authentication_secret, "secret");
+        assert!(
+            stored.confirmed,
+            "the confirmed flag must reach the database"
+        );
+        assert_eq!(stored.last_used_step, Some(56_666_666));
+        assert_eq!(stored.failed_attempts, 3);
+        assert_eq!(stored.lockouts, 2);
+        assert_eq!(stored.last_failed_at, Some(at(1_700_000_100)));
         assert_eq!(stored.created_at, at(1_700_000_000));
 
         let changed = Database::update_value_with_connection::<TOTP>(

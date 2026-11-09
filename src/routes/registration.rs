@@ -845,8 +845,8 @@ mod tests {
         temp.db
             .setup_new_transaction(|conn| {
                 conn.execute(
-                    "INSERT INTO totp (user_id, authentication_secret) \
-                     SELECT id, 'secret' FROM users WHERE username = 'bob'",
+                    "INSERT INTO totp (user_id, authentication_secret, confirmed) \
+                     SELECT id, 'secret', 1 FROM users WHERE username = 'bob'",
                     [],
                 )
                 .unwrap();

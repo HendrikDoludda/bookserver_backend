@@ -20,6 +20,7 @@ use crate::{
             initiate_database, insert_database_entry, request_file, retrieve_metadata,
             scan_all_directories, scan_for_metadata, update_database_entry,
         },
+        totp::{finalize_totp_set_up, totp_start_set_up, totp_status},
     },
 };
 
@@ -72,7 +73,9 @@ pub fn set_up_routes() -> Router<AppState> {
         .route("/auth/logout", post(log_out))
         .route("/auth/refresh", post(refresh_session))
         .route("/auth/password_reset", post(request_password_reset))
-        .route("/auth/password_reset/confirm", post(confirm_password_reset));
+        .route("/auth/password_reset/confirm", post(confirm_password_reset))
+        .route("/account/totp", get(totp_status).post(totp_start_set_up))
+        .route("/account/totp/confirm", post(finalize_totp_set_up));
 
     Router::new()
         .route("/health", get(ping_server))
@@ -610,6 +613,141 @@ mod tests {
         let sent = sent.lock().unwrap();
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].email, "bob@example.com");
+    }
+
+    /// A request with `Authorization: Bearer <token>` and, if given, a JSON body.
+    fn authorized(
+        method: &str,
+        uri: &str,
+        token: &str,
+        body: Option<serde_json::Value>,
+    ) -> Request<Body> {
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("authorization", format!("Bearer {token}"));
+        match body {
+            Some(body) => request
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string())),
+            None => request.body(Body::empty()),
+        }
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_totp_account_routes_need_a_session() {
+        for request in [
+            Request::get("/api/v1/account/totp")
+                .body(Body::empty())
+                .unwrap(),
+            Request::post("/api/v1/account/totp")
+                .body(Body::empty())
+                .unwrap(),
+            post_json(
+                "/api/v1/account/totp/confirm",
+                serde_json::json!({ "code": "123456", "password": "correct horse battery" }),
+            ),
+        ] {
+            let (status, body) = json_answer(request).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
+            assert_eq!(body, serde_json::json!({ "error": "unauthorized" }));
+        }
+    }
+
+    #[tokio::test]
+    async fn setting_up_2fa_over_http() {
+        let temp = TempDatabase::open();
+        let hash = hash_secret("correct horse battery".to_string())
+            .await
+            .unwrap();
+        temp.db
+            .setup_new_transaction(move |conn| {
+                conn.execute(
+                    "INSERT INTO users (username, password_hash, email, email_verified) \
+                     VALUES ('alice', ?1, 'alice@example.com', 1)",
+                    [hash],
+                )
+                .unwrap();
+                Ok(())
+            })
+            .unwrap();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let log_in = || {
+            post_json(
+                "/api/v1/auth/login",
+                serde_json::json!({
+                    "username_or_email": "alice",
+                    "password": "correct horse battery",
+                    "device_name": "phone",
+                    "platform": "ios",
+                }),
+            )
+        };
+        let (_, _, body) = call(&app, log_in()).await;
+        let session = json(&body)["session_token"].as_str().unwrap().to_string();
+        let (_, _, body) = call(&app, log_in()).await;
+        let other_device = json(&body)["session_token"].as_str().unwrap().to_string();
+        let status_of_2fa = || authorized("GET", "/api/v1/account/totp", &session, None);
+
+        let (status, _, body) = call(&app, status_of_2fa()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json(&body),
+            serde_json::json!({ "enabled": false, "recovery_codes_left": 0 })
+        );
+
+        let (status, headers, body) = call(
+            &app,
+            authorized("POST", "/api/v1/account/totp", &session, None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers.get("cache-control").unwrap(), "no-store");
+        let setup = json(&body);
+        assert!(setup["otpauth_url"]
+            .as_str()
+            .unwrap()
+            .starts_with("otpauth://totp/Bookserver:alice?secret="));
+        let authenticator = totp_rs::Builder::new()
+            .with_secret(
+                totp_rs::Secret::try_from_base32(setup["secret_base32"].as_str().unwrap()).unwrap(),
+            )
+            .build()
+            .unwrap();
+
+        let confirmation = serde_json::json!({
+            "code": authenticator.generate_current().to_string(),
+            "password": "correct horse battery",
+        });
+        let (status, headers, body) = call(
+            &app,
+            authorized(
+                "POST",
+                "/api/v1/account/totp/confirm",
+                &session,
+                Some(confirmation),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers.get("cache-control").unwrap(), "no-store");
+        assert_eq!(json(&body)["recovery_codes"].as_array().unwrap().len(), 10);
+
+        let (status, _, _) = call(&app, guarded(Some(&format!("Bearer {other_device}")))).await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "the other device's session ended"
+        );
+        let (_, _, body) = call(&app, status_of_2fa()).await;
+        assert_eq!(
+            json(&body),
+            serde_json::json!({ "enabled": true, "recovery_codes_left": 10 })
+        );
+        let (status, _, body) = call(&app, log_in()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json(&body)["status"], "totp_required");
     }
 
     #[tokio::test]

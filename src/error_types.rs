@@ -301,6 +301,16 @@ pub enum AuthenticationError {
     InvalidUsername,
     #[error("The first sign-up's setup code is missing or wrong")]
     InvalidSetupCode,
+    #[error("The current password is wrong")]
+    IncorrectPassword,
+    #[error("Two-factor authentication is already on")]
+    TotpAlreadyEnabled,
+    #[error("There is no two-factor setup waiting to be confirmed")]
+    TotpSetupNotPending,
+    #[error("Two-factor authentication is not on")]
+    TotpNotEnabled,
+    #[error("A TOTP secret could not be made, encrypted or read")]
+    TotpFailure,
 }
 
 impl AuthenticationError {
@@ -332,6 +342,16 @@ impl AuthenticationError {
             AuthenticationError::InvalidEmail => (StatusCode::BAD_REQUEST, "invalid_email"),
             AuthenticationError::InvalidUsername => (StatusCode::BAD_REQUEST, "invalid_username"),
             AuthenticationError::InvalidSetupCode => (StatusCode::FORBIDDEN, "invalid_setup_code"),
+            AuthenticationError::IncorrectPassword => {
+                (StatusCode::BAD_REQUEST, "incorrect_password")
+            }
+            AuthenticationError::TotpAlreadyEnabled => {
+                (StatusCode::CONFLICT, "totp_already_enabled")
+            }
+            AuthenticationError::TotpSetupNotPending => {
+                (StatusCode::CONFLICT, "totp_setup_not_pending")
+            }
+            AuthenticationError::TotpNotEnabled => (StatusCode::CONFLICT, "totp_not_enabled"),
             AuthenticationError::UserNotFound => (StatusCode::NOT_FOUND, "not_found"),
             AuthenticationError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             AuthenticationError::DatabaseSearchFailure
@@ -342,7 +362,8 @@ impl AuthenticationError {
             | AuthenticationError::ErrorCreatingSalt
             | AuthenticationError::TokenLifetimeCalculationFailed
             | AuthenticationError::StringToPasswordHashConversionFailed
-            | AuthenticationError::DatabaseUpdateFailed => INTERNAL,
+            | AuthenticationError::DatabaseUpdateFailed
+            | AuthenticationError::TotpFailure => INTERNAL,
         }
     }
 }
@@ -429,6 +450,10 @@ pub enum ApplicationSetUpErrors {
     IncompleteSmtpLogin,
     #[error("SMTP_TLS=none would send the SMTP password unencrypted")]
     PlaintextSmtpLogin,
+    #[error("the signing key in secrets.toml is not 32 base64-encoded bytes")]
+    InvalidSigningKey,
+    #[error("secrets.toml could not be restricted to its owner")]
+    SecretsPermissionFailure,
 }
 
 #[cfg(test)]
@@ -494,6 +519,26 @@ mod tests {
                 Auth::InvalidSetupCode.into(),
                 StatusCode::FORBIDDEN,
                 "invalid_setup_code",
+            ),
+            (
+                Auth::IncorrectPassword.into(),
+                StatusCode::BAD_REQUEST,
+                "incorrect_password",
+            ),
+            (
+                Auth::TotpAlreadyEnabled.into(),
+                StatusCode::CONFLICT,
+                "totp_already_enabled",
+            ),
+            (
+                Auth::TotpSetupNotPending.into(),
+                StatusCode::CONFLICT,
+                "totp_setup_not_pending",
+            ),
+            (
+                Auth::TotpNotEnabled.into(),
+                StatusCode::CONFLICT,
+                "totp_not_enabled",
             ),
             (
                 Auth::MismatchingPasswords.into(),
@@ -568,6 +613,7 @@ mod tests {
             Auth::TokenLifetimeCalculationFailed.into(),
             Auth::StringToPasswordHashConversionFailed.into(),
             Auth::DatabaseUpdateFailed.into(),
+            Auth::TotpFailure.into(),
             EmailErrors::SMTPConnectionFailed.into(),
             EmailErrors::ClientBuilderFailed.into(),
             EmailErrors::SendingFailure.into(),

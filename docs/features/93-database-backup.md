@@ -6,7 +6,7 @@ One click to back up the SQLite catalog — cheap insurance for a home server th
 whole library and its users. Optional — not scheduled.
 
 ## Build
-- [ ] ? h · Admin-only backup endpoint (`AdminSession`) that writes a consistent copy with `VACUUM INTO 'path'` — under `journal_mode = WAL`, copying the `.sqlite` file alone is not a valid backup, because recent commits can still sit in the `-wal` file [BE]
+- [ ] ? h · Admin-only backup endpoint (`AdminSession`) that writes a consistent copy with `VACUUM INTO 'path'` — under `journal_mode = WAL`, copying the `.sqlite` file alone is not a valid backup, because recent commits can still sit in the `-wal` file. The backup includes `secrets.toml`: restored next to another one, the database's TOTP secrets can't be decrypted ([04](04-two-factor-auth-totp.md)) [BE]
 - [ ] ? h · Read the database path from one place — `Database::new` hard-codes it, and the unused `DatabaseTypes::get_file_path()` repeats it [BE]
 
 ## Open decisions

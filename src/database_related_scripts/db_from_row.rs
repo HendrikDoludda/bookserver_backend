@@ -98,12 +98,15 @@ impl FromRow for UserMetadata {
 
 impl FromRow for TOTP {
     fn from_row(row: &Row) -> rusqlite::Result<Self> {
-        let created_at = read_time(row, "created_at")?;
-
         Ok(Self {
             user_id: row.get("user_id")?,
             authentication_secret: row.get("authentication_secret")?,
-            created_at,
+            confirmed: row.get("confirmed")?,
+            last_used_step: row.get("last_used_step")?,
+            failed_attempts: row.get("failed_attempts")?,
+            lockouts: row.get("lockouts")?,
+            last_failed_at: read_optional_time(row, "last_failed_at")?,
+            created_at: read_time(row, "created_at")?,
         })
     }
 }

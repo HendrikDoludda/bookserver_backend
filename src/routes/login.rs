@@ -109,6 +109,37 @@ pub(crate) async fn check_password(
     }
 }
 
+/// The current password, re-checked by an account endpoint: login's check, so it shares login's
+/// throttle, but a wrong password answers 400 `incorrect_password` — the app reads a 401 as an
+/// ended session.
+pub(crate) async fn check_current_password(
+    db: Arc<Database>,
+    user_id: i64,
+    password: String,
+    now: SystemTime,
+) -> Result<(), AppErrors> {
+    let username = Arc::clone(&db)
+        .read(move |conn| {
+            Ok(Database::get_entry_with_connection::<UserMetadata>(conn, user_id)?.username)
+        })
+        .await?;
+    let CheckedPassword { user, throttle_key } =
+        match check_password(Arc::clone(&db), &username, password, now).await {
+            Err(AppErrors::Authentication(AuthenticationError::IncorrectCredentials)) => {
+                return Err(AuthenticationError::IncorrectPassword.into());
+            }
+            checked => checked?,
+        };
+    // Looked up by name, so make sure the name still belongs to this account.
+    if user.user_id != user_id {
+        return Err(AuthenticationError::IncorrectPassword.into());
+    }
+    // The right password was counted as a try too; left in the count, repeated attempts with a
+    // wrong code would lock the user's login.
+    db.transact(move |conn| Ok(db_login_throttle::clear(conn, &throttle_key)?))
+        .await
+}
+
 /// What a proven identity leads to — a correct password, or a redeemed verification code:
 /// a session, or for a TOTP user a challenge that the code step turns into one.
 pub(crate) fn start_login(
@@ -159,11 +190,13 @@ pub(crate) fn find_user_for_login(
     )
 }
 
-fn has_totp(conn: &Connection, user_id: i64) -> Result<bool, DatabaseError> {
+/// Whether the user has 2FA on. A setup still waiting for its first code doesn't count — it
+/// would demand a code the user can't produce yet.
+pub(crate) fn has_totp(conn: &Connection, user_id: i64) -> Result<bool, DatabaseError> {
     let totp = Database::search_for_single_row_with_connection::<TOTP>(
         conn,
-        &[TOTPDatabaseColumns::UserId],
-        &[&user_id],
+        &[TOTPDatabaseColumns::UserId, TOTPDatabaseColumns::Confirmed],
+        &[&user_id, &true],
         QuerySeparator::And,
     )?;
     Ok(totp.is_some())
@@ -482,20 +515,77 @@ mod tests {
         assert_eq!(sessions_of(&temp, bob), 0);
     }
 
-    #[tokio::test]
-    async fn a_totp_user_gets_a_challenge_instead_of_a_session() {
-        let temp = TempDatabase::open();
-        let alice = alice(&temp).await;
+    fn add_totp(temp: &TempDatabase, user_id: i64, confirmed: bool) {
         temp.db
             .setup_new_transaction(move |conn| {
                 conn.execute(
-                    "INSERT INTO totp (user_id, authentication_secret) VALUES (?1, 'secret')",
-                    [alice],
+                    "INSERT INTO totp (user_id, authentication_secret, confirmed) \
+                     VALUES (?1, 'secret', ?2)",
+                    params![user_id, confirmed],
                 )
                 .unwrap();
                 Ok(())
             })
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_setup_still_waiting_for_its_code_does_not_ask_for_one() {
+        let temp = TempDatabase::open();
+        let alice = alice(&temp).await;
+        add_totp(&temp, alice, false);
+
+        tokens(login(&temp, "alice", PASSWORD, None, SystemTime::now()).await);
+    }
+
+    #[tokio::test]
+    async fn the_current_password_is_checked_against_logins_throttle() {
+        let temp = TempDatabase::open();
+        let alice = alice(&temp).await;
+        let now = SystemTime::now();
+        let check = |password: &str| {
+            check_current_password(Arc::clone(&temp.db), alice, password.to_string(), now)
+        };
+        let tries = || -> i64 {
+            query(
+                &temp,
+                "SELECT COALESCE(SUM(attempts), 0) FROM login_failures WHERE name = ?1",
+                "alice",
+            )
+        };
+
+        assert!(matches!(
+            check("wrong horse battery").await,
+            Err(AppErrors::Authentication(
+                AuthenticationError::IncorrectPassword
+            ))
+        ));
+        assert_eq!(tries(), 1, "a wrong password counts like a failed login");
+
+        check(PASSWORD).await.unwrap();
+        assert_eq!(tries(), 0, "the right password clears the count");
+
+        for _ in 0..MAX_LOGIN_TRIES {
+            check("wrong horse battery").await.ok();
+        }
+        assert!(matches!(
+            check(PASSWORD).await,
+            Err(AppErrors::Authentication(
+                AuthenticationError::TooManyAttempts
+            ))
+        ));
+        assert_eq!(
+            rejected_with(&login(&temp, "alice", PASSWORD, None, now).await),
+            "too many",
+            "the lock is login's own"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_totp_user_gets_a_challenge_instead_of_a_session() {
+        let temp = TempDatabase::open();
+        let alice = alice(&temp).await;
+        add_totp(&temp, alice, true);
         let now = SystemTime::now();
 
         let Ok(LoginResponse::TotpRequired {

@@ -42,7 +42,7 @@
 | Series picker for uploads | 4 | not started | [61-series-picker](features/61-series-picker.md) |
 | Packaging & deployment | 5 | not started | [52-packaging-and-deployment](features/52-packaging-and-deployment.md) |
 | Safe schema upgrades | 5 | not started | [78-safe-schema-upgrades](features/78-safe-schema-upgrades.md) |
-| Security hardening | cross-cutting | not started | [12-security-hardening](features/12-security-hardening.md) |
+| Security hardening | cross-cutting | in progress | [12-security-hardening](features/12-security-hardening.md) |
 | Email & notifications | cross-cutting | in progress | [14-email-and-notifications](features/14-email-and-notifications.md) |
 | Active sessions | cross-cutting | not started | [51-active-sessions](features/51-active-sessions.md) |
 | File reconciliation | cross-cutting | not started | [53-file-reconciliation](features/53-file-reconciliation.md) |

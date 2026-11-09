@@ -1,4 +1,4 @@
-use std::{env, fs, sync::Arc};
+use std::{env, fs, path::Path, sync::Arc};
 
 use chrono::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -18,14 +18,28 @@ pub struct Secrets {
     previous_token_signing_key_expiration_date: Option<DateTime<Utc>>,
 }
 
-/// Loads `secrets.toml`, generating it with a fresh 256-bit key on first run.
-/// The file is written to a temp path and then renamed, so a crash mid-write
-/// can't leave a half-written secrets file behind.
+impl Secrets {
+    /// The signing key as bytes; anything but 32 base64-encoded bytes is refused.
+    pub fn signing_key(&self) -> Result<[u8; 32], ApplicationSetUpErrors> {
+        STANDARD
+            .decode(&self.token_signing_key)
+            .ok()
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+            .ok_or(ApplicationSetUpErrors::InvalidSigningKey)
+    }
+}
+
+/// Loads `secrets.toml` from the OS config directory, generating it on first run.
 pub fn set_up_config_file() -> Result<Arc<Secrets>, ApplicationSetUpErrors> {
     let project_dirs = ProjectDirs::from("com", "placeholder_organization", "bookserver_backend")
         .ok_or(ApplicationSetUpErrors::NoConfigDirectory)?;
-    let config_dir = project_dirs.config_dir();
+    load_or_create_secrets(project_dirs.config_dir())
+}
 
+/// Loads `secrets.toml` from `config_dir`, generating it with a fresh 256-bit key on first run.
+/// The file is written to a temp path and then renamed, so a crash mid-write can't leave a
+/// half-written secrets file behind.
+fn load_or_create_secrets(config_dir: &Path) -> Result<Arc<Secrets>, ApplicationSetUpErrors> {
     fs::create_dir_all(config_dir).map_err(|_| ApplicationSetUpErrors::DirectoryCreationFailure)?;
 
     let secrets_path = config_dir.join("secrets.toml");
@@ -35,17 +49,64 @@ pub fn set_up_config_file() -> Result<Arc<Secrets>, ApplicationSetUpErrors> {
         let contents = create_new_set_up_secrets()?;
         let contents_string = toml::to_string_pretty(&contents)
             .map_err(|_| ApplicationSetUpErrors::SecretConversionFailure)?;
-        // TODO: restrict the file to owner-only (0600) so other local users can't read it.
-        fs::write(&secrets_tmp_path, contents_string)
-            .map_err(|_| ApplicationSetUpErrors::DocumentWritingFailure)?;
+        write_owner_only(&secrets_tmp_path, &contents_string)?;
         fs::rename(&secrets_tmp_path, &secrets_path)
             .map_err(|_| ApplicationSetUpErrors::RenamingFileFailure)?;
     }
+    restrict_to_owner(&secrets_path)?;
     let read_content = fs::read_to_string(&secrets_path)
         .map_err(|_| ApplicationSetUpErrors::DocumentReadingFailure)?;
     let secret: Secrets = toml::from_str(&read_content)
         .map_err(|_| ApplicationSetUpErrors::SecretDeserializingError)?;
     Ok(Arc::new(secret))
+}
+
+/// Writes a new file that only its owner can read from the moment it exists — a `chmod` after
+/// writing would leave it readable in between.
+#[cfg(unix)]
+fn write_owner_only(path: &Path, contents: &str) -> Result<(), ApplicationSetUpErrors> {
+    use std::{io::Write, os::unix::fs::OpenOptionsExt};
+
+    // A temp file left by a crash would make `create_new` fail at every start.
+    let _ = fs::remove_file(path);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|_| ApplicationSetUpErrors::DocumentWritingFailure)?;
+    file.write_all(contents.as_bytes())
+        .and_then(|()| file.sync_all())
+        .map_err(|_| ApplicationSetUpErrors::DocumentWritingFailure)
+}
+
+// On Windows the config directory lies in the user's own profile, which other users can't read.
+#[cfg(not(unix))]
+fn write_owner_only(path: &Path, contents: &str) -> Result<(), ApplicationSetUpErrors> {
+    fs::write(path, contents).map_err(|_| ApplicationSetUpErrors::DocumentWritingFailure)
+}
+
+/// Narrows a `secrets.toml` that other users can read, such as one written before files were
+/// created owner-only.
+#[cfg(unix)]
+fn restrict_to_owner(path: &Path) -> Result<(), ApplicationSetUpErrors> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mode = fs::metadata(path)
+        .map_err(|_| ApplicationSetUpErrors::DocumentReadingFailure)?
+        .permissions()
+        .mode();
+    if mode & 0o077 != 0 {
+        tracing::warn!("secrets.toml was readable by other users; restricting it to its owner");
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .map_err(|_| ApplicationSetUpErrors::SecretsPermissionFailure)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn restrict_to_owner(_path: &Path) -> Result<(), ApplicationSetUpErrors> {
+    Ok(())
 }
 
 fn create_new_set_up_secrets() -> Result<Secrets, ApplicationSetUpErrors> {
@@ -254,5 +315,105 @@ mod tests {
             result,
             Err(ApplicationSetUpErrors::InvalidSetting("SMTP_PORT"))
         ));
+    }
+
+    /// A folder under the system temp directory, deleted with everything in it when dropped.
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            TempDir(
+                std::env::temp_dir()
+                    .join(format!("bookserver-config-test-{}", uuid::Uuid::new_v4())),
+            )
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn signing_key_in(dir: &TempDir) -> [u8; 32] {
+        load_or_create_secrets(&dir.0)
+            .unwrap()
+            .signing_key()
+            .unwrap()
+    }
+
+    #[test]
+    fn the_first_start_creates_a_key_and_later_starts_read_the_same_one() {
+        let dir = TempDir::new();
+        let first = signing_key_in(&dir);
+        assert_eq!(signing_key_in(&dir), first);
+        assert_ne!(first, [0; 32]);
+    }
+
+    #[test]
+    fn the_signing_key_must_be_32_base64_encoded_bytes() {
+        let secrets = |key: String| Secrets {
+            token_signing_key: key,
+            previous_token_signing_key: None,
+            previous_token_signing_key_expiration_date: None,
+        };
+        assert_eq!(
+            secrets(STANDARD.encode([5; 32])).signing_key().unwrap(),
+            [5; 32]
+        );
+        for bad in [
+            STANDARD.encode([5; 31]),
+            STANDARD.encode([5; 33]),
+            "not base64!".to_string(),
+        ] {
+            assert!(
+                matches!(
+                    secrets(bad.clone()).signing_key(),
+                    Err(ApplicationSetUpErrors::InvalidSigningKey)
+                ),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    fn mode_of(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_new_secrets_file_is_readable_only_by_its_owner() {
+        let dir = TempDir::new();
+        load_or_create_secrets(&dir.0).unwrap();
+        assert_eq!(mode_of(&dir.0.join("secrets.toml")), 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_older_readable_secrets_file_is_narrowed_and_keeps_its_key() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new();
+        let key = signing_key_in(&dir);
+        let path = dir.0.join("secrets.toml");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert_eq!(signing_key_in(&dir), key);
+        assert_eq!(mode_of(&path), 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_temp_file_left_by_a_crash_does_not_block_the_first_start() {
+        let dir = TempDir::new();
+        fs::create_dir_all(&dir.0).unwrap();
+        fs::write(dir.0.join("secrets.toml.tmp"), "half-written").unwrap();
+
+        signing_key_in(&dir);
+
+        assert_eq!(mode_of(&dir.0.join("secrets.toml")), 0o600);
+        assert!(!dir.0.join("secrets.toml.tmp").exists());
     }
 }

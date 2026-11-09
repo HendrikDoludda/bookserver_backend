@@ -19,11 +19,17 @@ use crate::{
     routes::{
         email_helper::{EmailInformation, Mailer},
         registration::SetupCode,
+        totp_cipher::TotpCipher,
     },
 };
 
 /// The setup code of every test router; first sign-ups in tests send it.
 pub const TEST_SETUP_CODE: &str = "SETUP234";
+
+/// The TOTP cipher of every test router.
+pub fn test_cipher() -> TotpCipher {
+    TotpCipher::from_signing_key(&[7; 32])
+}
 
 /// A fresh in-memory database with every migration applied.
 pub fn memory_connection() -> Connection {
@@ -92,12 +98,14 @@ impl TempDatabase {
         &self._file.0
     }
 
-    /// Router state on this database, with the given mailer and `TEST_SETUP_CODE`.
+    /// Router state on this database, with the given mailer, `TEST_SETUP_CODE` and
+    /// `test_cipher()`.
     pub fn state(&self, mailer: Mailer) -> AppState {
         AppState {
             db: Arc::clone(&self.db),
             mailer,
             setup_code: SetupCode::of(TEST_SETUP_CODE),
+            totp_cipher: test_cipher(),
         }
     }
 }

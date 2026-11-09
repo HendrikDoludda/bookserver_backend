@@ -37,7 +37,7 @@ anyhow · argon2 · blake3 · pdfium-render · zip · image · mail-send · trac
 src/
 ├── main.rs                     entry point: logging, database, server
 ├── config.rs                   env-var config + generated secrets file
-├── app_state.rs                router state: database + mailer
+├── app_state.rs                router state: database, mailer, setup code, TOTP cipher
 ├── routes/
 │   ├── api_routes.rs           route table (/health, /api/v1/…)
 │   ├── api_caller/             request handlers per area + auth extractors
@@ -46,6 +46,8 @@ src/
 │   ├── login.rs                login, refresh and logout
 │   ├── password_reset.rs       password reset by emailed code
 │   ├── email_codes.rs          emailed codes: issuing, mail limits, checking
+│   ├── totp_management.rs      TOTP two-factor auth and recovery codes
+│   ├── totp_cipher.rs          TOTP secrets encrypted at rest (XChaCha20-Poly1305)
 │   └── email_helper.rs         Mailer: SMTP delivery
 ├── database_related_scripts/
 │   ├── db.rs                   Database: connection pool + queries
@@ -139,6 +141,9 @@ Implemented endpoints:
 | `POST` | `/api/v1/auth/logout` | End the session behind either token; always `204` |
 | `POST` | `/api/v1/auth/password_reset` | Mail a password-reset code; always `202`, so it never reveals whether an address has an account |
 | `POST` | `/api/v1/auth/password_reset/confirm` | Set a new password with the emailed code; ends every session |
+| `GET` | `/api/v1/account/totp` | Whether two-factor auth is on, and how many recovery codes are left |
+| `POST` | `/api/v1/account/totp` | Start setting up two-factor auth; answers the authenticator secret and its `otpauth://` URL |
+| `POST` | `/api/v1/account/totp/confirm` | Confirm the setup with a code and the password; answers 10 recovery codes, shown once, and ends the other sessions |
 
 Errors answer with JSON `{"error": "<key>"}` and a matching status code.
 

@@ -7,6 +7,7 @@ use bookserver_backend::models::SmtpTls;
 use bookserver_backend::routes::api_routes::start_server;
 use bookserver_backend::routes::email_helper::Mailer;
 use bookserver_backend::routes::registration::SetupCode;
+use bookserver_backend::routes::totp_cipher::TotpCipher;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -14,8 +15,8 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let db = Arc::new(Database::new().context("Failed to initialize the database")?);
-    // Not consumed yet; see docs/features/12-security-hardening.md.
-    let _secrets = config::set_up_config_file()?;
+    let secrets = config::set_up_config_file().context("Failed to load secrets.toml")?;
+    let totp_cipher = TotpCipher::from_signing_key(&secrets.signing_key()?);
 
     let email = config::get_email_config().context("The SMTP_* settings are incomplete")?;
     match &email {
@@ -43,6 +44,7 @@ async fn main() -> anyhow::Result<()> {
         db,
         mailer: Mailer::from_config(email),
         setup_code,
+        totp_cipher,
     };
 
     start_server(state)

@@ -103,7 +103,8 @@ impl Extract for UserMetadata {
 impl Extract for TOTP {
     const TABLE: &'static str = "totp";
     const KEY: &'static str = "user_id";
-    const COLUMNS: &'static str = "user_id, authentication_secret, created_at";
+    const COLUMNS: &'static str = "user_id, authentication_secret, confirmed, last_used_step, \
+        failed_attempts, lockouts, last_failed_at, created_at";
 }
 
 impl Extract for RecoveryCodes {

@@ -510,13 +510,28 @@ impl AsRef<str> for RecoveryCodesColumns {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TOTP {
     pub user_id: i64,
+    /// Encrypted by `TotpCipher`: base64 of nonce, ciphertext and tag.
     pub authentication_secret: String,
+    /// `false` while the setup waits for its first code.
+    pub confirmed: bool,
+    /// The time step of the last accepted code; only a newer step is accepted.
+    pub last_used_step: Option<i64>,
+    /// Wrong-code lock: tries in the current round, counted before each check.
+    pub failed_attempts: i64,
+    /// Wrong-code lock: locks since the last correct code.
+    pub lockouts: i64,
+    pub last_failed_at: Option<SystemTime>,
     pub created_at: SystemTime,
 }
 
 pub enum TOTPDatabaseColumns {
     UserId,
     AuthenticationSecret,
+    Confirmed,
+    LastUsedStep,
+    FailedAttempts,
+    Lockouts,
+    LastFailedAt,
     CreatedAt,
 }
 
@@ -525,6 +540,11 @@ impl AsRef<str> for TOTPDatabaseColumns {
         match self {
             TOTPDatabaseColumns::UserId => "user_id",
             TOTPDatabaseColumns::AuthenticationSecret => "authentication_secret",
+            TOTPDatabaseColumns::Confirmed => "confirmed",
+            TOTPDatabaseColumns::LastUsedStep => "last_used_step",
+            TOTPDatabaseColumns::FailedAttempts => "failed_attempts",
+            TOTPDatabaseColumns::Lockouts => "lockouts",
+            TOTPDatabaseColumns::LastFailedAt => "last_failed_at",
             TOTPDatabaseColumns::CreatedAt => "created_at",
         }
     }

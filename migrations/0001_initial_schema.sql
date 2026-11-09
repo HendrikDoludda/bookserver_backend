@@ -118,9 +118,16 @@ CREATE TABLE IF NOT EXISTS recovery_codes (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- A user's authenticator app: pending until a code confirms the setup. The secret is stored
+-- encrypted, and the try counters are the wrong-code lock.
 CREATE TABLE IF NOT EXISTS totp (
     user_id INTEGER PRIMARY KEY,
     authentication_secret TEXT NOT NULL,
+    confirmed BOOLEAN NOT NULL DEFAULT FALSE,
+    last_used_step INTEGER,
+    failed_attempts INTEGER NOT NULL DEFAULT 0,
+    lockouts INTEGER NOT NULL DEFAULT 0,
+    last_failed_at INTEGER,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );

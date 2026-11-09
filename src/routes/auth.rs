@@ -10,7 +10,8 @@ use crate::data_models::authentication_model::{ChangePasswordRequest, DeviceInfo
 use crate::database_related_scripts::{db::Database, db_login_challenges, db_sessions};
 use crate::error_types::{AuthenticationError, DatabaseError};
 use crate::models::{
-    QuerySeparator, Sessions, SessionsDatabaseColumns, UserDatabaseColumns, UserMetadata,
+    DatabaseTypes, QuerySeparator, Sessions, SessionsDatabaseColumns, UserDatabaseColumns,
+    UserMetadata,
 };
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
@@ -195,6 +196,31 @@ pub fn end_all_sessions(conn: &Connection, user_id: i64) -> Result<usize, Databa
         &[&user_id],
         QuerySeparator::And,
     )
+}
+
+/// Ends every session of the user except `keep`, and every login still waiting for its TOTP
+/// code — e.g. once 2FA is switched on.
+pub fn end_other_sessions(
+    conn: &Connection,
+    user_id: i64,
+    keep: i64,
+) -> Result<usize, DatabaseError> {
+    db_login_challenges::delete_for_user(conn, user_id)?;
+    let sessions = Database::search_for_multiple_rows_with_connection::<Sessions>(
+        conn,
+        &[SessionsDatabaseColumns::UserId],
+        &[&user_id],
+        QuerySeparator::And,
+    )?;
+    let mut ended = 0;
+    for session in sessions.iter().filter(|session| session.session_id != keep) {
+        ended += Database::remove_entry_with_connection(
+            conn,
+            DatabaseTypes::Session,
+            session.session_id,
+        )?;
+    }
+    Ok(ended)
 }
 
 // === Sessions ================================================================
@@ -447,5 +473,57 @@ mod tests {
             1,
             "a pending TOTP login ends too"
         );
+    }
+
+    #[test]
+    fn ending_the_other_sessions_keeps_this_one_and_other_users_sessions() {
+        let conn = memory_connection();
+        let alice = crate::test_support::insert_user(&conn, "alice");
+        let bob = crate::test_support::insert_user(&conn, "bob");
+        let mut alices_sessions = Vec::new();
+        for (user_id, token) in [(alice, "a1"), (alice, "a2"), (alice, "a3"), (bob, "b1")] {
+            conn.execute(
+                "INSERT INTO sessions (user_id, device_id, device_name, platform, \
+                 refresh_token_hashed, refresh_token_valid_until, session_token_hashed, \
+                 session_token_valid_until, last_used_at) \
+                 VALUES (?1, ?2, 'phone', 'ios', ?2, 0, ?2, 0, 0)",
+                rusqlite::params![user_id, token],
+            )
+            .unwrap();
+            if user_id == alice {
+                alices_sessions.push(conn.last_insert_rowid());
+            }
+        }
+        conn.execute(
+            "INSERT INTO login_challenges (user_id, token_hashed, expires_at, device_id, \
+             device_name, platform) VALUES (?1, 'challenge', 0, 'device', 'phone', 'ios')",
+            [alice],
+        )
+        .unwrap();
+        let current = alices_sessions[1];
+
+        assert_eq!(end_other_sessions(&conn, alice, current).unwrap(), 2);
+
+        let remaining: Vec<i64> = conn
+            .prepare("SELECT session_id FROM sessions ORDER BY session_id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let bobs: i64 = conn
+            .query_row(
+                "SELECT session_id FROM sessions WHERE user_id = ?1",
+                [bob],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, vec![current, bobs]);
+        let challenges: i64 = conn
+            .query_row("SELECT COUNT(*) FROM login_challenges", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(challenges, 0, "a pending TOTP login ends too");
     }
 }
