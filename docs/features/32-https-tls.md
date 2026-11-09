@@ -2,9 +2,10 @@
 
 State: not started
 
-The server speaks HTTPS itself, even on the LAN, because login carries the password and later
-the TOTP code. The certificate comes from `tailscale cert`: a real certificate for the
-server's tailnet name, so browsers trust it without any setup.
+The server speaks HTTPS itself, even on the LAN, because login carries the password and the
+TOTP code, and the 2FA setup answer carries the TOTP secret itself — until then, enroll over
+Tailscale. The certificate comes from `tailscale cert`: a real certificate for the server's
+tailnet name, so browsers trust it without any setup.
 
 ## Build
 - [ ] 3 h · Serve over TLS with `axum-server` (feature `tls-rustls`, not a dependency yet): `RustlsConfig::from_pem_file(cert, key)` and `bind_rustls` [BE]
