@@ -1,8 +1,7 @@
 use crate::data_models::models::{
-    BookDatabaseColumns, BookMetadata, BookSeriesMetadata, EmailVerification,
-    EmailVerificationDatabaseColumns, LibraryDatabaseColumns, LibraryMetadata, QuerySeparator,
-    RecoveryCodes, RecoveryCodesColumns, SeriesDatabaseColumns, Sessions, SessionsDatabaseColumns,
-    TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, TOTP,
+    BookDatabaseColumns, BookMetadata, BookSeriesMetadata, LibraryDatabaseColumns, LibraryMetadata,
+    QuerySeparator, RecoveryCodes, RecoveryCodesColumns, SeriesDatabaseColumns, Sessions,
+    SessionsDatabaseColumns, TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, TOTP,
 };
 use crate::database_related_scripts::db_from_row::FromRow;
 use crate::error_types::DatabaseError;
@@ -93,11 +92,6 @@ impl Search for LibraryMetadata {
 impl Search for UserMetadata {
     type Column = UserDatabaseColumns;
     const TABLE: &'static str = "users";
-}
-
-impl Search for EmailVerification {
-    type Column = EmailVerificationDatabaseColumns;
-    const TABLE: &'static str = "email_verification";
 }
 
 impl Search for Sessions {

@@ -93,12 +93,6 @@ mod tests {
         for user_id in [alice, bob] {
             let unique = format!("for-{user_id}");
             conn.execute(
-                "INSERT INTO email_verification (user_id, email_verification_token, expires_at) \
-                 VALUES (?1, ?2, 0)",
-                params![user_id, unique],
-            )
-            .unwrap();
-            conn.execute(
                 "INSERT INTO email_codes (user_id, purpose, code_hash, expires_at, \
                  last_sent_at, sent_in_window, window_started_at) \
                  VALUES (?1, 'reset_password', ?2, 0, 0, 1, 0)",
@@ -135,7 +129,6 @@ mod tests {
             .unwrap();
 
         for table in [
-            "email_verification",
             "email_codes",
             "sessions",
             "recovery_codes",

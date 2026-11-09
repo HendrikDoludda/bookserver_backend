@@ -1,64 +1,22 @@
-//! Authentication logic: account creation, email verification, login, password
-//! changes/resets, and the session + refresh token pair. The handlers in
-//! `api_caller/` call into these functions inside a database transaction.
+//! Account, password and session building blocks shared by the auth flows (`login.rs`,
+//! `registration.rs`, `password_reset.rs`): the checks a new username, email address or
+//! password passes, hashing, and the session + refresh token pair.
 
 use argon2::password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier};
 use argon2::Argon2;
 use rusqlite::Connection;
 
-use crate::data_models::authentication_model::{
-    ChangePasswordRequest, DeviceInformation, VerifyEmailRequest,
-};
+use crate::data_models::authentication_model::{ChangePasswordRequest, DeviceInformation};
 use crate::database_related_scripts::{db::Database, db_login_challenges, db_sessions};
-use crate::error_types::{AppErrors, AuthenticationError, DatabaseError, EmailErrors};
+use crate::error_types::{AuthenticationError, DatabaseError};
 use crate::models::{
-    DatabaseTypes, EmailVerification, EmailVerificationDatabaseColumns, QuerySeparator, Sessions,
-    SessionsDatabaseColumns,
-};
-use crate::routes::email_helper::{EmailInformation, Mailer};
-use crate::{
-    data_models::authentication_model::UserCreationRequest,
-    models::{UserDatabaseColumns, UserMetadata},
+    QuerySeparator, Sessions, SessionsDatabaseColumns, UserDatabaseColumns, UserMetadata,
 };
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 
-use rand::distr::{Alphanumeric, SampleString};
 use rand::rngs::SysRng; // the OS CSPRNG (was `OsRng` before rand 0.10)
 use rand::TryRng; // brings `try_fill_bytes` into scope for SysRng
-
-pub fn create_new_user(
-    conn: &Connection,
-    first_user: UserCreationChecks,
-    request: UserCreationRequest,
-) -> Result<i64, AuthenticationError> {
-    let hashed_password = hash_string_securely(&request.password)?;
-    let user = UserMetadata {
-        user_id: 0,
-        username: request.username,
-        password_hash: hashed_password.hashed_string,
-        email: request.email,
-        email_verified: false,
-        is_admin: first_user.make_admin,
-        created_at: SystemTime::now(),
-        last_login: None,
-    };
-
-    let id = Database::insert_with_connection(conn, &user).map_err(|err| {
-        log::error!("failed to insert the new user into the database: {err}");
-        AuthenticationError::DatabaseInsertFailed
-    })?;
-    Ok(id)
-}
-
-pub struct UserCreationChecks {
-    pub make_admin: bool,
-}
-
-pub struct VerificationEmailInformation {
-    pub code: String,
-    pub user: UserMetadata,
-}
 
 pub struct HashedString {
     pub normal_string: String, // sent to the client
@@ -81,195 +39,39 @@ pub struct NewSessionTokenData {
     pub refresh_token_valid_until: SystemTime,
 }
 
-pub fn validate_new_user(
-    conn: &Connection,
-    request: UserCreationRequest,
-) -> Result<UserCreationChecks, AuthenticationError> {
-    if request.password != request.password_repeat {
-        return Err(AuthenticationError::MismatchingPasswords);
-    }
-    let existing_user = Database::search_for_single_row_with_connection::<UserMetadata>(
-        conn,
-        &[UserDatabaseColumns::Email, UserDatabaseColumns::Username],
-        &[&request.email, &request.username],
-        QuerySeparator::Or,
-    )
-    .map_err(|_| AuthenticationError::DatabaseSearchFailure)?;
-    // ASCII-only, like SQLite's NOCASE on both columns: the database found this row
-    // case-insensitively, so the comparison here must agree with it.
-    if let Some(user) = existing_user {
-        if user.email.eq_ignore_ascii_case(&request.email) {
-            return Err(AuthenticationError::EmailTaken);
-        }
-        if user.username.eq_ignore_ascii_case(&request.username) {
-            return Err(AuthenticationError::UsernameTaken);
-        }
-    }
-    let existing_admin = Database::search_for_single_row_with_connection::<UserMetadata>(
-        conn,
-        &[UserDatabaseColumns::IsAdmin],
-        &[&true],
-        QuerySeparator::And,
-    )
-    .map_err(|_| AuthenticationError::DatabaseSearchFailure)?;
-    Ok(UserCreationChecks {
-        make_admin: existing_admin.is_none(),
-    })
-}
+// === Usernames & email addresses =============================================
 
-fn create_crypto_code(code_length: usize) -> String {
-    Alphanumeric.sample_string(&mut rand::rng(), code_length)
-}
+pub const MIN_USERNAME_CHARS: usize = 3;
+pub const MAX_USERNAME_CHARS: usize = 32;
+pub const MAX_EMAIL_CHARS: usize = 254;
 
-pub fn send_verification_email(
-    conn: &Connection,
-    user_id: i64,
-) -> Result<VerificationEmailInformation, EmailErrors> {
-    Database::remove_entry_with_connection(conn, DatabaseTypes::EmailVerificationType, user_id)
-        .map_err(|_| EmailErrors::VerificationTokenRemovalFailure)?;
-    let crypto_code = create_crypto_code(8);
-    let verification_code = hash_string_securely(&crypto_code).map_err(|e| {
-        log::error!("failed to hash code: {e}");
-        EmailErrors::HashingFailed
-    })?;
-    let user = Database::search_for_single_row_with_connection::<UserMetadata>(
-        conn,
-        &[UserDatabaseColumns::UserId],
-        &[&user_id],
-        QuerySeparator::And,
-    )
-    .map_err(|_| EmailErrors::FailedToRetrieveUserEntry)?
-    .ok_or(EmailErrors::UserEntryNotFound)?;
-
-    let expiration_date = SystemTime::now()
-        .checked_add(Duration::from_mins(15))
-        .ok_or(EmailErrors::TimeAdjustmentFailure)?;
-
-    let email_verification = EmailVerification {
-        user_id,
-        verification_token: verification_code.hashed_string,
-        expiration_date,
-        invalidated: false,
-    };
-
-    Database::insert_with_connection(conn, &email_verification).map_err(|e| {
-        log::error!("Failed insertion into database: {e}");
-        EmailErrors::DatabaseInsertionFailed
-    })?;
-    let response = VerificationEmailInformation {
-        code: verification_code.normal_string.clone(),
-        user,
-    };
-    Ok(response)
-}
-
-/// Sends the verification email; calling it again re-sends one with a new token.
-// TODO: replace the text with i18n strings once the catalog exists.
-pub async fn create_verification_email(
-    mailer: &Mailer,
-    information: &VerificationEmailInformation,
-) -> Result<(), EmailErrors> {
-    let body = format!(
-        "Dear {},\nTo verify the account please enter the following code in the application.\nCode: {}\nBest regards,\n{}",
-        information.user.username, information.code, "Server Team"
-    );
-    let subject = "Verify Book Server Account".to_string();
-
-    let mail_info: EmailInformation = EmailInformation {
-        username: information.user.username.clone(),
-        email: information.user.email.clone(),
-        body,
-        subject,
-    };
-
-    mailer.send(mail_info).await
-}
-
-pub fn search_for_user_using_email_or_username(
-    conn: &Connection,
-    username_or_email: &String,
-) -> Result<UserMetadata, AppErrors> {
-    let stored_user = Database::search_for_single_row_with_connection::<UserMetadata>(
-        conn,
-        &[UserDatabaseColumns::Email, UserDatabaseColumns::Username],
-        &[&username_or_email, &username_or_email],
-        QuerySeparator::Or,
-    )
-    .map_err(|e| {
-        log::error!("Database returned error: {e}");
-        AuthenticationError::DatabaseSearchFailure
-    })?
-    .ok_or(AuthenticationError::IncorrectCredentials)?;
-    Ok(stored_user)
-}
-
-pub fn verify_verification_code(
-    conn: &Connection,
-    request: &VerifyEmailRequest,
-    user_id: i64,
-) -> Result<(), AppErrors> {
-    let verification_token = Database::search_for_single_row_with_connection::<EmailVerification>(
-        conn,
-        &[
-            EmailVerificationDatabaseColumns::UserId,
-            EmailVerificationDatabaseColumns::Invalidated,
-        ],
-        &[&user_id, &false],
-        QuerySeparator::And,
-    )
-    .map_err(|e| {
-        log::error!("Database returned error: {e}");
-        AuthenticationError::DatabaseSearchFailure
-    })?
-    .ok_or(AuthenticationError::EmailVerificationNotFound)?;
-
-    if verification_token.expiration_date < SystemTime::now() {
-        return Err(AppErrors::Authentication(
-            AuthenticationError::ExpiredAuthenticationCode,
-        ));
-    }
-
-    let hashed_token = PasswordHash::new(&verification_token.verification_token).map_err(|e| {
-        log::error!("PasswordHash::new failed to convert string to PasswordHash: {e}");
-        AuthenticationError::StringToPasswordHashConversionFailed
-    })?;
-    evaluate_verification_token(
-        conn,
-        user_id,
-        request.email_verification_token.as_bytes(),
-        hashed_token,
-    )
-}
-
-fn evaluate_verification_token(
-    conn: &Connection,
-    user_id: i64,
-    password: &[u8],
-    stored_password: PasswordHash,
-) -> Result<(), AppErrors> {
-    if Argon2::default()
-        .verify_password(password, &stored_password)
-        .is_ok()
-    {
-        Database::update_value_with_connection::<UserMetadata>(
-            conn,
-            UserDatabaseColumns::EmailVerified,
-            &true,
-            user_id,
-        )?;
-
-        Database::update_value_with_connection::<EmailVerification>(
-            conn,
-            EmailVerificationDatabaseColumns::Invalidated,
-            &true,
-            user_id,
-        )?;
-
+/// The one check every new username passes: 3 to 32 of `A–Z a–z 0–9 _ . -`.
+pub fn check_username(username: &str) -> Result<(), AuthenticationError> {
+    // Never `@`, which makes login read the input as an email, nor `:`, which totp-rs
+    // refuses in an account name.
+    let allowed = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-');
+    let length_ok = (MIN_USERNAME_CHARS..=MAX_USERNAME_CHARS).contains(&username.len());
+    if length_ok && username.chars().all(allowed) {
         Ok(())
     } else {
-        Err(AppErrors::Authentication(
-            AuthenticationError::IncorrectCredentials,
-        ))
+        Err(AuthenticationError::InvalidUsername)
+    }
+}
+
+/// The one check every new email address passes: exactly one `@` with text on both sides,
+/// printable ASCII only, at most 254 characters.
+pub fn check_email(email: &str) -> Result<(), AuthenticationError> {
+    // mail-send and mail-builder write the address unescaped into `RCPT TO:<…>` and the
+    // `To:` header, so whitespace, control characters and these delimiters are refused.
+    let allowed = |c: char| c.is_ascii_graphic() && !"()<>[]:;\\,\"".contains(c);
+    let one_at_between_text = matches!(
+        email.split_once('@'),
+        Some((local, domain)) if !local.is_empty() && !domain.is_empty() && !domain.contains('@')
+    );
+    if email.len() <= MAX_EMAIL_CHARS && email.chars().all(allowed) && one_at_between_text {
+        Ok(())
+    } else {
+        Err(AuthenticationError::InvalidEmail)
     }
 }
 
@@ -490,45 +292,77 @@ mod tests {
     use super::*;
     use crate::test_support::memory_connection;
 
-    fn sign_up(username: &str, email: &str) -> UserCreationRequest {
-        UserCreationRequest {
-            email: email.to_string(),
-            username: username.to_string(),
-            password: "correct horse battery".to_string(),
-            password_repeat: "correct horse battery".to_string(),
+    #[test]
+    fn a_username_is_3_to_32_letters_digits_underscores_dots_or_dashes() {
+        let longest = "a".repeat(MAX_USERNAME_CHARS);
+        for good in ["abc", "Alice_B.c-9", longest.as_str()] {
+            assert!(check_username(good).is_ok(), "{good:?}");
+        }
+
+        let too_long = "a".repeat(MAX_USERNAME_CHARS + 1);
+        for bad in [
+            "",
+            "ab",
+            too_long.as_str(),
+            "al@ice",
+            "al:ice",
+            "al ice",
+            "ålice",
+            "alice\n",
+        ] {
+            assert!(
+                matches!(
+                    check_username(bad),
+                    Err(AuthenticationError::InvalidUsername)
+                ),
+                "{bad:?}"
+            );
         }
     }
 
-    fn with_alice() -> Connection {
-        let conn = memory_connection();
-        conn.execute(
-            "INSERT INTO users (username, password_hash, email) \
-             VALUES ('Alice', 'hash', 'Alice@Example.com')",
-            [],
-        )
-        .unwrap();
-        conn
+    #[test]
+    fn an_email_is_one_at_between_text_in_printable_ascii() {
+        let domain = "@example.com";
+        let longest = format!("{}{domain}", "a".repeat(MAX_EMAIL_CHARS - domain.len()));
+        assert_eq!(longest.len(), MAX_EMAIL_CHARS);
+        for good in [
+            "alice@example.com",
+            "a.b+tag@sub.example.co",
+            "o'neil@example.com",
+            longest.as_str(),
+        ] {
+            assert!(check_email(good).is_ok(), "{good:?}");
+        }
+
+        let too_long = format!("a{longest}");
+        for bad in [
+            "",
+            "alice",
+            "@example.com",
+            "alice@",
+            "a@b@example.com",
+            "älice@example.com",
+            too_long.as_str(),
+        ] {
+            assert!(
+                matches!(check_email(bad), Err(AuthenticationError::InvalidEmail)),
+                "{bad:?}"
+            );
+        }
     }
 
     #[test]
-    fn an_email_differing_only_in_case_is_taken() {
-        let conn = with_alice();
-        let result = validate_new_user(&conn, sign_up("bob", "alice@example.com"));
-        assert!(matches!(result, Err(AuthenticationError::EmailTaken)));
-    }
-
-    #[test]
-    fn a_username_differing_only_in_case_is_taken() {
-        let conn = with_alice();
-        let result = validate_new_user(&conn, sign_up("ALICE", "other@example.com"));
-        assert!(matches!(result, Err(AuthenticationError::UsernameTaken)));
-    }
-
-    #[test]
-    fn a_new_username_and_email_pass() {
-        let conn = with_alice();
-        let result = validate_new_user(&conn, sign_up("bob", "bob@example.com"));
-        assert!(result.is_ok());
+    fn an_email_with_a_character_that_could_break_out_of_an_smtp_line_is_refused() {
+        for c in [
+            '\r', '\n', '\t', '\0', ' ', '(', ')', '<', '>', '[', ']', ':', ';', '\\', ',', '"',
+        ] {
+            let email = format!("ali{c}ce@example.com");
+            assert!(
+                matches!(check_email(&email), Err(AuthenticationError::InvalidEmail)),
+                "{email:?}"
+            );
+        }
+        assert!(check_email("alice@example.com\r\nDATA").is_err());
     }
 
     #[test]

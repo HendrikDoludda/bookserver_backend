@@ -7,8 +7,8 @@ use rusqlite::{
 };
 
 use crate::models::{
-    BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, EmailCode, EmailVerification,
-    LibraryMetadata, LibraryType, LoginChallenge, RecoveryCodes, Sessions, UserMetadata, TOTP,
+    BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, EmailCode, LibraryMetadata,
+    LibraryType, LoginChallenge, RecoveryCodes, Sessions, UserMetadata, TOTP,
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -152,19 +152,6 @@ impl FromRow for LoginChallenge {
             device_id: row.get("device_id")?,
             device_name: row.get("device_name")?,
             platform: row.get("platform")?,
-        })
-    }
-}
-
-impl FromRow for EmailVerification {
-    fn from_row(row: &Row) -> rusqlite::Result<Self> {
-        let expires_at = read_time(row, "expires_at")?;
-
-        Ok(Self {
-            user_id: row.get("user_id")?,
-            verification_token: row.get("email_verification_token")?,
-            expiration_date: expires_at,
-            invalidated: row.get("invalidated")?,
         })
     }
 }

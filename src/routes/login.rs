@@ -48,32 +48,9 @@ pub async fn log_in(
         device_id,
         platform,
     } = request;
-    let name = username_or_email.trim().to_string();
-    let throttle_key = name.to_ascii_lowercase();
-
-    // Counted before the password is checked, and for names without an account too: counted
-    // after a failed check it could be rolled back, and a 429 must not reveal which names exist.
-    let key = throttle_key.clone();
-    let user = Arc::clone(&db)
-        .transact(move |conn| {
-            if !db_login_throttle::reserve(conn, &key, now, LOGIN_TRY_WINDOW, MAX_LOGIN_TRIES)? {
-                return Err(AuthenticationError::TooManyAttempts.into());
-            }
-            Ok(find_user_for_login(conn, &name)?)
-        })
-        .await?;
-
-    // Without an account this checks against a dummy hash, so both failures take as long.
-    let stored_hash = user.as_ref().map(|user| user.password_hash.clone());
-    let password_is_right = secret_matches(password, stored_hash).await?;
-    let user = match user {
-        Some(user) if password_is_right => user,
-        _ => return Err(AuthenticationError::IncorrectCredentials.into()),
-    };
-
-    let device_id = device_id
-        .filter(|id| Uuid::parse_str(id).is_ok())
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let CheckedPassword { user, throttle_key } =
+        check_password(Arc::clone(&db), &username_or_email, password, now).await?;
+    let device_id = device_id_or_new(device_id);
 
     let response = db
         .transact(move |conn| {
@@ -87,26 +64,85 @@ pub async fn log_in(
                 device_name: &device_name,
                 platform: &platform,
             };
-            if has_totp(conn, user.user_id)? {
-                return Ok(Some(start_challenge(conn, user.user_id, &device, now)?));
-            }
-            let tokens = create_new_session(conn, user.user_id, device, now)?;
-            Database::update_value_with_connection::<UserMetadata>(
-                conn,
-                UserDatabaseColumns::LastLogin,
-                &convert_system_time_to_unix_time(now),
-                user.user_id,
-            )?;
-            Ok(Some(LoginResponse::Ok(session_tokens(tokens, device_id))))
+            Ok(Some(start_login(conn, user.user_id, device, now)?))
         })
         .await?;
     response.ok_or_else(|| AuthenticationError::EmailNotVerified.into())
 }
 
+/// A name and password that matched an account.
+pub(crate) struct CheckedPassword {
+    pub user: UserMetadata,
+    /// The name's key in the login throttle, for clearing its tries.
+    pub throttle_key: String,
+}
+
+/// Checks a name and password the way login does: the try counts against the name first, and
+/// a wrong password and an unknown name get the same 401 in the same time.
+pub(crate) async fn check_password(
+    db: Arc<Database>,
+    name: &str,
+    password: String,
+    now: SystemTime,
+) -> Result<CheckedPassword, AppErrors> {
+    let name = name.trim().to_string();
+    let throttle_key = name.to_ascii_lowercase();
+
+    // Counted before the password is checked, and for names without an account too: counted
+    // after a failed check it could be rolled back, and a 429 must not reveal which names exist.
+    let key = throttle_key.clone();
+    let user = db
+        .transact(move |conn| {
+            if !db_login_throttle::reserve(conn, &key, now, LOGIN_TRY_WINDOW, MAX_LOGIN_TRIES)? {
+                return Err(AuthenticationError::TooManyAttempts.into());
+            }
+            Ok(find_user_for_login(conn, &name)?)
+        })
+        .await?;
+
+    // Without an account this checks against a dummy hash, so both failures take as long.
+    let stored_hash = user.as_ref().map(|user| user.password_hash.clone());
+    let password_is_right = secret_matches(password, stored_hash).await?;
+    match user {
+        Some(user) if password_is_right => Ok(CheckedPassword { user, throttle_key }),
+        _ => Err(AuthenticationError::IncorrectCredentials.into()),
+    }
+}
+
+/// What a proven identity leads to — a correct password, or a redeemed verification code:
+/// a session, or for a TOTP user a challenge that the code step turns into one.
+pub(crate) fn start_login(
+    conn: &Connection,
+    user_id: i64,
+    device: DeviceInformation,
+    now: SystemTime,
+) -> Result<LoginResponse, AppErrors> {
+    if has_totp(conn, user_id)? {
+        return start_challenge(conn, user_id, &device, now);
+    }
+    let device_id = device.device_id.to_string();
+    let tokens = create_new_session(conn, user_id, device, now)?;
+    Database::update_value_with_connection::<UserMetadata>(
+        conn,
+        UserDatabaseColumns::LastLogin,
+        &convert_system_time_to_unix_time(now),
+        user_id,
+    )?;
+    Ok(LoginResponse::Ok(session_tokens(tokens, device_id)))
+}
+
+/// The device id the client sent back, or a new one: the server hands out device ids, so
+/// anything that isn't a UUID is replaced.
+pub(crate) fn device_id_or_new(device_id: Option<String>) -> String {
+    device_id
+        .filter(|id| Uuid::parse_str(id).is_ok())
+        .unwrap_or_else(|| Uuid::new_v4().to_string())
+}
+
 /// Input with an `@` is looked up as an email, anything else as a username. A single
 /// `email = ? OR username = ?` lookup lets a username that equals another account's email
 /// hide that account.
-fn find_user_for_login(
+pub(crate) fn find_user_for_login(
     conn: &Connection,
     name: &str,
 ) -> Result<Option<UserMetadata>, DatabaseError> {

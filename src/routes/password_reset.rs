@@ -2,111 +2,24 @@
 
 use std::{sync::Arc, time::SystemTime};
 
-use rusqlite::Connection;
-
 use crate::{
     data_models::authentication_model::ConfirmPasswordResetRequest,
     database_related_scripts::db_email_codes,
     db::Database,
-    error_types::{AppErrors, AuthenticationError, DatabaseError},
-    models::{CodePurpose, EmailCode, QuerySeparator, UserDatabaseColumns, UserMetadata},
+    error_types::{AppErrors, AuthenticationError},
+    models::{CodePurpose, UserDatabaseColumns, UserMetadata},
     routes::{
-        auth::{check_new_password, end_all_sessions, hash_secret, secret_matches},
-        email_codes::{
-            counters_for_next_mail, generate_code, normalize_code, MailCounters, CODE_LIFETIME,
-            MAX_ATTEMPTS,
-        },
-        email_helper::{EmailInformation, Mailer},
+        auth::{check_new_password, end_all_sessions, hash_secret},
+        email_codes::{check_code, find_account, send_code},
+        email_helper::Mailer,
     },
 };
 
 const PURPOSE: CodePurpose = CodePurpose::ResetPassword;
 
-/// Issues a reset code for `email` and mails it. The handler has already answered, so every
-/// outcome ends here: an unknown address or a request over the limits simply sends nothing.
+/// Issues a reset code for `email` and mails it, within the limits; see [`send_code`].
 pub async fn send_reset_code(db: Arc<Database>, mailer: Mailer, email: String, now: SystemTime) {
-    match issue_reset_code(db, email, now).await {
-        Ok(Some(mail)) => {
-            if let Err(err) = mailer.send(mail).await {
-                tracing::error!("sending a password-reset email failed: {err}");
-            }
-        }
-        Ok(None) => {}
-        Err(err) => tracing::error!("issuing a password-reset code failed: {err}"),
-    }
-}
-
-/// Stores a fresh code for the account with this email and returns the mail carrying it,
-/// or `None` when no mail may go out.
-async fn issue_reset_code(
-    db: Arc<Database>,
-    email: String,
-    now: SystemTime,
-) -> Result<Option<EmailInformation>, AppErrors> {
-    // Checked before hashing, so requests for unknown addresses cost no Argon2 work.
-    let lookup = email.clone();
-    let may_send = Arc::clone(&db)
-        .transact(move |conn| Ok(next_mail(conn, &lookup, now)?.is_some()))
-        .await?;
-    if !may_send {
-        return Ok(None);
-    }
-
-    let code = generate_code();
-    let code_hash = hash_secret(code.clone()).await?;
-
-    // Checked again inside the write: a parallel request may have sent a mail meanwhile.
-    db.transact(move |conn| {
-        let Some((user, counters)) = next_mail(conn, &email, now)? else {
-            return Ok(None);
-        };
-        db_email_codes::save(
-            conn,
-            &EmailCode {
-                user_id: user.user_id,
-                purpose: PURPOSE,
-                code_hash,
-                expires_at: now + CODE_LIFETIME,
-                attempts: 0,
-                last_sent_at: now,
-                sent_in_window: counters.sent_in_window,
-                window_started_at: counters.window_started_at,
-            },
-        )?;
-        Ok(Some(reset_mail(&user, &code)))
-    })
-    .await
-}
-
-/// The account behind `email` and its counters for one more mail; `None` when there is no
-/// such account or the limits forbid a mail now.
-fn next_mail(
-    conn: &Connection,
-    email: &str,
-    now: SystemTime,
-) -> Result<Option<(UserMetadata, MailCounters)>, DatabaseError> {
-    let Some(user) = find_user_by_email(conn, email)? else {
-        return Ok(None);
-    };
-    let existing = db_email_codes::find(conn, user.user_id, PURPOSE)?;
-    Ok(counters_for_next_mail(existing.as_ref(), now).map(|counters| (user, counters)))
-}
-
-fn reset_mail(user: &UserMetadata, code: &str) -> EmailInformation {
-    EmailInformation {
-        username: user.username.clone(),
-        email: user.email.clone(),
-        subject: "Your password reset code".to_string(),
-        body: format!(
-            "Hello {},\n\n\
-             your code to reset your password is:\n\n    {}\n\n\
-             It is valid for {} minutes. If you didn't ask for a new password, ignore this \
-             email; your password stays as it is.\n",
-            user.username,
-            code,
-            CODE_LIFETIME.as_secs() / 60
-        ),
-    }
+    send_code(db, mailer, PURPOSE, email, now).await;
 }
 
 /// Redeems a reset code. On success the account has the new password and no sessions;
@@ -124,29 +37,16 @@ pub async fn confirm_reset(
     } = request;
     check_new_password(&new_password, &new_password_repeat)?;
 
-    // The try is counted and committed before the code is checked: counted in the same
-    // transaction as a failed check, it would be rolled back with it.
-    let reserved = Arc::clone(&db)
-        .transact(move |conn| {
-            let Some(user) = find_user_by_email(conn, &email)? else {
-                return Ok(None);
-            };
-            if !db_email_codes::reserve_attempt(conn, user.user_id, PURPOSE, now, MAX_ATTEMPTS)? {
-                return Ok(None);
-            }
-            let stored = db_email_codes::find(conn, user.user_id, PURPOSE)?;
-            Ok(stored.map(|row| (user.user_id, row.code_hash)))
-        })
+    let user = Arc::clone(&db)
+        .read(move |conn| Ok(find_account(conn, PURPOSE, &email)?))
         .await?;
-
-    // Without a live code this checks against a dummy hash, so every failure takes as long.
-    let stored_hash = reserved.as_ref().map(|(_, hash)| hash.clone());
-    let code_is_right = secret_matches(normalize_code(&code), stored_hash).await?;
-    let Some((user_id, code_hash)) = reserved.filter(|_| code_is_right) else {
+    let Some((user, code_hash)) = check_code(Arc::clone(&db), PURPOSE, user, code, now).await?
+    else {
         return Err(AuthenticationError::InvalidValidationCode.into());
     };
 
     let new_hash = hash_secret(new_password).await?;
+    let user_id = user.user_id;
     db.transact(move |conn| {
         // Exactly one row: a parallel request that used the same code finds it gone.
         if !db_email_codes::consume(conn, user_id, PURPOSE, &code_hash)? {
@@ -164,24 +64,15 @@ pub async fn confirm_reset(
     .await
 }
 
-fn find_user_by_email(
-    conn: &Connection,
-    email: &str,
-) -> Result<Option<UserMetadata>, DatabaseError> {
-    Database::search_for_single_row_with_connection::<UserMetadata>(
-        conn,
-        &[UserDatabaseColumns::Email],
-        &[&email],
-        QuerySeparator::And,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::test_support::TempDatabase;
+    use crate::{
+        routes::{auth::secret_matches, email_codes::CODE_LIFETIME},
+        test_support::{code_in, TempDatabase},
+    };
 
     const OLD: &str = "old password 123";
     const NEW: &str = "new password 456";
@@ -247,14 +138,6 @@ mod tests {
 
     async fn request(temp: &TempDatabase, mailer: &Mailer, email: &str, now: SystemTime) {
         send_reset_code(Arc::clone(&temp.db), mailer.clone(), email.to_string(), now).await;
-    }
-
-    fn code_in(mail: &EmailInformation) -> String {
-        mail.body
-            .lines()
-            .find_map(|line| line.strip_prefix("    "))
-            .expect("the mail carries a code")
-            .to_string()
     }
 
     fn confirmation(

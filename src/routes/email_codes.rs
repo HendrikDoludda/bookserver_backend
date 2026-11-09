@@ -1,11 +1,25 @@
-//! Codes sent by email: making them, reading them back as typed, and the limits on how
-//! often one may be mailed. Password reset uses them; email verification will too.
+//! Codes sent by email, for password reset and email verification: making them, mailing them
+//! within the limits on how often one may go out, and checking a typed code.
 
-use std::time::{Duration, SystemTime};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use rand::RngExt;
+use rusqlite::Connection;
 
-use crate::models::EmailCode;
+use crate::{
+    database_related_scripts::db_email_codes,
+    db::Database,
+    error_types::{AppErrors, DatabaseError},
+    models::{CodePurpose, EmailCode, QuerySeparator, UserDatabaseColumns, UserMetadata},
+    routes::{
+        auth::{hash_secret, secret_matches},
+        email_helper::{EmailInformation, Mailer},
+        login::find_user_for_login,
+    },
+};
 
 // No 0/O or 1/I/L: the code is read from an email and typed on a phone.
 const CODE_ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -40,6 +54,15 @@ pub struct MailCounters {
     pub window_started_at: SystemTime,
 }
 
+/// The counters for a mail that starts a new 24-hour window of the daily mail cap: the
+/// account's first code mail, or the first one once the previous 24 hours are over.
+pub fn first_mail(now: SystemTime) -> MailCounters {
+    MailCounters {
+        sent_in_window: 1,
+        window_started_at: now,
+    }
+}
+
 /// The counters for one more mail now, or `None` while the limits forbid it: the last mail
 /// went out less than a minute ago, or the day's mails are used up.
 pub fn counters_for_next_mail(
@@ -47,19 +70,13 @@ pub fn counters_for_next_mail(
     now: SystemTime,
 ) -> Option<MailCounters> {
     let Some(code) = existing else {
-        return Some(MailCounters {
-            sent_in_window: 1,
-            window_started_at: now,
-        });
+        return Some(first_mail(now));
     };
     if elapsed(code.last_sent_at, now) < RESEND_COOLDOWN {
         return None;
     }
     if elapsed(code.window_started_at, now) >= MAIL_WINDOW {
-        return Some(MailCounters {
-            sent_in_window: 1,
-            window_started_at: now,
-        });
+        return Some(first_mail(now));
     }
     if code.sent_in_window >= MAILS_PER_WINDOW {
         return None;
@@ -73,6 +90,196 @@ pub fn counters_for_next_mail(
 // A clock that went backwards counts as no time passed, so the limits stay in force.
 fn elapsed(since: SystemTime, now: SystemTime) -> Duration {
     now.duration_since(since).unwrap_or(Duration::ZERO)
+}
+
+/// Who a code of this purpose is for: any account can reset its password, but only an
+/// unverified one can verify its email.
+fn is_for(purpose: CodePurpose, user: &UserMetadata) -> bool {
+    match purpose {
+        CodePurpose::ResetPassword => true,
+        CodePurpose::VerifyEmail => !user.email_verified,
+    }
+}
+
+/// The account a code request names: a reset request takes only the email, a verification
+/// takes what login takes.
+pub fn find_account(
+    conn: &Connection,
+    purpose: CodePurpose,
+    name: &str,
+) -> Result<Option<UserMetadata>, DatabaseError> {
+    match purpose {
+        CodePurpose::ResetPassword => find_user_by_email(conn, name),
+        CodePurpose::VerifyEmail => find_user_for_login(conn, name.trim()),
+    }
+}
+
+fn find_user_by_email(
+    conn: &Connection,
+    email: &str,
+) -> Result<Option<UserMetadata>, DatabaseError> {
+    Database::search_for_single_row_with_connection::<UserMetadata>(
+        conn,
+        &[UserDatabaseColumns::Email],
+        &[&email],
+        QuerySeparator::And,
+    )
+}
+
+/// Issues a code for the account behind `name` and mails it. The handler has already
+/// answered, so every outcome ends here: no such account, an account the code isn't for, or a
+/// request over the limits simply sends nothing.
+pub async fn send_code(
+    db: Arc<Database>,
+    mailer: Mailer,
+    purpose: CodePurpose,
+    name: String,
+    now: SystemTime,
+) {
+    match issue_code(db, purpose, name, now).await {
+        Ok(Some(mail)) => {
+            if let Err(err) = mailer.send(mail).await {
+                tracing::error!("sending a {} email failed: {err}", purpose.as_str());
+            }
+        }
+        Ok(None) => {}
+        Err(err) => tracing::error!("issuing a {} code failed: {err}", purpose.as_str()),
+    }
+}
+
+/// Stores a fresh code for the account behind `name` and returns the mail carrying it,
+/// or `None` when no mail may go out.
+async fn issue_code(
+    db: Arc<Database>,
+    purpose: CodePurpose,
+    name: String,
+    now: SystemTime,
+) -> Result<Option<EmailInformation>, AppErrors> {
+    // Checked before hashing, so requests for unknown names cost no Argon2 work.
+    let lookup = name.clone();
+    let may_send = Arc::clone(&db)
+        .transact(move |conn| Ok(next_mail(conn, purpose, &lookup, now)?.is_some()))
+        .await?;
+    if !may_send {
+        return Ok(None);
+    }
+
+    let code = generate_code();
+    let code_hash = hash_secret(code.clone()).await?;
+
+    // Checked again inside the write: a parallel request may have sent a mail meanwhile, or a
+    // verification may have finished.
+    db.transact(move |conn| {
+        let Some((user, counters)) = next_mail(conn, purpose, &name, now)? else {
+            return Ok(None);
+        };
+        save_fresh_code(conn, user.user_id, purpose, code_hash, counters, now)?;
+        Ok(Some(code_mail(purpose, &user, &code)))
+    })
+    .await
+}
+
+/// The account behind `name` and its counters for one more mail; `None` when there is no
+/// such account, the code isn't for it, or the limits forbid a mail now.
+fn next_mail(
+    conn: &Connection,
+    purpose: CodePurpose,
+    name: &str,
+    now: SystemTime,
+) -> Result<Option<(UserMetadata, MailCounters)>, DatabaseError> {
+    let Some(user) = find_account(conn, purpose, name)?.filter(|user| is_for(purpose, user)) else {
+        return Ok(None);
+    };
+    let existing = db_email_codes::find(conn, user.user_id, purpose)?;
+    Ok(counters_for_next_mail(existing.as_ref(), now).map(|counters| (user, counters)))
+}
+
+/// Stores the hash of a code that is mailed now, replacing the user's earlier code for
+/// this purpose; it starts with no tries used.
+pub fn save_fresh_code(
+    conn: &Connection,
+    user_id: i64,
+    purpose: CodePurpose,
+    code_hash: String,
+    counters: MailCounters,
+    now: SystemTime,
+) -> Result<(), DatabaseError> {
+    db_email_codes::save(
+        conn,
+        &EmailCode {
+            user_id,
+            purpose,
+            code_hash,
+            expires_at: now + CODE_LIFETIME,
+            attempts: 0,
+            last_sent_at: now,
+            sent_in_window: counters.sent_in_window,
+            window_started_at: counters.window_started_at,
+        },
+    )
+}
+
+/// The mail that carries a code, to the account's stored address.
+pub fn code_mail(purpose: CodePurpose, user: &UserMetadata, code: &str) -> EmailInformation {
+    let minutes = CODE_LIFETIME.as_secs() / 60;
+    let (subject, body) = match purpose {
+        CodePurpose::ResetPassword => (
+            "Your password reset code",
+            format!(
+                "Hello {},\n\n\
+                 your code to reset your password is:\n\n    {}\n\n\
+                 It is valid for {} minutes. If you didn't ask for a new password, ignore this \
+                 email; your password stays as it is.\n",
+                user.username, code, minutes
+            ),
+        ),
+        CodePurpose::VerifyEmail => (
+            "Confirm your email address",
+            format!(
+                "Hello {},\n\n\
+                 your code to confirm your email address is:\n\n    {}\n\n\
+                 It is valid for {} minutes. If you didn't create an account, ignore this \
+                 email.\n",
+                user.username, code, minutes
+            ),
+        ),
+    };
+    EmailInformation {
+        username: user.username.clone(),
+        email: user.email.clone(),
+        subject: subject.to_string(),
+        body,
+    }
+}
+
+/// Counts a try at the user's live code, then checks `code` against it. On success returns
+/// the user and the code's hash, which the caller's final write consumes. Without a user or a
+/// live code it checks against a dummy hash, so every failure takes as long.
+pub async fn check_code(
+    db: Arc<Database>,
+    purpose: CodePurpose,
+    user: Option<UserMetadata>,
+    code: String,
+    now: SystemTime,
+) -> Result<Option<(UserMetadata, String)>, AppErrors> {
+    // The try is counted and committed before the code is checked: counted in the same
+    // transaction as a failed check, it would be rolled back with it.
+    let reserved = db
+        .transact(move |conn| {
+            let Some(user) = user.filter(|user| is_for(purpose, user)) else {
+                return Ok(None);
+            };
+            if !db_email_codes::reserve_attempt(conn, user.user_id, purpose, now, MAX_ATTEMPTS)? {
+                return Ok(None);
+            }
+            let stored = db_email_codes::find(conn, user.user_id, purpose)?;
+            Ok(stored.map(|row| (user, row.code_hash)))
+        })
+        .await?;
+
+    let stored_hash = reserved.as_ref().map(|(_, hash)| hash.clone());
+    let code_is_right = secret_matches(normalize_code(&code), stored_hash).await?;
+    Ok(reserved.filter(|_| code_is_right))
 }
 
 #[cfg(test)]

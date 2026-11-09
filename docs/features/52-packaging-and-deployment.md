@@ -11,6 +11,7 @@ covers stored outside the app so updates and containers keep them.
 - [ ] ? h · Replace the placeholder `ProjectDirs` identifier (`"placeholder_organization"`) in `set_up_config_file` with the app's permanent identifier, per the identifier decision, before the first release — changing it later moves the config directory, and existing installs lose `secrets.toml` [BE]
 - [ ] ? h · Ship the PDFium library with every build and bind it by path (`Pdfium::bind_to_library`) — `Pdfium::default()` looks in the working directory, which is `/` for an app started from Finder (TODO in `cover_image_retriever.rs`) [BE]
 - [ ] ? h · Graceful shutdown: `axum::serve` gets `.with_graceful_shutdown(signal)`, fired by `SIGTERM` and Ctrl-C, so in-flight requests finish and pooled SQLite connections close — `docker stop` sends `SIGTERM` and kills the process 10 seconds later; the tray's "Quit" ([77](77-tray-app.md)) and the updater's restart ([25](25-desktop-auto-update.md)) fire it too [BE]
+- [ ] ? h · The desktop installs show the setup code the first sign-up needs ([27](27-registration-and-email-verification.md)) — an app started from Finder or the Start menu has no visible log [BE]
 - [ ] ? h · Docker image with a persistent volume for the database and covers [BE]
 - [ ] ? h · Publish the Docker image for each version, per the registry decision [BE]
 - [ ] ? h · macOS `.dmg`, unsigned for now — macOS refuses the first launch until it is allowed in System Settings → Privacy & Security; signing comes with [76](76-release-pipeline.md) [BE]

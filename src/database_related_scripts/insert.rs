@@ -1,6 +1,6 @@
 use crate::data_models::models::{
-    BookMetadata, BookSeriesMetadata, EmailVerification, LibraryMetadata, RecoveryCodes,
-    SeriesLibraryConnection, Sessions, UserMetadata, TOTP,
+    BookMetadata, BookSeriesMetadata, LibraryMetadata, RecoveryCodes, SeriesLibraryConnection,
+    Sessions, UserMetadata, TOTP,
 };
 use crate::database_related_scripts::db::convert_system_time_to_unix_time;
 use crate::error_types::DatabaseError;
@@ -118,25 +118,6 @@ impl Insert for SeriesLibraryConnection {
     }
 }
 
-impl Insert for EmailVerification {
-    fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
-        let query = "INSERT INTO email_verification (user_id, email_verification_token, \
-            expires_at, invalidated) VALUES (?1, ?2, ?3, ?4)";
-        let expired_time = convert_system_time_to_unix_time(self.expiration_date);
-        let params = params![
-            self.user_id,
-            self.verification_token.clone(),
-            expired_time,
-            self.invalidated
-        ];
-
-        conn.execute(query, params)
-            .map_err(|_| DatabaseError::InsertionFailure)?;
-        let id = conn.last_insert_rowid();
-        Ok(id)
-    }
-}
-
 impl Insert for Sessions {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
         let query = "INSERT INTO sessions (user_id, device_id, device_name, platform, \
@@ -206,8 +187,8 @@ mod tests {
     use crate::{
         database_related_scripts::db::Database,
         models::{
-            DatabaseTypes, EmailVerificationDatabaseColumns, QuerySeparator, RecoveryCodesColumns,
-            SessionsDatabaseColumns, TOTPDatabaseColumns, UserDatabaseColumns,
+            DatabaseTypes, QuerySeparator, RecoveryCodesColumns, SessionsDatabaseColumns,
+            TOTPDatabaseColumns, UserDatabaseColumns,
         },
         test_support::{insert_user, memory_connection},
     };
@@ -441,43 +422,6 @@ mod tests {
         let removed =
             Database::remove_entry_with_connection(&conn, DatabaseTypes::RecoveryCodes, id)
                 .unwrap();
-        assert_eq!(removed, 1);
-    }
-
-    #[test]
-    fn email_verification_round_trip() {
-        let conn = memory_connection();
-        let user_id = insert_user(&conn, "alice");
-        let verification = EmailVerification {
-            user_id,
-            verification_token: "code-hash".to_string(),
-            expiration_date: at(1_700_000_900),
-            invalidated: false,
-        };
-        Database::insert_with_connection(&conn, &verification).unwrap();
-
-        let stored =
-            Database::get_entry_with_connection::<EmailVerification>(&conn, user_id).unwrap();
-        assert_eq!(stored.user_id, user_id);
-        assert_eq!(stored.verification_token, "code-hash");
-        assert_eq!(stored.expiration_date, at(1_700_000_900));
-        assert!(!stored.invalidated);
-
-        let changed = Database::update_value_with_connection::<EmailVerification>(
-            &conn,
-            EmailVerificationDatabaseColumns::Invalidated,
-            &true,
-            user_id,
-        )
-        .unwrap();
-        assert_eq!(changed, 1);
-
-        let removed = Database::remove_entry_with_connection(
-            &conn,
-            DatabaseTypes::EmailVerificationType,
-            user_id,
-        )
-        .unwrap();
         assert_eq!(removed, 1);
     }
 }

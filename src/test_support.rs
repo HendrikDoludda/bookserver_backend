@@ -15,8 +15,15 @@ use crate::{
         db::{configure, Database},
         migrations,
     },
-    routes::email_helper::Mailer,
+    models::{EmailConfig, SmtpTls},
+    routes::{
+        email_helper::{EmailInformation, Mailer},
+        registration::SetupCode,
+    },
 };
+
+/// The setup code of every test router; first sign-ups in tests send it.
+pub const TEST_SETUP_CODE: &str = "SETUP234";
 
 /// A fresh in-memory database with every migration applied.
 pub fn memory_connection() -> Connection {
@@ -34,6 +41,33 @@ pub fn insert_user(conn: &Connection, username: &str) -> i64 {
     )
     .expect("insert a user");
     conn.last_insert_rowid()
+}
+
+/// The code in a mail from `email_codes::code_mail`: the line indented by four spaces.
+pub fn code_in(mail: &EmailInformation) -> String {
+    mail.body
+        .lines()
+        .find_map(|line| line.strip_prefix("    "))
+        .expect("the mail carries a code")
+        .to_string()
+}
+
+/// A mailer whose SMTP server refuses every connection, for the paths where sending fails.
+pub fn unreachable_mailer() -> Mailer {
+    // Bind and release a port, so nothing is listening on it.
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("bind a free port")
+        .local_addr()
+        .expect("read the port")
+        .port();
+    Mailer::from_config(Some(EmailConfig {
+        host: "127.0.0.1".to_string(),
+        port,
+        tls: SmtpTls::Off,
+        credentials: None,
+        from: "server@example.com".to_string(),
+        from_name: "Book Server".to_string(),
+    }))
 }
 
 /// A pooled `Database` in a temp file, deleted when the value is dropped. A plain
@@ -58,11 +92,12 @@ impl TempDatabase {
         &self._file.0
     }
 
-    /// Router state on this database, with the given mailer.
+    /// Router state on this database, with the given mailer and `TEST_SETUP_CODE`.
     pub fn state(&self, mailer: Mailer) -> AppState {
         AppState {
             db: Arc::clone(&self.db),
             mailer,
+            setup_code: SetupCode::of(TEST_SETUP_CODE),
         }
     }
 }

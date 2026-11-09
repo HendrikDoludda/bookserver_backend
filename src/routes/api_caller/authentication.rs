@@ -11,76 +11,47 @@ use axum::{
 use crate::{
     data_models::authentication_model::{
         ChangeEmailRequest, ChangePasswordRequest, ChangeUserNameRequest,
-        ConfirmPasswordResetRequest, DeviceInformation, LoginRequest, PasswordResetRequest,
-        UserCreationRequest, VerifyEmailRequest,
+        ConfirmPasswordResetRequest, LoginRequest, PasswordResetRequest, ResendVerificationRequest,
+        UserCreationRequest, VerificationRequired, VerifyEmailRequest,
     },
     db::Database,
     error_types::{AppErrors, AuthenticationError, EmailErrors},
     models::{UserDatabaseColumns, UserMetadata},
-    routes::auth::{
-        create_new_session, create_new_user, create_verification_email,
-        search_for_user_using_email_or_username, send_verification_email,
-        update_password_to_new_password, validate_new_user, validate_submitted_password,
-        verify_verification_code,
-    },
+    routes::auth::{update_password_to_new_password, validate_submitted_password},
     routes::{
         email_helper::Mailer,
         login::{end_session, log_in, refresh},
         password_reset::{confirm_reset, send_reset_code},
+        registration::{
+            confirm_email, create_account, send_verification_code, SetupCode, SignUpOutcome,
+        },
     },
 };
 
 use super::{
     extractors::{bearer_token, AuthRefreshSession, AuthSession},
-    helpers::{create_auth_response, no_store},
+    helpers::no_store,
 };
 
+/// `POST /api/v1/auth/register`: 200 with login's answer for an account verified on the spot,
+/// 202 `{"verification_required": true}` for one that waits for its emailed code.
 pub async fn sign_up(
     State(db): State<Arc<Database>>,
     State(mailer): State<Mailer>,
+    State(setup_code): State<SetupCode>,
     Json(request): Json<UserCreationRequest>,
 ) -> Result<Response<Body>, AppErrors> {
-    let email_info = db.setup_new_transaction(|conn| {
-        let validated_user = validate_new_user(conn, request.clone())?;
-        let user_id = create_new_user(conn, validated_user, request.clone())?;
-        let result = send_verification_email(conn, user_id)?;
-        Ok(result)
-    })?;
-
-    let result = create_verification_email(&mailer, &email_info)
-        .await
-        .map_err(|err| match err {
-            EmailErrors::EmailSetUpNotFound => EmailErrors::SentFailedDueToNoConfig {
-                code: email_info.code,
-            },
-            err => err,
-        });
-    match result {
-        Ok(()) => Ok(Response::builder()
-            .status(StatusCode::ACCEPTED)
-            .body("Created a user and sent a verification email.".into())
-            .unwrap()),
-        Err(EmailErrors::SentFailedDueToNoConfig { code }) => {
-            auto_verify_account(request.email, code, &db, email_info.user.user_id).await
-        }
-        Err(err) => Err(err.into()),
-    }
-}
-
-async fn auto_verify_account(
-    email: String,
-    code: String,
-    db: &Arc<Database>,
-    user_id: i64,
-) -> Result<Response<Body>, AppErrors> {
-    let verify_email_request = VerifyEmailRequest {
-        email_verification_token: code,
-        email,
-        device_name: "Unknown".to_string(),
-        device_id: "Unknown".to_string(),
-        platform: "Unknown".to_string(),
-    };
-    verify_email_logic(verify_email_request, db, user_id)
+    let outcome = create_account(db, &mailer, setup_code, request, SystemTime::now()).await?;
+    Ok(match outcome {
+        SignUpOutcome::LoggedIn(response) => no_store(Json(response)),
+        SignUpOutcome::VerificationRequired => (
+            StatusCode::ACCEPTED,
+            Json(VerificationRequired {
+                verification_required: true,
+            }),
+        )
+            .into_response(),
+    })
 }
 
 /// `POST /api/v1/auth/login`
@@ -92,33 +63,33 @@ pub async fn sign_in(
     Ok(no_store(Json(response)))
 }
 
+/// `POST /api/v1/auth/verify_email`: answers like login.
 pub async fn verify_email(
-    request: VerifyEmailRequest,
     State(db): State<Arc<Database>>,
+    Json(request): Json<VerifyEmailRequest>,
 ) -> Result<Response<Body>, AppErrors> {
-    let user = db.setup_new_transaction(|conn| {
-        let found_user = search_for_user_using_email_or_username(conn, &request.email)?;
-        Ok(found_user)
-    })?;
-    verify_email_logic(request, &db, user.user_id)
+    let response = confirm_email(db, request, SystemTime::now()).await?;
+    Ok(no_store(Json(response)))
 }
 
-fn verify_email_logic(
-    request: VerifyEmailRequest,
-    db: &Arc<Database>,
-    user_id: i64,
-) -> Result<Response<Body>, AppErrors> {
-    let session_information = db.setup_new_transaction(|conn| {
-        verify_verification_code(conn, &request, user_id)?;
-        let device_information = DeviceInformation {
-            device_id: &request.device_id,
-            device_name: &request.device_name,
-            platform: &request.platform,
-        };
-        let session = create_new_session(conn, user_id, device_information, SystemTime::now())?;
-        Ok(session)
-    })?;
-    Ok(create_auth_response("Your user account has been verified. The servers email address needs to be set up so that actual verification can take place", session_information))
+/// `POST /api/v1/auth/verify_email/resend`: answers 202 before the name is even looked up, so
+/// the answer can't tell whether an unverified account exists; the code goes out in the
+/// background.
+pub async fn resend_verification_code(
+    State(db): State<Arc<Database>>,
+    State(mailer): State<Mailer>,
+    Json(request): Json<ResendVerificationRequest>,
+) -> Result<StatusCode, AppErrors> {
+    if !mailer.is_enabled() {
+        return Err(EmailErrors::EmailSetUpNotFound.into());
+    }
+    tokio::spawn(send_verification_code(
+        db,
+        mailer,
+        request.username_or_email,
+        SystemTime::now(),
+    ));
+    Ok(StatusCode::ACCEPTED)
 }
 
 /// `POST /api/v1/auth/logout` with either token as Bearer. No session extractor: an expired

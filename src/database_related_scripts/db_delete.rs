@@ -4,10 +4,10 @@ use crate::{
     database_related_scripts::db_from_row::FromRow,
     error_types::DatabaseError,
     models::{
-        BookDatabaseColumns, BookMetadata, BookSeriesMetadata, EmailVerification,
-        EmailVerificationDatabaseColumns, LibraryDatabaseColumns, LibraryMetadata, QuerySeparator,
-        RecoveryCodes, RecoveryCodesColumns, SeriesDatabaseColumns, Sessions,
-        SessionsDatabaseColumns, TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, TOTP,
+        BookDatabaseColumns, BookMetadata, BookSeriesMetadata, LibraryDatabaseColumns,
+        LibraryMetadata, QuerySeparator, RecoveryCodes, RecoveryCodesColumns,
+        SeriesDatabaseColumns, Sessions, SessionsDatabaseColumns, TOTPDatabaseColumns,
+        UserDatabaseColumns, UserMetadata, TOTP,
     },
 };
 
@@ -57,11 +57,6 @@ impl Delete for LibraryMetadata {
 impl Delete for UserMetadata {
     type Column = UserDatabaseColumns;
     const TABLE: &'static str = "users";
-}
-
-impl Delete for EmailVerification {
-    type Column = EmailVerificationDatabaseColumns;
-    const TABLE: &'static str = "email_verification";
 }
 
 impl Delete for Sessions {

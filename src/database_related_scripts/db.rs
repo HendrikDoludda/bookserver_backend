@@ -491,8 +491,7 @@ mod tests {
         let conn = memory_connection();
         assert_eq!(foreign_keys_setting(&conn), 1);
         let orphan = conn.execute(
-            "INSERT INTO email_verification (user_id, email_verification_token, expires_at) \
-             VALUES (999, 'hash', 0)",
+            "INSERT INTO totp (user_id, authentication_secret) VALUES (999, 'secret')",
             [],
         );
         assert!(orphan.is_err(), "a row for a missing user must be refused");
@@ -591,26 +590,17 @@ mod tests {
         let conn = memory_connection();
         let user_id = insert_user(&conn, "alice");
         conn.execute(
-            "INSERT INTO email_verification (user_id, email_verification_token, expires_at) \
-             VALUES (?1, 'hash', 0)",
+            "INSERT INTO totp (user_id, authentication_secret) VALUES (?1, 'secret')",
             [user_id],
         )
         .unwrap();
 
-        let removed = Database::remove_entry_with_connection(
-            &conn,
-            DatabaseTypes::EmailVerificationType,
-            user_id,
-        )
-        .unwrap();
+        let removed =
+            Database::remove_entry_with_connection(&conn, DatabaseTypes::Totp, user_id).unwrap();
         assert_eq!(removed, 1);
 
-        let removed_again = Database::remove_entry_with_connection(
-            &conn,
-            DatabaseTypes::EmailVerificationType,
-            user_id,
-        )
-        .unwrap();
+        let removed_again =
+            Database::remove_entry_with_connection(&conn, DatabaseTypes::Totp, user_id).unwrap();
         assert_eq!(removed_again, 0);
     }
 

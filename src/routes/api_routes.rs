@@ -11,7 +11,8 @@ use crate::{
     error_types::RoutingErrors,
     routes::api_caller::{
         authentication::{
-            confirm_password_reset, log_out, refresh_session, request_password_reset, sign_in,
+            confirm_password_reset, log_out, refresh_session, request_password_reset,
+            resend_verification_code, sign_in, sign_up, verify_email,
         },
         helpers::ping_server,
         library::{
@@ -60,11 +61,13 @@ pub fn set_up_routes() -> Router<AppState> {
             patch(ping_server).get(ping_server),
         )
         .route("/book_metadata/{id}", get(retrieve_metadata))
-        .route("/register_user", post(ping_server))
         .route("/scan_directory/{id}", post(ping_server))
         .route("/get_cover/{kind}/{id}", get(ping_server))
         .route("/scan/status", get(ping_server))
         .route("/search", get(ping_server))
+        .route("/auth/register", post(sign_up))
+        .route("/auth/verify_email", post(verify_email))
+        .route("/auth/verify_email/resend", post(resend_verification_code))
         .route("/auth/login", post(sign_in))
         .route("/auth/logout", post(log_out))
         .route("/auth/refresh", post(refresh_session))
@@ -94,7 +97,7 @@ mod tests {
             auth::{hash_secret, hash_token},
             email_helper::Mailer,
         },
-        test_support::{insert_user, TempDatabase},
+        test_support::{code_in, insert_user, TempDatabase, TEST_SETUP_CODE},
     };
 
     #[tokio::test]
@@ -426,5 +429,197 @@ mod tests {
             .unwrap();
         let (status, _, _) = call(&app, without_token).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
+    /// A sign-up body that carries the setup code; only the first account needs it.
+    fn sign_up_body(username: &str, email: &str) -> serde_json::Value {
+        serde_json::json!({
+            "email": email,
+            "username": username,
+            "password": "correct horse battery",
+            "password_repeat": "correct horse battery",
+            "device_name": "phone",
+            "platform": "ios",
+            "setup_code": TEST_SETUP_CODE,
+        })
+    }
+
+    fn json(body: &[u8]) -> serde_json::Value {
+        serde_json::from_slice(body).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_first_sign_up_without_the_setup_code_answers_403_json() {
+        let mut body = sign_up_body("alice", "alice@example.com");
+        body.as_object_mut().unwrap().remove("setup_code");
+
+        let (status, body) = json_answer(post_json("/api/v1/auth/register", body)).await;
+
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body, serde_json::json!({ "error": "invalid_setup_code" }));
+    }
+
+    #[tokio::test]
+    async fn signing_up_and_verifying_over_http() {
+        let temp = TempDatabase::open();
+        let (mailer, sent) = Mailer::capture();
+        let app = set_up_routes().with_state(temp.state(mailer));
+        let register = |username: &str| {
+            post_json(
+                "/api/v1/auth/register",
+                sign_up_body(username, &format!("{username}@example.com")),
+            )
+        };
+
+        let (status, headers, body) = call(&app, register("alice")).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the first account is verified on the spot"
+        );
+        assert_eq!(headers.get("cache-control").unwrap(), "no-store");
+        assert_eq!(json(&body)["status"], "ok");
+
+        let (status, _, body) = call(&app, register("bob")).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(
+            json(&body),
+            serde_json::json!({ "verification_required": true })
+        );
+        let code = code_in(&sent.lock().unwrap()[0]);
+
+        let (status, headers, body) = call(
+            &app,
+            post_json(
+                "/api/v1/auth/verify_email",
+                serde_json::json!({
+                    "username_or_email": "bob",
+                    "password": "correct horse battery",
+                    "code": code,
+                    "device_name": "phone",
+                    "platform": "ios",
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers.get("cache-control").unwrap(), "no-store");
+        let session_token = json(&body)["session_token"].as_str().unwrap().to_string();
+        let (status, _, _) = call(&app, guarded(Some(&format!("Bearer {session_token}")))).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn admin_and_verified_flags_in_a_sign_up_body_are_ignored() {
+        let temp = TempDatabase::open();
+        temp.db
+            .setup_new_transaction(|conn| Ok(insert_user(conn, "alice")))
+            .unwrap();
+        let (mailer, _sent) = Mailer::capture();
+        let app = set_up_routes().with_state(temp.state(mailer));
+        let mut body = sign_up_body("bob", "bob@example.com");
+        body["is_admin"] = true.into();
+        body["email_verified"] = true.into();
+
+        let (status, _, _) = call(&app, post_json("/api/v1/auth/register", body)).await;
+
+        assert_eq!(status, StatusCode::ACCEPTED);
+        let flags: (bool, bool) = temp
+            .db
+            .setup_new_transaction(|conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT is_admin, email_verified FROM users WHERE username = 'bob'",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .unwrap())
+            })
+            .unwrap();
+        assert_eq!(flags, (false, false));
+    }
+
+    #[tokio::test]
+    async fn sign_up_errors_answer_json() {
+        let temp = TempDatabase::open();
+        temp.db
+            .setup_new_transaction(|conn| Ok(insert_user(conn, "alice")))
+            .unwrap();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        let cases = [
+            (
+                sign_up_body("bob", "ALICE@example.com"),
+                StatusCode::CONFLICT,
+                "email_taken",
+            ),
+            (
+                sign_up_body("Alice", "bob@example.com"),
+                StatusCode::CONFLICT,
+                "username_taken",
+            ),
+            (
+                sign_up_body("bob", "bob@example.com\r\nDATA"),
+                StatusCode::BAD_REQUEST,
+                "invalid_email",
+            ),
+            (
+                sign_up_body("bo", "bob@example.com"),
+                StatusCode::BAD_REQUEST,
+                "invalid_username",
+            ),
+        ];
+        for (body, expected_status, expected_key) in cases {
+            let (status, _, body) = call(&app, post_json("/api/v1/auth/register", body)).await;
+            assert_eq!(status, expected_status, "{expected_key}");
+            assert_eq!(json(&body), serde_json::json!({ "error": expected_key }));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_resend_answers_the_same_for_every_name_and_mails_only_an_unverified_account() {
+        let temp = TempDatabase::open();
+        temp.db
+            .setup_new_transaction(|conn| Ok(insert_user(conn, "bob")))
+            .unwrap();
+        let (mailer, sent) = Mailer::capture();
+        let app = set_up_routes().with_state(temp.state(mailer));
+
+        let mut answers = Vec::new();
+        for name in ["bob", "nobody"] {
+            let (status, _, body) = call(
+                &app,
+                post_json(
+                    "/api/v1/auth/verify_email/resend",
+                    serde_json::json!({ "username_or_email": name }),
+                ),
+            )
+            .await;
+            answers.push((status, body));
+        }
+        assert_eq!(answers[0].0, StatusCode::ACCEPTED);
+        assert_eq!(answers[0], answers[1], "the two answers must be identical");
+
+        // The mail goes out in a background task; give it up to two seconds.
+        for _ in 0..200 {
+            if !sent.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].email, "bob@example.com");
+    }
+
+    #[tokio::test]
+    async fn a_resend_without_email_configured_answers_503() {
+        let (status, body) = json_answer(post_json(
+            "/api/v1/auth/verify_email/resend",
+            serde_json::json!({ "username_or_email": "bob" }),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body, serde_json::json!({ "error": "email_not_configured" }));
     }
 }

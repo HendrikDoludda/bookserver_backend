@@ -1,7 +1,7 @@
 use crate::{
     data_models::models::{
-        BookMetadata, BookSeriesMetadata, EmailVerification, LibraryMetadata, RecoveryCodes,
-        Sessions, UserMetadata, WithId, TOTP,
+        BookMetadata, BookSeriesMetadata, LibraryMetadata, RecoveryCodes, Sessions, UserMetadata,
+        WithId, TOTP,
     },
     database_related_scripts::db_from_row::FromRow,
     error_types::DatabaseError,
@@ -118,12 +118,6 @@ impl Extract for Sessions {
     const COLUMNS: &'static str = "session_id, user_id, device_id, device_name, platform, \
         refresh_token_hashed, refresh_token_valid_until, session_token_hashed, \
         session_token_valid_until, created_at, last_used_at";
-}
-
-impl Extract for EmailVerification {
-    const TABLE: &'static str = "email_verification";
-    const KEY: &'static str = "user_id";
-    const COLUMNS: &'static str = "user_id, email_verification_token, expires_at, invalidated";
 }
 
 #[cfg(test)]

@@ -20,7 +20,7 @@ comment-only stubs in `totp_management.rs`, and their handlers answer 501.
 - [ ] 2 h · Limit wrong codes per user: count the attempt before checking the code — a count written in the same transaction as the failure is rolled back with it; 5 wrong codes answer 429 for 15 minutes, a success resets the count [BE]
 - [ ] 1 h · Replay protection: accept a code only for a newer time step — `UPDATE totp SET last_used_step = ? WHERE user_id = ? AND (last_used_step IS NULL OR last_used_step < ?)` must change one row [BE]
 - [ ] 0.5 h · Strip spaces from a submitted code — `check` accepts exactly 6 ASCII digits [BE]
-- [ ] 1 h · `verify_email_logic` hard-codes `user_has_totp_enabled: false`, so a session created by email verification skips the code step — run the same probe as `log_in` [BE]
+- [x] 1 h · Email verification logs in through login's `start_login`, so a TOTP user gets the code step there too [BE]
 - [ ] 2 h · Disable 2FA: route `disable_totp` (now 501) at `POST /api/v1/account/totp/disable` — require the current password (already a field of `DisableTOTPRequest`), delete the `totp` row and all recovery codes, and end all of the user's sessions [BE]
 - [ ] 2 h · Code-entry step after the password, when login answers `totp_required` [FE]
 - [ ] 4 h · 2FA settings: enable (QR code + confirm) and disable [FE]

@@ -21,7 +21,6 @@ pub enum DatabaseTypes {
     LibraryElements,
     Series,
     Users,
-    EmailVerificationType,
     Session,
     Totp,
     RecoveryCodes,
@@ -35,7 +34,6 @@ impl DatabaseTypes {
             DatabaseTypes::Series => "series",
             DatabaseTypes::Users => "users",
             DatabaseTypes::LibraryElements => "library_elements",
-            DatabaseTypes::EmailVerificationType => "email_verification",
             DatabaseTypes::Session => "sessions",
             DatabaseTypes::Totp => "totp",
             DatabaseTypes::RecoveryCodes => "recovery_codes",
@@ -51,7 +49,7 @@ impl DatabaseTypes {
             | DatabaseTypes::Series
             | DatabaseTypes::Users => Some("id"),
             DatabaseTypes::LibraryElements => None,
-            DatabaseTypes::EmailVerificationType | DatabaseTypes::Totp => Some("user_id"),
+            DatabaseTypes::Totp => Some("user_id"),
             DatabaseTypes::Session => Some("session_id"),
             DatabaseTypes::RecoveryCodes => Some("recovery_id"),
         }
@@ -418,33 +416,6 @@ pub enum DatabaseEntry {
     Library(LibraryMetadata),
     Series(BookSeriesMetadata),
     User(UserMetadata),
-}
-
-// === Email Verification ======================================================
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EmailVerification {
-    pub user_id: i64,
-    pub verification_token: String,
-    pub expiration_date: SystemTime,
-    pub invalidated: bool,
-}
-
-pub enum EmailVerificationDatabaseColumns {
-    UserId,
-    VerificationToken,
-    ExpirationDate,
-    Invalidated,
-}
-
-impl AsRef<str> for EmailVerificationDatabaseColumns {
-    fn as_ref(&self) -> &str {
-        match self {
-            EmailVerificationDatabaseColumns::UserId => "user_id",
-            EmailVerificationDatabaseColumns::VerificationToken => "email_verification_token",
-            EmailVerificationDatabaseColumns::ExpirationDate => "expires_at",
-            EmailVerificationDatabaseColumns::Invalidated => "invalidated",
-        }
-    }
 }
 
 // === Sessions ================================================================

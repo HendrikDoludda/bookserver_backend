@@ -11,4 +11,4 @@ read to [localize](13-internationalization.md).
 - [ ] 2 h · Settings screen with a language picker [FE]
 
 ## Open decisions
-- [ ] Columns on `users`, a typed `user_settings` table, or key/value rows? — blocks: the schema. Suggested: a typed `user_settings` table with `user_id` as primary key, like `totp` and `email_verification` — it keeps `users` about identity.
+- [ ] Columns on `users`, a typed `user_settings` table, or key/value rows? — blocks: the schema. Suggested: a typed `user_settings` table with `user_id` as primary key, like `totp` — it keeps `users` about identity.

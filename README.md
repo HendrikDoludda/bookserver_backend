@@ -5,9 +5,10 @@ your folders, catalogs the files in SQLite, extracts cover images, and serves ev
 an HTTP API for a reader frontend.
 
 > **Status: work in progress.** Scanning, cataloging, cover extraction and file streaming
-> work. Authentication is implemented but not yet wired to routes, and TOTP two-factor auth
-> is planned. See [docs/project-state.md](docs/project-state.md) for what works today and the
-> [build checklist](docs/build-checklist.md) for what comes next.
+> work. Accounts work end to end — sign-up with email verification, login, refresh, logout
+> and password reset — but the library routes don't require a session yet, and TOTP
+> two-factor auth is in progress. See [docs/project-state.md](docs/project-state.md) for what
+> works today and the [build checklist](docs/build-checklist.md) for what comes next.
 
 ## Highlights
 
@@ -40,7 +41,11 @@ src/
 ├── routes/
 │   ├── api_routes.rs           route table (/health, /api/v1/…)
 │   ├── api_caller/             request handlers per area + auth extractors
-│   ├── auth.rs                 account, session and token logic
+│   ├── auth.rs                 account, password and session building blocks
+│   ├── registration.rs         sign-up and email verification
+│   ├── login.rs                login, refresh and logout
+│   ├── password_reset.rs       password reset by emailed code
+│   ├── email_codes.rs          emailed codes: issuing, mail limits, checking
 │   └── email_helper.rs         Mailer: SMTP delivery
 ├── database_related_scripts/
 │   ├── db.rs                   Database: connection pool + queries
@@ -95,7 +100,8 @@ curl -X POST http://localhost:8080/api/v1/scan_all_directories
 ```
 
 On first run the server creates its SQLite database at `./data/databases/app_data.sqlite`.
-Extracted covers are written to `./cover_images/`.
+Extracted covers are written to `./cover_images/`. While no account exists, the server logs a
+setup code at start; the first sign-up must send it and becomes the admin account.
 
 **Configuration** (environment variables)
 
@@ -125,6 +131,9 @@ Implemented endpoints:
 | `POST` | `/api/v1/scan_all_directories` | Scan `BOOK_DIRS` and catalog new files |
 | `POST` | `/api/v1/setup_db` | Run any pending migrations |
 | `DELETE` | `/api/v1/delete_library/{id}` | Delete a library |
+| `POST` | `/api/v1/auth/register` | Sign up; the first account sends the setup code from the server log and becomes admin. Answers the login tokens, or `202` when the account must first confirm its email |
+| `POST` | `/api/v1/auth/verify_email` | Confirm the email with the mailed code and the password; answers like login |
+| `POST` | `/api/v1/auth/verify_email/resend` | Mail a new verification code; always `202` |
 | `POST` | `/api/v1/auth/login` | Log in; answers the session and refresh tokens, or a challenge when two-factor auth is on |
 | `POST` | `/api/v1/auth/refresh` | New tokens for a refresh token (`Authorization: Bearer`) |
 | `POST` | `/api/v1/auth/logout` | End the session behind either token; always `204` |
@@ -137,8 +146,8 @@ The other registered routes are placeholders for upcoming features. Known issues
 affect some of these endpoints are tracked in
 [Database layer fixes](docs/features/26-database-layer-fixes.md).
 
-> **Security note:** the API is not authenticated yet, and the server listens on all
-> interfaces. Run it on a trusted network only until authentication is wired in.
+> **Security note:** the library routes don't require a session yet, and the server listens
+> on all interfaces over plain HTTP. Run it on a trusted network only.
 
 ## Project docs
 

@@ -1,24 +1,47 @@
-use std::time::SystemTime;
-
 use serde::{Deserialize, Serialize};
 
 // The request bodies that carry a password or a code don't derive `Debug`, so a
 // `{:?}` in a log line can't print them.
+
+/// `POST /api/v1/auth/register`. The device fields are used when the account is verified on
+/// the spot and logged in.
 #[derive(Deserialize, Clone)]
 pub struct UserCreationRequest {
     pub email: String,
     pub username: String,
     pub password: String,
     pub password_repeat: String,
+    pub device_name: String,
+    /// The id this server gave the device at an earlier login; absent on a first login.
+    pub device_id: Option<String>,
+    pub platform: String,
+    /// The code the server logs at start while no account exists; only the first sign-up
+    /// needs it.
+    pub setup_code: Option<String>,
 }
 
+/// `POST /api/v1/auth/verify_email`: a login plus the emailed code.
 #[derive(Deserialize, Clone)]
 pub struct VerifyEmailRequest {
-    pub email_verification_token: String,
-    pub email: String,
+    pub username_or_email: String,
+    pub password: String,
+    pub code: String,
     pub device_name: String,
-    pub device_id: String,
+    /// The id this server gave the device at an earlier login; absent on a first login.
+    pub device_id: Option<String>,
     pub platform: String,
+}
+
+/// `POST /api/v1/auth/verify_email/resend`
+#[derive(Debug, Deserialize)]
+pub struct ResendVerificationRequest {
+    pub username_or_email: String,
+}
+
+/// The 202 answer to a sign-up whose account waits for the emailed code.
+#[derive(Serialize)]
+pub struct VerificationRequired {
+    pub verification_required: bool,
 }
 
 /// `POST /api/v1/auth/login`
@@ -91,13 +114,4 @@ pub enum LoginResponse {
         challenge_token: String,
         challenge_expires_at: i64,
     },
-}
-
-#[derive(Serialize)]
-pub struct AuthResponse {
-    pub message: String,
-    pub session_token: String,
-    pub refresh_token: String,
-    pub session_token_expiration: SystemTime,
-    pub refresh_token_expiration_time: SystemTime,
 }

@@ -1,7 +1,6 @@
 use crate::data_models::models::{
-    BookDatabaseColumns, BookMetadata, BookSeriesMetadata, EmailVerification,
-    EmailVerificationDatabaseColumns, LibraryDatabaseColumns, LibraryMetadata, RecoveryCodes,
-    RecoveryCodesColumns, SeriesDatabaseColumns, Sessions, SessionsDatabaseColumns,
+    BookDatabaseColumns, BookMetadata, BookSeriesMetadata, LibraryDatabaseColumns, LibraryMetadata,
+    RecoveryCodes, RecoveryCodesColumns, SeriesDatabaseColumns, Sessions, SessionsDatabaseColumns,
     TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, TOTP,
 };
 use crate::error_types::DatabaseError;
@@ -86,12 +85,6 @@ impl Update for UserMetadata {
     const KEY: &'static str = "id";
 }
 
-impl Update for EmailVerification {
-    type Column = EmailVerificationDatabaseColumns;
-    const TABLE: &'static str = "email_verification";
-    const KEY: &'static str = "user_id";
-}
-
 impl Update for Sessions {
     type Column = SessionsDatabaseColumns;
     const TABLE: &'static str = "sessions";
@@ -135,29 +128,28 @@ mod tests {
         let conn = memory_connection();
         let user_id = insert_user(&conn, "alice");
         conn.execute(
-            "INSERT INTO email_verification (user_id, email_verification_token, expires_at) \
-             VALUES (?1, 'hash', 0)",
+            "INSERT INTO totp (user_id, authentication_secret) VALUES (?1, 'old')",
             [user_id],
         )
         .unwrap();
 
-        let changed = EmailVerification::update(
+        let changed = TOTP::update(
             &conn,
-            EmailVerificationDatabaseColumns::Invalidated,
-            &true,
+            TOTPDatabaseColumns::AuthenticationSecret,
+            &"new",
             user_id,
         )
         .unwrap();
         assert_eq!(changed, 1);
 
-        let invalidated: bool = conn
+        let secret: String = conn
             .query_row(
-                "SELECT invalidated FROM email_verification WHERE user_id = ?1",
+                "SELECT authentication_secret FROM totp WHERE user_id = ?1",
                 [user_id],
                 |row| row.get(0),
             )
             .unwrap();
-        assert!(invalidated);
+        assert_eq!(secret, "new");
     }
 
     #[test]

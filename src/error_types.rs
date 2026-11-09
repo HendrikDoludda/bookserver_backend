@@ -261,8 +261,6 @@ pub enum AuthenticationError {
     ExpiredSession,
     #[error("Unauthorized session")]
     UnauthorizedSession,
-    #[error("Expired authentication code")]
-    ExpiredAuthenticationCode,
     #[error("Invalid validation code")]
     InvalidValidationCode,
     #[error("Searching the database produced an error")]
@@ -283,14 +281,10 @@ pub enum AuthenticationError {
     TokenLifetimeCalculationFailed,
     #[error("User was not found")]
     UserNotFound,
-    #[error("Email verification code for user was not found")]
-    EmailVerificationNotFound,
     #[error("Failed to convert string into PasswordHash type")]
     StringToPasswordHashConversionFailed,
     #[error("Failed to update a database entry")]
     DatabaseUpdateFailed,
-    #[error("Failed to insert a database entry")]
-    DatabaseInsertFailed,
     #[error("You do not have permission to perform this action")]
     Forbidden,
     #[error("The new password is too short")]
@@ -301,6 +295,12 @@ pub enum AuthenticationError {
     TooManyAttempts,
     #[error("The email address is not verified yet")]
     EmailNotVerified,
+    #[error("The email address is not valid")]
+    InvalidEmail,
+    #[error("The username is not valid")]
+    InvalidUsername,
+    #[error("The first sign-up's setup code is missing or wrong")]
+    InvalidSetupCode,
 }
 
 impl AuthenticationError {
@@ -315,9 +315,7 @@ impl AuthenticationError {
             AuthenticationError::ExpiredSession | AuthenticationError::UnauthorizedSession => {
                 (StatusCode::UNAUTHORIZED, "unauthorized")
             }
-            AuthenticationError::ExpiredAuthenticationCode
-            | AuthenticationError::InvalidValidationCode
-            | AuthenticationError::EmailVerificationNotFound => {
+            AuthenticationError::InvalidValidationCode => {
                 (StatusCode::BAD_REQUEST, "invalid_or_expired_code")
             }
             AuthenticationError::MismatchingPasswords => {
@@ -331,6 +329,9 @@ impl AuthenticationError {
                 (StatusCode::TOO_MANY_REQUESTS, "too_many_attempts")
             }
             AuthenticationError::EmailNotVerified => (StatusCode::FORBIDDEN, "email_not_verified"),
+            AuthenticationError::InvalidEmail => (StatusCode::BAD_REQUEST, "invalid_email"),
+            AuthenticationError::InvalidUsername => (StatusCode::BAD_REQUEST, "invalid_username"),
+            AuthenticationError::InvalidSetupCode => (StatusCode::FORBIDDEN, "invalid_setup_code"),
             AuthenticationError::UserNotFound => (StatusCode::NOT_FOUND, "not_found"),
             AuthenticationError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             AuthenticationError::DatabaseSearchFailure
@@ -341,8 +342,7 @@ impl AuthenticationError {
             | AuthenticationError::ErrorCreatingSalt
             | AuthenticationError::TokenLifetimeCalculationFailed
             | AuthenticationError::StringToPasswordHashConversionFailed
-            | AuthenticationError::DatabaseUpdateFailed
-            | AuthenticationError::DatabaseInsertFailed => INTERNAL,
+            | AuthenticationError::DatabaseUpdateFailed => INTERNAL,
         }
     }
 }
@@ -357,23 +357,8 @@ pub enum EmailErrors {
     ClientBuilderFailed,
     #[error("Failed to send the email")]
     SendingFailure,
-    #[error("Failed to adjust the current time.")]
-    TimeAdjustmentFailure,
-    #[error("Failed to insert entry into database")]
-    DatabaseInsertionFailed,
     #[error("No email was attached to the user")]
     MissingEmail,
-    #[error("Failed to send the email due to no config information")]
-    SentFailedDueToNoConfig { code: String },
-    #[error("Failed to create a hash from code")]
-    HashingFailed,
-    #[error("Failed to remove an existing Verification Token")]
-    VerificationTokenRemovalFailure,
-
-    #[error("Failed to retrieve the users entry from the database")]
-    FailedToRetrieveUserEntry,
-    #[error("Failed to find the user entry")]
-    UserEntryNotFound,
 }
 
 impl EmailErrors {
@@ -385,14 +370,7 @@ impl EmailErrors {
             EmailErrors::SMTPConnectionFailed
             | EmailErrors::ClientBuilderFailed
             | EmailErrors::SendingFailure
-            | EmailErrors::TimeAdjustmentFailure
-            | EmailErrors::DatabaseInsertionFailed
-            | EmailErrors::MissingEmail
-            | EmailErrors::SentFailedDueToNoConfig { .. }
-            | EmailErrors::HashingFailed
-            | EmailErrors::VerificationTokenRemovalFailure
-            | EmailErrors::FailedToRetrieveUserEntry
-            | EmailErrors::UserEntryNotFound => INTERNAL,
+            | EmailErrors::MissingEmail => INTERNAL,
         }
     }
 }
@@ -498,19 +476,24 @@ mod tests {
                 "account_exists",
             ),
             (
-                Auth::ExpiredAuthenticationCode.into(),
-                StatusCode::BAD_REQUEST,
-                "invalid_or_expired_code",
-            ),
-            (
                 Auth::InvalidValidationCode.into(),
                 StatusCode::BAD_REQUEST,
                 "invalid_or_expired_code",
             ),
             (
-                Auth::EmailVerificationNotFound.into(),
+                Auth::InvalidEmail.into(),
                 StatusCode::BAD_REQUEST,
-                "invalid_or_expired_code",
+                "invalid_email",
+            ),
+            (
+                Auth::InvalidUsername.into(),
+                StatusCode::BAD_REQUEST,
+                "invalid_username",
+            ),
+            (
+                Auth::InvalidSetupCode.into(),
+                StatusCode::FORBIDDEN,
+                "invalid_setup_code",
             ),
             (
                 Auth::MismatchingPasswords.into(),
@@ -585,21 +568,10 @@ mod tests {
             Auth::TokenLifetimeCalculationFailed.into(),
             Auth::StringToPasswordHashConversionFailed.into(),
             Auth::DatabaseUpdateFailed.into(),
-            Auth::DatabaseInsertFailed.into(),
             EmailErrors::SMTPConnectionFailed.into(),
             EmailErrors::ClientBuilderFailed.into(),
             EmailErrors::SendingFailure.into(),
-            EmailErrors::TimeAdjustmentFailure.into(),
-            EmailErrors::DatabaseInsertionFailed.into(),
             EmailErrors::MissingEmail.into(),
-            EmailErrors::SentFailedDueToNoConfig {
-                code: "SECRET-CODE".to_string(),
-            }
-            .into(),
-            EmailErrors::HashingFailed.into(),
-            EmailErrors::VerificationTokenRemovalFailure.into(),
-            EmailErrors::FailedToRetrieveUserEntry.into(),
-            EmailErrors::UserEntryNotFound.into(),
             DatabaseError::DatabaseInitializationFailure.into(),
             DatabaseError::DirectoryCreationFailure.into(),
             DatabaseError::FailedToConnectToDatabase.into(),

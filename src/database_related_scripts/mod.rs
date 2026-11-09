@@ -7,6 +7,7 @@ pub mod db_login_throttle;
 pub mod db_search;
 pub mod db_sessions;
 pub mod db_update;
+pub mod db_users;
 pub mod extract;
 pub mod insert;
 pub mod migrations;

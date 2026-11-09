@@ -59,14 +59,6 @@ CREATE TABLE IF NOT EXISTS users (
     last_login INTEGER
 );
 
-CREATE TABLE IF NOT EXISTS email_verification (
-    user_id INTEGER PRIMARY KEY,
-    email_verification_token TEXT NOT NULL UNIQUE,
-    expires_at INTEGER NOT NULL,
-    invalidated BOOLEAN NOT NULL DEFAULT FALSE,
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-);
-
 -- One live emailed code per user and purpose ('reset_password', 'verify_email').
 -- The row outlives its code: it carries the counters for the resend limits.
 CREATE TABLE IF NOT EXISTS email_codes (
