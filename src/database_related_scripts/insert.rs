@@ -51,7 +51,7 @@ impl Insert for BookSeriesMetadata {
 
         let params = params![
             self.name.clone(),
-            self.description.clone().unwrap_or_default(),
+            self.description.clone(),
             self.cover_image.clone(),
             self.start_release_year,
             self.end_release_year
@@ -185,8 +185,8 @@ impl Insert for RecoveryCodes {
     }
 }
 
-// Round trips: write a row through the model, read it back by its key, then update and
-// delete it by its key — the path every auth handler takes.
+// Round trips: write a row through the model and read it back by its key — for the auth
+// tables also update and delete it by its key, the path every auth handler takes.
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -195,11 +195,107 @@ mod tests {
     use crate::{
         database_related_scripts::db::Database,
         models::{
-            DatabaseTypes, QuerySeparator, RecoveryCodesColumns, SessionsDatabaseColumns,
-            TOTPDatabaseColumns, UserDatabaseColumns,
+            DatabaseTypes, LibraryType, QuerySeparator, RecoveryCodesColumns,
+            SessionsDatabaseColumns, TOTPDatabaseColumns, UserDatabaseColumns,
         },
         test_support::{insert_user, memory_connection},
     };
+
+    #[test]
+    fn library_round_trip() {
+        let conn = memory_connection();
+        // What the scanner writes: no cover and no description.
+        let scanned = LibraryMetadata {
+            name: "/books".to_string(),
+            library_type: LibraryType::Books,
+            cover_image: None,
+            description: None,
+        };
+        let curated = LibraryMetadata {
+            name: "Favourites".to_string(),
+            library_type: LibraryType::Comics,
+            cover_image: Some("./cover_images/favourites.jpg".to_string()),
+            description: Some("The best ones".to_string()),
+        };
+        let scanned_id = Database::insert_with_connection(&conn, &scanned).unwrap();
+        let curated_id = Database::insert_with_connection(&conn, &curated).unwrap();
+
+        let stored =
+            Database::get_entry_with_connection::<LibraryMetadata>(&conn, scanned_id).unwrap();
+        assert_eq!(stored.name, "/books");
+        assert_eq!(stored.library_type.as_str(), "books");
+        assert_eq!(stored.cover_image, None);
+        assert_eq!(stored.description, None);
+
+        // The list endpoint's path: every row in one query, each with its id.
+        let listed = Database::get_entries_batch_with_connection::<LibraryMetadata>(
+            &conn,
+            &[scanned_id, curated_id],
+        )
+        .unwrap();
+        assert_eq!(listed.len(), 2);
+        let stored = &listed
+            .iter()
+            .find(|row| row.id == curated_id)
+            .expect("the curated library is listed")
+            .data;
+        assert_eq!(stored.name, "Favourites");
+        assert_eq!(stored.library_type.as_str(), "comics");
+        assert_eq!(
+            stored.cover_image.as_deref(),
+            Some("./cover_images/favourites.jpg")
+        );
+        assert_eq!(stored.description.as_deref(), Some("The best ones"));
+    }
+
+    #[test]
+    fn series_round_trip() {
+        let conn = memory_connection();
+        // What the scanner writes: only the name.
+        let scanned = BookSeriesMetadata {
+            name: "the long road".to_string(),
+            description: None,
+            cover_image: None,
+            start_release_year: None,
+            end_release_year: None,
+        };
+        let described = BookSeriesMetadata {
+            name: "a quiet sea".to_string(),
+            description: Some("Twelve volumes".to_string()),
+            cover_image: Some("./cover_images/sea.jpg".to_string()),
+            start_release_year: Some(1999),
+            end_release_year: Some(2004),
+        };
+        let scanned_id = Database::insert_with_connection(&conn, &scanned).unwrap();
+        let described_id = Database::insert_with_connection(&conn, &described).unwrap();
+
+        let stored =
+            Database::get_entry_with_connection::<BookSeriesMetadata>(&conn, scanned_id).unwrap();
+        assert_eq!(stored.name, "the long road");
+        assert_eq!(
+            stored.description, None,
+            "no description must not come back as an empty one"
+        );
+        assert_eq!(stored.cover_image, None);
+        assert_eq!(stored.start_release_year, None);
+        assert_eq!(stored.end_release_year, None);
+
+        let listed = Database::get_entries_batch_with_connection::<BookSeriesMetadata>(
+            &conn,
+            &[scanned_id, described_id],
+        )
+        .unwrap();
+        assert_eq!(listed.len(), 2);
+        let stored = &listed
+            .iter()
+            .find(|row| row.id == described_id)
+            .expect("the described series is listed")
+            .data;
+        assert_eq!(stored.description.as_deref(), Some("Twelve volumes"));
+        assert_eq!(stored.cover_image.as_deref(), Some("./cover_images/sea.jpg"));
+        assert_eq!(stored.start_release_year, Some(1999));
+        assert_eq!(stored.end_release_year, Some(2004));
+    }
 
     // Whole seconds only: the columns store unix seconds, so anything finer is dropped.
     fn at(secs: u64) -> SystemTime {

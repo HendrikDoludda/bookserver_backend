@@ -2,12 +2,12 @@
 CREATE TABLE IF NOT EXISTS books (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
-    author TEXT,
-    format TEXT,
-    language TEXT,
+    author TEXT NOT NULL,
+    format TEXT NOT NULL,
+    language TEXT NOT NULL,
     cover_image TEXT,
     description TEXT,
-    tags TEXT,
+    tags TEXT NOT NULL,
     file_path TEXT NOT NULL UNIQUE,
     page_count INTEGER,
     volume_number INTEGER,
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS books (
 CREATE TABLE IF NOT EXISTS library (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     library_name TEXT NOT NULL,
-    library_type TEXT,
+    library_type TEXT NOT NULL,
     cover_image TEXT,
     description TEXT
 );
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS library_elements (
 CREATE TABLE IF NOT EXISTS series (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    description TEXT NOT NULL,
+    description TEXT,
     cover_image TEXT,
     start_release_year INTEGER,
     end_release_year INTEGER

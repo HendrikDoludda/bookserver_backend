@@ -242,6 +242,61 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn the_library_and_series_lists_load_what_the_scanner_wrote() {
+        let temp = TempDatabase::open();
+        let (library, series) = temp
+            .db
+            .setup_new_transaction(|conn| {
+                // Like the scanner: no covers, descriptions or release years.
+                conn.execute(
+                    "INSERT INTO library (library_name, library_type) VALUES ('/books', 'books')",
+                    [],
+                )
+                .unwrap();
+                let library = conn.last_insert_rowid();
+                conn.execute("INSERT INTO series (name) VALUES ('the long road')", [])
+                    .unwrap();
+                let series = conn.last_insert_rowid();
+                conn.execute(
+                    "INSERT INTO library_elements (library_id, series_id) VALUES (?1, ?2)",
+                    [library, series],
+                )
+                .unwrap();
+                Ok((library, series))
+            })
+            .unwrap();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        let (status, _, body) = call(&app, bare("GET", "/api/v1/libraries")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json(&body),
+            serde_json::json!([{
+                "id": library,
+                "name": "/books",
+                "library_type": "Books",
+                "cover_image": null,
+                "description": null,
+            }])
+        );
+
+        let uri = format!("/api/v1/libraries/{library}/series");
+        let (status, _, body) = call(&app, bare("GET", &uri)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json(&body),
+            serde_json::json!([{
+                "id": series,
+                "name": "the long road",
+                "description": null,
+                "cover_image": null,
+                "start_release_year": null,
+                "end_release_year": null,
+            }])
+        );
+    }
+
     fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
         Request::post(uri)
             .header("content-type", "application/json")

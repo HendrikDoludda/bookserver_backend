@@ -11,6 +11,7 @@ exist yet.
 - [ ] 3 h · Serve image-folder books page by page — their stored `file_path` is the folder, so `ServeFile` has no file to stream. A per-page route: book id + page index → the file at that position in natural-sort order, the order the cover picker uses [BE]
 - [ ] 2 h · Give the reader each page's dimensions for image-folder books, so it can lay pages out before they load (TODO in `request_file`) [BE]
 - [ ] 0.5 h · Delete the unused `StreamReaderErrors` and `convert_file_path_to_blob` — leftovers from a hand-rolled range reader that `ServeFile` replaced [BE]
+- [ ] 1 h · The book JSON exposes Rust internals: `last_modified` is `{"secs_since_epoch":…,"nanos_since_epoch":0}` and `language` is `{"Other":"unknown"}` or `"English"` — send the time as unix seconds, as every auth answer does, and the language as its code (`BookLanguage::to_code`), before the readers couple to `GET /books/{id}` [BE]
 - [ ] 6 h · PDF reader [FE]
 - [ ] 8 h · EPUB reader [FE]
 - [ ] 6 h · CBZ and image-folder reader [FE]

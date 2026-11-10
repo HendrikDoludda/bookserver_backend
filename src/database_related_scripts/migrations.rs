@@ -152,6 +152,78 @@ mod tests {
         }
     }
 
+    /// Whether a column refuses NULL, read from the schema itself.
+    fn refuses_null(conn: &Connection, table: &str, column: &str) -> bool {
+        conn.query_row(
+            "SELECT \"notnull\" FROM pragma_table_info(?1) WHERE name = ?2",
+            [table, column],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|err| panic!("{table}.{column}: {err}"))
+    }
+
+    #[test]
+    fn a_book_table_column_allows_null_exactly_when_its_rust_field_is_an_option() {
+        let conn = memory_connection();
+        let required = [
+            ("books", "title"),
+            ("books", "author"),
+            ("books", "format"),
+            ("books", "language"),
+            ("books", "tags"),
+            ("books", "file_path"),
+            ("library", "library_name"),
+            ("library", "library_type"),
+            ("series", "name"),
+        ];
+        let optional = [
+            ("books", "cover_image"),
+            ("books", "description"),
+            ("books", "page_count"),
+            ("books", "volume_number"),
+            ("books", "chapter_number"),
+            ("books", "page_number"),
+            ("books", "file_hash"),
+            ("books", "last_modified"),
+            ("books", "file_size"),
+            ("books", "series"),
+            ("library", "cover_image"),
+            ("library", "description"),
+            ("series", "description"),
+            ("series", "cover_image"),
+            ("series", "start_release_year"),
+            ("series", "end_release_year"),
+        ];
+        for (table, column) in required {
+            assert!(
+                refuses_null(&conn, table, column),
+                "{table}.{column} must refuse NULL"
+            );
+        }
+        for (table, column) in optional {
+            assert!(
+                !refuses_null(&conn, table, column),
+                "{table}.{column} must allow NULL"
+            );
+        }
+        // A new column has to be sorted into one of the lists above.
+        for table in ["books", "library", "series"] {
+            let columns: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name != 'id'",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let listed = required
+                .iter()
+                .chain(&optional)
+                .filter(|(listed_table, _)| *listed_table == table)
+                .count();
+            assert_eq!(columns, listed as i64, "every column of {table} is listed");
+        }
+    }
+
     #[test]
     fn running_the_migrations_again_changes_nothing() {
         let mut conn = memory_connection();

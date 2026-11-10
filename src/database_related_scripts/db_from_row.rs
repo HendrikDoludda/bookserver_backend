@@ -58,23 +58,22 @@ impl FromRow for BookSeriesMetadata {
     fn from_row(row: &Row) -> rusqlite::Result<Self> {
         Ok(Self {
             name: row.get("name")?,
-            description: Some(row.get("description")?),
-            cover_image: Some(row.get("cover_image")?),
-            start_release_year: Some(row.get("start_release_year")?),
-            end_release_year: Some(row.get("end_release_year")?),
+            description: row.get("description")?,
+            cover_image: row.get("cover_image")?,
+            start_release_year: row.get("start_release_year")?,
+            end_release_year: row.get("end_release_year")?,
         })
     }
 }
 
 impl FromRow for LibraryMetadata {
     fn from_row(row: &Row) -> rusqlite::Result<Self> {
-        let library_type_string: String = row.get("library_type")?;
-        let library_type = LibraryType::from_str(library_type_string.as_str());
+        let library_type: String = row.get("library_type")?;
         Ok(Self {
-            name: row.get("name")?,
-            library_type,
-            cover_image: Some(row.get("cover_image")?),
-            description: Some(row.get("description")?),
+            name: row.get("library_name")?,
+            library_type: LibraryType::from_str(&library_type),
+            cover_image: row.get("cover_image")?,
+            description: row.get("description")?,
         })
     }
 }
