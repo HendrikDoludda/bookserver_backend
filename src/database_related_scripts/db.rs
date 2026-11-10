@@ -452,7 +452,7 @@ impl Database {
         F: FnOnce(&Connection) -> Result<T, AppErrors>,
     {
         let mut conn = self.pool.get().map_err(|err| {
-            log::error!("Got an error when trying to set up a new connection: {err}");
+            tracing::error!("Got an error when trying to set up a new connection: {err}");
             DatabaseError::PoolConnectionRetrievalFailure
         })?;
         // IMMEDIATE takes the write lock up front. A deferred transaction that reads and
@@ -461,12 +461,12 @@ impl Database {
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|err| {
-                log::error!("Failed to set up a transaction: {err}");
+                tracing::error!("Failed to set up a transaction: {err}");
                 DatabaseError::TransactionFailure
             })?;
         let result = operation(&tx)?;
         tx.commit().map_err(|err| {
-            log::error!("Failure while commiting the transaction: {err}");
+            tracing::error!("Failure while commiting the transaction: {err}");
             DatabaseError::OperationCommitFailure
         })?;
         Ok(result)
@@ -482,7 +482,7 @@ impl Database {
         tokio::task::spawn_blocking(move || self.setup_new_transaction(operation))
             .await
             .map_err(|err| {
-                log::error!("The transaction task did not finish: {err}");
+                tracing::error!("The transaction task did not finish: {err}");
                 DatabaseError::TransactionFailure
             })?
     }
@@ -497,14 +497,14 @@ impl Database {
     {
         tokio::task::spawn_blocking(move || {
             let conn = self.pool.get().map_err(|err| {
-                log::error!("Got an error when trying to set up a new connection: {err}");
+                tracing::error!("Got an error when trying to set up a new connection: {err}");
                 DatabaseError::PoolConnectionRetrievalFailure
             })?;
             operation(&conn)
         })
         .await
         .map_err(|err| {
-            log::error!("The read task did not finish: {err}");
+            tracing::error!("The read task did not finish: {err}");
             DatabaseError::TransactionFailure
         })?
     }

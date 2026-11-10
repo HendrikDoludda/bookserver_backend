@@ -36,7 +36,6 @@ epub-parser = "0.3.4"
 pdfium-render = "0.9.4"
 image = "0.25.10"
 zip = "8.6.0"
-log = "0.4.34"
 tower-http = {version = "0.7.1", features = ["full"]}
 tower = "0.5.3"
 uuid = {version="1.26.0", features=["v4",]}

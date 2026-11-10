@@ -406,7 +406,6 @@ dependencies = [
  "futures",
  "hex",
  "image",
- "log",
  "mail-send",
  "natord",
  "once_cell",

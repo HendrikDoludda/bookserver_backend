@@ -83,7 +83,7 @@ pub fn validate_submitted_password(
     password: &String,
 ) -> Result<(), AuthenticationError> {
     let password_hash = PasswordHash::new(&user.password_hash).map_err(|err| {
-        log::error!("Failed to hash password: {err}");
+        tracing::error!("Failed to hash password: {err}");
         AuthenticationError::StringToPasswordHashConversionFailed
     })?;
     if Argon2::default()
@@ -137,7 +137,7 @@ pub async fn secret_matches(
             None => dummy_hash()?.to_string(),
         };
         let parsed = PasswordHash::new(&stored_hash).map_err(|err| {
-            log::error!("a stored hash is not a valid PHC string: {err}");
+            tracing::error!("a stored hash is not a valid PHC string: {err}");
             AuthenticationError::StringToPasswordHashConversionFailed
         })?;
         Ok(Argon2::default()

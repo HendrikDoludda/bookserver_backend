@@ -6,7 +6,7 @@ use std::{
 };
 
 use blake3::Hasher;
-use log::{error, warn};
+use tracing::{error, warn};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use tokio::{fs, sync::Semaphore};

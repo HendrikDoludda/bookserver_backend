@@ -44,6 +44,7 @@
 - Mail goes to the address stored on the account, never to an address taken from the request.
 
 ## Logging
+- Log with `tracing`; the `log` crate is not a dependency.
 - Never log a password, a token (plain or hashed), a TOTP secret, a verification, reset or recovery code, the signing key, or an email body — bodies carry codes.
 - The one exception: the first-sign-up setup code, logged at start while no account exists.
 - A rusqlite error is logged once, where it becomes a `DatabaseError` — `map_err(logged(action, what, variant))` (`db.rs`); callers don't log it again.

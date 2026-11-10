@@ -72,7 +72,7 @@ fn build_message(config: &EmailConfig, mail: EmailInformation) -> MessageBuilder
 async fn send_over_smtp(config: &EmailConfig, mail: EmailInformation) -> Result<(), EmailErrors> {
     let mut builder = SmtpClientBuilder::new(config.host.clone(), config.port)
         .map_err(|e| {
-            log::error!("Failed to create the smtp client: {e}");
+            tracing::error!("Failed to create the smtp client: {e}");
             EmailErrors::ClientBuilderFailed
         })?
         .implicit_tls(config.tls == SmtpTls::Implicit)
@@ -102,13 +102,13 @@ async fn send_over_smtp(config: &EmailConfig, mail: EmailInformation) -> Result<
         }
     };
     sent.map_err(|e| {
-        log::error!("Failed to send the email: {e}");
+        tracing::error!("Failed to send the email: {e}");
         EmailErrors::SendingFailure
     })
 }
 
 fn connection_failed(e: mail_send::Error) -> EmailErrors {
-    log::error!("Failed to connect the smtp server: {e}");
+    tracing::error!("Failed to connect the smtp server: {e}");
     EmailErrors::SMTPConnectionFailed
 }
 
