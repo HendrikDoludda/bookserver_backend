@@ -151,6 +151,17 @@ pub(crate) fn start_login(
     if has_totp(conn, user_id)? {
         return start_challenge(conn, user_id, &device, now);
     }
+    Ok(LoginResponse::Ok(open_session(conn, user_id, device, now)?))
+}
+
+/// Starts a session on the device and records the login — the end of every login, with or
+/// without the TOTP code step.
+pub(crate) fn open_session(
+    conn: &Connection,
+    user_id: i64,
+    device: DeviceInformation,
+    now: SystemTime,
+) -> Result<SessionTokens, AppErrors> {
     let device_id = device.device_id.to_string();
     let tokens = create_new_session(conn, user_id, device, now)?;
     Database::update_value_with_connection::<UserMetadata>(
@@ -159,7 +170,7 @@ pub(crate) fn start_login(
         &convert_system_time_to_unix_time(now),
         user_id,
     )?;
-    Ok(LoginResponse::Ok(session_tokens(tokens, device_id)))
+    Ok(session_tokens(tokens, device_id))
 }
 
 /// The device id the client sent back, or a new one: the server hands out device ids, so

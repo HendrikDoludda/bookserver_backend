@@ -88,7 +88,7 @@ pub fn counters_for_next_mail(
 }
 
 // A clock that went backwards counts as no time passed, so the limits stay in force.
-fn elapsed(since: SystemTime, now: SystemTime) -> Duration {
+pub(crate) fn elapsed(since: SystemTime, now: SystemTime) -> Duration {
     now.duration_since(since).unwrap_or(Duration::ZERO)
 }
 

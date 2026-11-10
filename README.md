@@ -5,10 +5,10 @@ your folders, catalogs the files in SQLite, extracts cover images, and serves ev
 an HTTP API for a reader frontend.
 
 > **Status: work in progress.** Scanning, cataloging, cover extraction and file streaming
-> work. Accounts work end to end — sign-up with email verification, login, refresh, logout
-> and password reset — but the library routes don't require a session yet, and TOTP
-> two-factor auth is in progress. See [docs/project-state.md](docs/project-state.md) for what
-> works today and the [build checklist](docs/build-checklist.md) for what comes next.
+> work. Accounts work end to end — sign-up with email verification, login with optional TOTP
+> two-factor auth and recovery codes, refresh, logout and password reset — but the library
+> routes don't require a session yet. See [docs/project-state.md](docs/project-state.md) for
+> what works today and the [build checklist](docs/build-checklist.md) for what comes next.
 
 ## Highlights
 
@@ -24,7 +24,9 @@ an HTTP API for a reader frontend.
   the binary at compile time.
 - **Authentication (in progress).** Argon2id password hashing, email verification over
   SMTP, and opaque random session tokens that are stored only as BLAKE3 hashes, with a
-  15-minute session token and a rotating 30-day refresh token.
+  15-minute session token and a rotating 30-day refresh token. Optional TOTP two-factor
+  login: secrets encrypted at rest with XChaCha20-Poly1305, single-use recovery codes, replay
+  protection, and a lock on wrong codes that doubles up to 24 hours.
 
 ## Tech stack
 
@@ -137,6 +139,8 @@ Implemented endpoints:
 | `POST` | `/api/v1/auth/verify_email` | Confirm the email with the mailed code and the password; answers like login |
 | `POST` | `/api/v1/auth/verify_email/resend` | Mail a new verification code; always `202` |
 | `POST` | `/api/v1/auth/login` | Log in; answers the session and refresh tokens, or a challenge when two-factor auth is on |
+| `POST` | `/api/v1/auth/login/totp` | The code step of a two-factor login: the challenge token as Bearer and the authenticator code; answers like login |
+| `POST` | `/api/v1/auth/login/recovery_code` | The same with a recovery code instead; each code works once |
 | `POST` | `/api/v1/auth/refresh` | New tokens for a refresh token (`Authorization: Bearer`) |
 | `POST` | `/api/v1/auth/logout` | End the session behind either token; always `204` |
 | `POST` | `/api/v1/auth/password_reset` | Mail a password-reset code; always `202`, so it never reveals whether an address has an account |
@@ -144,6 +148,7 @@ Implemented endpoints:
 | `GET` | `/api/v1/account/totp` | Whether two-factor auth is on, and how many recovery codes are left |
 | `POST` | `/api/v1/account/totp` | Start setting up two-factor auth; answers the authenticator secret and its `otpauth://` URL |
 | `POST` | `/api/v1/account/totp/confirm` | Confirm the setup with a code and the password; answers 10 recovery codes, shown once, and ends the other sessions |
+| `POST` | `/api/v1/account/totp/disable` | Turn two-factor auth off with the password and an authenticator or recovery code; deletes the recovery codes and ends every session |
 
 Errors answer with JSON `{"error": "<key>"}` and a matching status code.
 

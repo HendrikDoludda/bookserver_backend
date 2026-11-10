@@ -20,7 +20,10 @@ use crate::{
             initiate_database, insert_database_entry, request_file, retrieve_metadata,
             scan_all_directories, scan_for_metadata, update_database_entry,
         },
-        totp::{finalize_totp_set_up, totp_start_set_up, totp_status},
+        totp::{
+            disable_totp, finalize_totp_set_up, sign_in_totp, sign_in_totp_with_recovery_code,
+            totp_start_set_up, totp_status,
+        },
     },
 };
 
@@ -70,12 +73,18 @@ pub fn set_up_routes() -> Router<AppState> {
         .route("/auth/verify_email", post(verify_email))
         .route("/auth/verify_email/resend", post(resend_verification_code))
         .route("/auth/login", post(sign_in))
+        .route("/auth/login/totp", post(sign_in_totp))
+        .route(
+            "/auth/login/recovery_code",
+            post(sign_in_totp_with_recovery_code),
+        )
         .route("/auth/logout", post(log_out))
         .route("/auth/refresh", post(refresh_session))
         .route("/auth/password_reset", post(request_password_reset))
         .route("/auth/password_reset/confirm", post(confirm_password_reset))
         .route("/account/totp", get(totp_status).post(totp_start_set_up))
-        .route("/account/totp/confirm", post(finalize_totp_set_up));
+        .route("/account/totp/confirm", post(finalize_totp_set_up))
+        .route("/account/totp/disable", post(disable_totp));
 
     Router::new()
         .route("/health", get(ping_server))
@@ -648,6 +657,10 @@ mod tests {
                 "/api/v1/account/totp/confirm",
                 serde_json::json!({ "code": "123456", "password": "correct horse battery" }),
             ),
+            post_json(
+                "/api/v1/account/totp/disable",
+                serde_json::json!({ "password": "correct horse battery", "code": "123456" }),
+            ),
         ] {
             let (status, body) = json_answer(request).await;
             assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -656,8 +669,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn setting_up_2fa_over_http() {
+    async fn the_code_steps_need_a_live_challenge() {
         let temp = TempDatabase::open();
+        let user = temp
+            .db
+            .setup_new_transaction(|conn| Ok(insert_user(conn, "alice")))
+            .unwrap();
+        add_session(
+            &temp,
+            user,
+            "d1",
+            "session-1",
+            "refresh-1",
+            unix_now() + 600,
+        );
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let body = serde_json::json!({ "code": "123456" });
+
+        for uri in [
+            "/api/v1/auth/login/totp",
+            "/api/v1/auth/login/recovery_code",
+        ] {
+            for token in [None, Some("unknown"), Some("session-1")] {
+                let request = match token {
+                    Some(token) => authorized("POST", uri, token, Some(body.clone())),
+                    None => post_json(uri, body.clone()),
+                };
+                let (status, _, answer) = call(&app, request).await;
+                assert_eq!(status, StatusCode::UNAUTHORIZED, "{uri} {token:?}");
+                assert_eq!(
+                    json(&answer),
+                    serde_json::json!({ "error": "unauthorized" })
+                );
+            }
+        }
+    }
+
+    async fn add_alice_with_password(temp: &TempDatabase) {
         let hash = hash_secret("correct horse battery".to_string())
             .await
             .unwrap();
@@ -672,18 +720,140 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
-        let log_in = || {
-            post_json(
-                "/api/v1/auth/login",
-                serde_json::json!({
-                    "username_or_email": "alice",
-                    "password": "correct horse battery",
-                    "device_name": "phone",
-                    "platform": "ios",
-                }),
+    }
+
+    fn log_in_as_alice() -> Request<Body> {
+        post_json(
+            "/api/v1/auth/login",
+            serde_json::json!({
+                "username_or_email": "alice",
+                "password": "correct horse battery",
+                "device_name": "phone",
+                "platform": "ios",
+            }),
+        )
+    }
+
+    /// Switches 2FA on over HTTP; answers the authenticator app and the recovery codes.
+    async fn enroll_over_http(app: &Router, session: &str) -> (totp_rs::Totp, Vec<String>) {
+        let (_, _, body) = call(
+            app,
+            authorized("POST", "/api/v1/account/totp", session, None),
+        )
+        .await;
+        let authenticator = totp_rs::Builder::new()
+            .with_secret(
+                totp_rs::Secret::try_from_base32(json(&body)["secret_base32"].as_str().unwrap())
+                    .unwrap(),
             )
-        };
+            .build()
+            .unwrap();
+        let confirmation = serde_json::json!({
+            "code": authenticator.generate_current().to_string(),
+            "password": "correct horse battery",
+        });
+        let (status, _, body) = call(
+            app,
+            authorized(
+                "POST",
+                "/api/v1/account/totp/confirm",
+                session,
+                Some(confirmation),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let codes = serde_json::from_value(json(&body)["recovery_codes"].clone()).unwrap();
+        (authenticator, codes)
+    }
+
+    /// Logs Alice in with her password; answers the challenge token of the code step.
+    async fn challenge_token(app: &Router) -> String {
+        let (status, _, body) = call(app, log_in_as_alice()).await;
+        assert_eq!(status, StatusCode::OK);
+        let body = json(&body);
+        assert_eq!(body["status"], "totp_required");
+        body["challenge_token"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn logging_in_with_2fa_and_turning_it_off_over_http() {
+        let temp = TempDatabase::open();
+        add_alice_with_password(&temp).await;
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let (_, _, body) = call(&app, log_in_as_alice()).await;
+        let setup_session = json(&body)["session_token"].as_str().unwrap().to_string();
+        let (authenticator, recovery_codes) = enroll_over_http(&app, &setup_session).await;
+
+        let challenge = challenge_token(&app).await;
+        let (status, _, _) = call(&app, guarded(Some(&format!("Bearer {challenge}")))).await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "a challenge token is no session"
+        );
+        // The confirm above used the current time step, so this sends the next one; the check
+        // accepts one step of clock drift.
+        let next_step = authenticator.generate(unix_now() as u64 + 30).to_string();
+        let (status, headers, body) = call(
+            &app,
+            authorized(
+                "POST",
+                "/api/v1/auth/login/totp",
+                &challenge,
+                Some(serde_json::json!({ "code": next_step })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers.get("cache-control").unwrap(), "no-store");
+        assert_eq!(json(&body)["status"], "ok");
+        let session = json(&body)["session_token"].as_str().unwrap().to_string();
+        let (status, _, _) = call(&app, guarded(Some(&format!("Bearer {session}")))).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let challenge = challenge_token(&app).await;
+        let (status, headers, body) = call(
+            &app,
+            authorized(
+                "POST",
+                "/api/v1/auth/login/recovery_code",
+                &challenge,
+                Some(serde_json::json!({ "code": recovery_codes[0] })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers.get("cache-control").unwrap(), "no-store");
+        assert_eq!(json(&body)["status"], "ok");
+
+        let turn_off = serde_json::json!({
+            "password": "correct horse battery",
+            "code": recovery_codes[1],
+        });
+        let (status, _, _) = call(
+            &app,
+            authorized(
+                "POST",
+                "/api/v1/account/totp/disable",
+                &session,
+                Some(turn_off),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (status, _, _) = call(&app, guarded(Some(&format!("Bearer {session}")))).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "every session ended");
+        let (_, _, body) = call(&app, log_in_as_alice()).await;
+        assert_eq!(json(&body)["status"], "ok", "no code step any more");
+    }
+
+    #[tokio::test]
+    async fn setting_up_2fa_over_http() {
+        let temp = TempDatabase::open();
+        add_alice_with_password(&temp).await;
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let log_in = log_in_as_alice;
         let (_, _, body) = call(&app, log_in()).await;
         let session = json(&body)["session_token"].as_str().unwrap().to_string();
         let (_, _, body) = call(&app, log_in()).await;

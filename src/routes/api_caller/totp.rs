@@ -1,22 +1,33 @@
-//! The TOTP handlers. Signing in with a code and turning 2FA off answer 501 until they are built.
+//! The TOTP handlers: the 2FA settings, and the code step at login.
 
 use std::{sync::Arc, time::SystemTime};
 
-use axum::{body::Body, extract::State, http::Response, Json};
+use axum::{
+    body::Body,
+    extract::State,
+    http::{Response, StatusCode},
+    Json,
+};
 
 use crate::{
-    data_models::totp_model::{ConfirmTOTPRequest, TOTPStatus},
+    data_models::{
+        authentication_model::LoginResponse,
+        totp_model::{
+            ConfirmTOTPRequest, DisableTOTPRequest, RecoveryCodeSignInRequest, TOTPSignInRequest,
+            TOTPStatus,
+        },
+    },
     db::Database,
     error_types::AppErrors,
     routes::{
         totp_cipher::TotpCipher,
-        totp_management::{begin_setup, confirm_setup, status},
+        totp_management::{begin_setup, confirm_setup, disable, finish_login, status, TypedCode},
     },
 };
 
 use super::{
-    extractors::AuthSession,
-    helpers::{no_store, not_implemented_response},
+    extractors::{AuthSession, AuthTOTPLoginSession},
+    helpers::no_store,
 };
 
 /// `GET /api/v1/account/totp`
@@ -57,17 +68,38 @@ pub async fn finalize_totp_set_up(
     Ok(no_store(Json(codes)))
 }
 
-/// Requires a fully authenticated session (`AuthSession`).
-pub async fn disable_totp() -> Response<Body> {
-    not_implemented_response()
+/// `POST /api/v1/account/totp/disable`: ends every session of the user, this one too.
+pub async fn disable_totp(
+    session: AuthSession,
+    State(db): State<Arc<Database>>,
+    State(cipher): State<TotpCipher>,
+    Json(request): Json<DisableTOTPRequest>,
+) -> Result<StatusCode, AppErrors> {
+    disable(db, &cipher, session.0.user_id, request, SystemTime::now()).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
-/// Requires a half-authenticated TOTP login session (`AuthTOTPLoginSession`).
-pub async fn sign_in_totp_with_recovery_code() -> Response<Body> {
-    not_implemented_response()
+/// `POST /api/v1/auth/login/recovery_code` with the challenge token as Bearer: answers like
+/// login.
+pub async fn sign_in_totp_with_recovery_code(
+    challenge: AuthTOTPLoginSession,
+    State(db): State<Arc<Database>>,
+    State(cipher): State<TotpCipher>,
+    Json(request): Json<RecoveryCodeSignInRequest>,
+) -> Result<Response<Body>, AppErrors> {
+    let code = TypedCode::Recovery(request.code);
+    let tokens = finish_login(db, &cipher, challenge.0, code, SystemTime::now()).await?;
+    Ok(no_store(Json(LoginResponse::Ok(tokens))))
 }
 
-/// Requires a half-authenticated TOTP login session (`AuthTOTPLoginSession`).
-pub async fn sign_in_totp() -> Response<Body> {
-    not_implemented_response()
+/// `POST /api/v1/auth/login/totp` with the challenge token as Bearer: answers like login.
+pub async fn sign_in_totp(
+    challenge: AuthTOTPLoginSession,
+    State(db): State<Arc<Database>>,
+    State(cipher): State<TotpCipher>,
+    Json(request): Json<TOTPSignInRequest>,
+) -> Result<Response<Body>, AppErrors> {
+    let code = TypedCode::Authenticator(request.code);
+    let tokens = finish_login(db, &cipher, challenge.0, code, SystemTime::now()).await?;
+    Ok(no_store(Json(LoginResponse::Ok(tokens))))
 }

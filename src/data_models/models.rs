@@ -24,6 +24,7 @@ pub enum DatabaseTypes {
     Session,
     Totp,
     RecoveryCodes,
+    LoginChallenge,
 }
 
 impl DatabaseTypes {
@@ -37,6 +38,7 @@ impl DatabaseTypes {
             DatabaseTypes::Session => "sessions",
             DatabaseTypes::Totp => "totp",
             DatabaseTypes::RecoveryCodes => "recovery_codes",
+            DatabaseTypes::LoginChallenge => "login_challenges",
         }
     }
 
@@ -52,6 +54,7 @@ impl DatabaseTypes {
             DatabaseTypes::Totp => Some("user_id"),
             DatabaseTypes::Session => Some("session_id"),
             DatabaseTypes::RecoveryCodes => Some("recovery_id"),
+            DatabaseTypes::LoginChallenge => Some("challenge_id"),
         }
     }
 
