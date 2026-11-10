@@ -74,9 +74,6 @@ pub enum DatabaseError {
     #[error("Failed to get next row from database table")]
     NextRowFailure,
 
-    #[error("Invalid combination of Database type and column")]
-    InvalidRequest,
-
     #[error("Statement Query has failed")]
     QueryFailure,
 
@@ -94,20 +91,12 @@ pub enum DatabaseError {
 
     #[error("number of paramaters did not match the number of columns")]
     InvalidParameters,
-    #[error("The search result does not match the expected result")]
-    UnexpectedSearchResult,
-    #[error("Email already exists in users")]
-    EmailAlreadyExists,
-    #[error("Username already exists in users")]
-    UsernameAlreadyExists,
 }
 
 impl DatabaseError {
     fn status_and_key(&self) -> (StatusCode, &'static str) {
         match self {
             DatabaseError::EntryNotFound => (StatusCode::NOT_FOUND, "not_found"),
-            DatabaseError::EmailAlreadyExists => (StatusCode::CONFLICT, "email_taken"),
-            DatabaseError::UsernameAlreadyExists => (StatusCode::CONFLICT, "username_taken"),
             DatabaseError::DatabaseInitializationFailure
             | DatabaseError::DirectoryCreationFailure
             | DatabaseError::FailedToConnectToDatabase
@@ -119,14 +108,12 @@ impl DatabaseError {
             | DatabaseError::ConnectionExecutableFailure
             | DatabaseError::TaskPreparationFailure
             | DatabaseError::NextRowFailure
-            | DatabaseError::InvalidRequest
             | DatabaseError::QueryFailure
             | DatabaseError::IdRetrievalFailure
             | DatabaseError::TransactionFailure
             | DatabaseError::OperationFailure
             | DatabaseError::OperationCommitFailure
-            | DatabaseError::InvalidParameters
-            | DatabaseError::UnexpectedSearchResult => INTERNAL,
+            | DatabaseError::InvalidParameters => INTERNAL,
         }
     }
 }
@@ -165,24 +152,12 @@ pub enum FolderScannerError {
 
     #[error("Permit creation failed")]
     PermitCreationFailed,
-
-    #[error("Could not create new database connection")]
-    DatabaseConnectionFailed,
-
-    #[error("Failed to regex the book title properly")]
-    RegexFailure,
 }
 
 #[derive(Error, Debug)]
 pub enum CoverImageError {
     #[error("File not found")]
     FileNotFound,
-
-    #[error("Database engine failed")]
-    DatabaseEngineFailed,
-
-    #[error("Network error")]
-    NetworkError,
 
     #[error("General error")]
     GeneralError,
@@ -192,9 +167,6 @@ pub enum CoverImageError {
 
     #[error("Invalid File Name")]
     InvalidFileName,
-
-    #[error("File Already Exists")]
-    FileAlreadyExists,
 
     #[error("File Reading Failed")]
     FileCouldNotBeRead,
@@ -253,8 +225,6 @@ pub enum AuthenticationError {
     UsernameTaken,
     #[error("Email already taken")]
     EmailTaken,
-    #[error("Either username or email address is already taken")]
-    AccountAlreadyExists,
     #[error("Wrong email/username or password")]
     IncorrectCredentials,
     #[error("Expired Session and Refresh Token")]
@@ -267,20 +237,14 @@ pub enum AuthenticationError {
     DatabaseSearchFailure,
     #[error("Mismatching passwords")]
     MismatchingPasswords,
-    #[error("Failed to hash the password")]
-    PasswordHashingFailure,
     #[error("Failed to store data properly")]
     FailedDataStoring,
     #[error("Failed to create a new randomly generated value")]
     RngCreatorFailed,
     #[error("Hashing sensitive data failed")]
     ErrorHashingData,
-    #[error("Failed to create the salt")]
-    ErrorCreatingSalt,
     #[error("Failed to calculate the lifetime for tokens")]
     TokenLifetimeCalculationFailed,
-    #[error("User was not found")]
-    UserNotFound,
     #[error("Failed to convert string into PasswordHash type")]
     StringToPasswordHashConversionFailed,
     #[error("Failed to update a database entry")]
@@ -318,7 +282,6 @@ impl AuthenticationError {
         match self {
             AuthenticationError::UsernameTaken => (StatusCode::CONFLICT, "username_taken"),
             AuthenticationError::EmailTaken => (StatusCode::CONFLICT, "email_taken"),
-            AuthenticationError::AccountAlreadyExists => (StatusCode::CONFLICT, "account_exists"),
             AuthenticationError::IncorrectCredentials => {
                 (StatusCode::UNAUTHORIZED, "incorrect_credentials")
             }
@@ -352,14 +315,11 @@ impl AuthenticationError {
                 (StatusCode::CONFLICT, "totp_setup_not_pending")
             }
             AuthenticationError::TotpNotEnabled => (StatusCode::CONFLICT, "totp_not_enabled"),
-            AuthenticationError::UserNotFound => (StatusCode::NOT_FOUND, "not_found"),
             AuthenticationError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             AuthenticationError::DatabaseSearchFailure
-            | AuthenticationError::PasswordHashingFailure
             | AuthenticationError::FailedDataStoring
             | AuthenticationError::RngCreatorFailed
             | AuthenticationError::ErrorHashingData
-            | AuthenticationError::ErrorCreatingSalt
             | AuthenticationError::TokenLifetimeCalculationFailed
             | AuthenticationError::StringToPasswordHashConversionFailed
             | AuthenticationError::DatabaseUpdateFailed
@@ -378,8 +338,6 @@ pub enum EmailErrors {
     ClientBuilderFailed,
     #[error("Failed to send the email")]
     SendingFailure,
-    #[error("No email was attached to the user")]
-    MissingEmail,
 }
 
 impl EmailErrors {
@@ -390,8 +348,7 @@ impl EmailErrors {
             }
             EmailErrors::SMTPConnectionFailed
             | EmailErrors::ClientBuilderFailed
-            | EmailErrors::SendingFailure
-            | EmailErrors::MissingEmail => INTERNAL,
+            | EmailErrors::SendingFailure => INTERNAL,
         }
     }
 }
@@ -428,8 +385,6 @@ pub enum ApplicationSetUpErrors {
     DirectoryCreationFailure,
     #[error("Failed filling bytes")]
     SysRngFailure,
-    #[error("Failed encoding key")]
-    KeyEncodingFailure,
     #[error("Failed to convert secrets to toml string")]
     SecretConversionFailure,
     #[error("Failed to write to document")]
@@ -494,11 +449,6 @@ mod tests {
                 Auth::UsernameTaken.into(),
                 StatusCode::CONFLICT,
                 "username_taken",
-            ),
-            (
-                Auth::AccountAlreadyExists.into(),
-                StatusCode::CONFLICT,
-                "account_exists",
             ),
             (
                 Auth::InvalidValidationCode.into(),
@@ -566,11 +516,6 @@ mod tests {
                 "email_not_verified",
             ),
             (
-                Auth::UserNotFound.into(),
-                StatusCode::NOT_FOUND,
-                "not_found",
-            ),
-            (
                 EmailErrors::EmailSetUpNotFound.into(),
                 StatusCode::SERVICE_UNAVAILABLE,
                 "email_not_configured",
@@ -579,16 +524,6 @@ mod tests {
                 DatabaseError::EntryNotFound.into(),
                 StatusCode::NOT_FOUND,
                 "not_found",
-            ),
-            (
-                DatabaseError::EmailAlreadyExists.into(),
-                StatusCode::CONFLICT,
-                "email_taken",
-            ),
-            (
-                DatabaseError::UsernameAlreadyExists.into(),
-                StatusCode::CONFLICT,
-                "username_taken",
             ),
         ];
 
@@ -605,11 +540,9 @@ mod tests {
         use AuthenticationError as Auth;
         let cases: Vec<AppErrors> = vec![
             Auth::DatabaseSearchFailure.into(),
-            Auth::PasswordHashingFailure.into(),
             Auth::FailedDataStoring.into(),
             Auth::RngCreatorFailed.into(),
             Auth::ErrorHashingData.into(),
-            Auth::ErrorCreatingSalt.into(),
             Auth::TokenLifetimeCalculationFailed.into(),
             Auth::StringToPasswordHashConversionFailed.into(),
             Auth::DatabaseUpdateFailed.into(),
@@ -617,7 +550,6 @@ mod tests {
             EmailErrors::SMTPConnectionFailed.into(),
             EmailErrors::ClientBuilderFailed.into(),
             EmailErrors::SendingFailure.into(),
-            EmailErrors::MissingEmail.into(),
             DatabaseError::DatabaseInitializationFailure.into(),
             DatabaseError::DirectoryCreationFailure.into(),
             DatabaseError::FailedToConnectToDatabase.into(),
@@ -629,14 +561,12 @@ mod tests {
             DatabaseError::ConnectionExecutableFailure.into(),
             DatabaseError::TaskPreparationFailure.into(),
             DatabaseError::NextRowFailure.into(),
-            DatabaseError::InvalidRequest.into(),
             DatabaseError::QueryFailure.into(),
             DatabaseError::IdRetrievalFailure.into(),
             DatabaseError::TransactionFailure.into(),
             DatabaseError::OperationFailure.into(),
             DatabaseError::OperationCommitFailure.into(),
             DatabaseError::InvalidParameters.into(),
-            DatabaseError::UnexpectedSearchResult.into(),
         ];
 
         for error in cases {
