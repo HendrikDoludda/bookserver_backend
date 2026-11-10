@@ -1,6 +1,6 @@
 # Two-factor auth (TOTP)
 
-State: in progress
+State: completed
 
 An optional second login factor: a 6-digit code from an authenticator app, computed from a
 shared secret and the current time, so no delivery service is needed. Login gives a TOTP user a
@@ -23,5 +23,3 @@ turns it into one. The secret is stored encrypted.
 - [x] 0.5 h · Strip spaces from a submitted code — `check` accepts exactly 6 ASCII digits [BE]
 - [x] 1 h · Email verification logs in through login's `start_login`, so a TOTP user gets the code step there too [BE]
 - [x] 3 h · Disable 2FA: route `disable_totp` at `POST /api/v1/account/totp/disable` with `{password, code}` — require the current password and a current authenticator or recovery code (6 digits are read as an authenticator code), so a stolen session plus the password can't switch 2FA off; delete the `totp` row and all recovery codes, and end all of the user's sessions [BE]
-- [ ] 2 h · Code-entry step after the password, when login answers `totp_required` [FE]
-- [ ] 4 h · 2FA settings: enable (QR code + confirm) and disable [FE]

@@ -13,6 +13,3 @@ and a reset never switches two-factor auth off.
 - [x] 0.5 h · Remove the cancel link: `cancelation_token`, the `Url` parameter of `send_reset_password_email`, the `https://invalid.link` placeholder and the `url` dependency [BE]
 - [x] 0.5 h · Delete the comment-only `reset_password` stub in `auth.rs`, and `store_user_password_reset_token`, which the request task replaces [BE]
 - [ ] 0.5 h · Redeeming a reset code also sets `email_verified` — today an unverified account still needs a verification code after its reset, although the reset code reached the same address [BE]
-- [ ] 1 h · Reset email text from the [translation catalog](13-internationalization.md) instead of hard-coded English [BE]
-- [ ] 2 h · "Forgot password" form [FE]
-- [ ] 2 h · Code and new-password screen [FE]

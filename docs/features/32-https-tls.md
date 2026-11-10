@@ -2,16 +2,12 @@
 
 State: not started
 
-The server speaks HTTPS itself, even on the LAN, because login carries the password and the
-TOTP code, and the 2FA setup answer carries the TOTP secret itself — until then, enroll over
-Tailscale. The certificate comes from `tailscale cert`: a real certificate for the server's
-tailnet name, so browsers trust it without any setup.
+Login carries the password and the TOTP code, and the 2FA setup answer carries the TOTP secret
+itself, so they travel over HTTPS. `tailscale serve` provides it: Tailscale answers on the
+server's tailnet name with a certificate it renews itself, and forwards to the server on
+`127.0.0.1`. HTTPS for installs without Tailscale is part of [52](52-packaging-and-deployment.md).
 
 ## Build
-- [ ] 3 h · Serve over TLS with `axum-server` (feature `tls-rustls`, not a dependency yet): `RustlsConfig::from_pem_file(cert, key)` and `bind_rustls` [BE]
-- [ ] 1 h · Settings for the certificate and key paths — no `TLS_*` setting exists yet [BE]
-- [ ] 2 h · Pick up a renewed certificate without a restart (`RustlsConfig::reload_from_pem_file`), triggered per the reload decision [BE]
-- [ ] 1 h · Check by hand: inside the tailnet the browser shows no certificate warning, and a renewed certificate is served without a restart
-
-## Open decisions
-- [ ] What triggers the reload — a timer, a signal, or watching the certificate files? — blocks: picking up a renewed certificate. Suggested: a daily timer — the certificates last 90 days, so polling is plenty and needs no extra crate.
+- [ ] 1 h · `BIND_ADDRESS` setting, an IP address (default `0.0.0.0`): the address `start_server` listens on — `127.0.0.1` behind `tailscale serve` keeps plain HTTP off the LAN; anything else stops the server at start [BE]
+- [ ] 0.5 h · `run-deploy/tailscale.md`: MagicDNS and HTTPS certificates on in the admin console, `tailscale serve --bg 8080`, the server started with `BIND_ADDRESS=127.0.0.1`
+- [ ] 0.5 h · Check by hand: on a tailnet device the `*.ts.net` URL answers without a certificate warning, and from another LAN device plain HTTP on port 8080 is refused

@@ -6,7 +6,7 @@
 | Database layer fixes | 0 | completed | [26-database-layer-fixes](features/26-database-layer-fixes.md) |
 | Error responses & status codes | 0 | completed | [33-error-responses](features/33-error-responses.md) |
 | Login, logout & sessions | 1 | in progress | [03-login-and-sessions](features/03-login-and-sessions.md) |
-| Two-factor auth (TOTP) | 1 | in progress | [04-two-factor-auth-totp](features/04-two-factor-auth-totp.md) |
+| Two-factor auth (TOTP) | 1 | completed | [04-two-factor-auth-totp](features/04-two-factor-auth-totp.md) |
 | Registration & email verification | 1 | in progress | [27-registration-and-email-verification](features/27-registration-and-email-verification.md) |
 | Roles & access control | 1 | in progress | [28-roles-and-access-control](features/28-roles-and-access-control.md) |
 | Account management | 1 | in progress | [29-account-management](features/29-account-management.md) |
@@ -17,6 +17,7 @@
 | Translation catalog (i18n) | F0 | not started | [13-internationalization](features/13-internationalization.md) |
 | Reading files | F1 | in progress | [38-reading-files](features/38-reading-files.md) |
 | Frontend localization | F1 | not started | [57-frontend-localization](features/57-frontend-localization.md) |
+| Account screens | F1 | not started | [58-account-screens](features/58-account-screens.md) |
 | Flutter app | F1 | not started | [73-flutter-app](features/73-flutter-app.md) |
 | Library & series management | 2 | in progress | [01-library-and-series-management](features/01-library-and-series-management.md) |
 | Directory scanning | 2 | in progress | [34-directory-scanning](features/34-directory-scanning.md) |
@@ -43,7 +44,7 @@
 | Packaging & deployment | 5 | not started | [52-packaging-and-deployment](features/52-packaging-and-deployment.md) |
 | Safe schema upgrades | 5 | not started | [78-safe-schema-upgrades](features/78-safe-schema-upgrades.md) |
 | Security hardening | cross-cutting | in progress | [12-security-hardening](features/12-security-hardening.md) |
-| Email & notifications | cross-cutting | in progress | [14-email-and-notifications](features/14-email-and-notifications.md) |
+| Email & notifications | cross-cutting | completed | [14-email-and-notifications](features/14-email-and-notifications.md) |
 | Active sessions | cross-cutting | not started | [51-active-sessions](features/51-active-sessions.md) |
 | File reconciliation | cross-cutting | not started | [53-file-reconciliation](features/53-file-reconciliation.md) |
 | Security audit log | cross-cutting | not started | [55-security-audit-log](features/55-security-audit-log.md) |
