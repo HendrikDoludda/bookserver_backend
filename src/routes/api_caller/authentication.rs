@@ -29,7 +29,7 @@ use crate::{
 };
 
 use super::{
-    extractors::{bearer_token, AuthRefreshSession, AuthSession},
+    extractors::{bearer_token, AuthRefreshSession, AuthSession, JsonBody},
     helpers::no_store,
 };
 
@@ -39,7 +39,7 @@ pub async fn sign_up(
     State(db): State<Arc<Database>>,
     State(mailer): State<Mailer>,
     State(setup_code): State<SetupCode>,
-    Json(request): Json<UserCreationRequest>,
+    JsonBody(request): JsonBody<UserCreationRequest>,
 ) -> Result<Response<Body>, AppErrors> {
     let outcome = create_account(db, &mailer, setup_code, request, SystemTime::now()).await?;
     Ok(match outcome {
@@ -57,7 +57,7 @@ pub async fn sign_up(
 /// `POST /api/v1/auth/login`
 pub async fn sign_in(
     State(db): State<Arc<Database>>,
-    Json(request): Json<LoginRequest>,
+    JsonBody(request): JsonBody<LoginRequest>,
 ) -> Result<Response<Body>, AppErrors> {
     let response = log_in(db, request, SystemTime::now()).await?;
     Ok(no_store(Json(response)))
@@ -66,7 +66,7 @@ pub async fn sign_in(
 /// `POST /api/v1/auth/verify_email`: answers like login.
 pub async fn verify_email(
     State(db): State<Arc<Database>>,
-    Json(request): Json<VerifyEmailRequest>,
+    JsonBody(request): JsonBody<VerifyEmailRequest>,
 ) -> Result<Response<Body>, AppErrors> {
     let response = confirm_email(db, request, SystemTime::now()).await?;
     Ok(no_store(Json(response)))
@@ -78,7 +78,7 @@ pub async fn verify_email(
 pub async fn resend_verification_code(
     State(db): State<Arc<Database>>,
     State(mailer): State<Mailer>,
-    Json(request): Json<ResendVerificationRequest>,
+    JsonBody(request): JsonBody<ResendVerificationRequest>,
 ) -> Result<StatusCode, AppErrors> {
     if !mailer.is_enabled() {
         return Err(EmailErrors::EmailSetUpNotFound.into());
@@ -167,7 +167,7 @@ pub async fn change_email(
 pub async fn request_password_reset(
     State(db): State<Arc<Database>>,
     State(mailer): State<Mailer>,
-    Json(request): Json<PasswordResetRequest>,
+    JsonBody(request): JsonBody<PasswordResetRequest>,
 ) -> Result<StatusCode, AppErrors> {
     if !mailer.is_enabled() {
         return Err(EmailErrors::EmailSetUpNotFound.into());
@@ -184,7 +184,7 @@ pub async fn request_password_reset(
 /// `POST /api/v1/auth/password_reset/confirm`
 pub async fn confirm_password_reset(
     State(db): State<Arc<Database>>,
-    Json(request): Json<ConfirmPasswordResetRequest>,
+    JsonBody(request): JsonBody<ConfirmPasswordResetRequest>,
 ) -> Result<StatusCode, AppErrors> {
     confirm_reset(db, request, SystemTime::now()).await?;
     Ok(StatusCode::OK)

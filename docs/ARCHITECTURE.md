@@ -6,7 +6,7 @@
 - `src/config.rs` — env-var readers and the generated `secrets.toml` (in the OS config directory).
 - `src/app_state.rs` — `AppState`, the router state (database, mailer, setup code, TOTP cipher); handlers take their part through `FromRef` (`State<Arc<Database>>`, `State<Mailer>`, `State<SetupCode>`, `State<TotpCipher>`).
 - `src/routes/api_routes.rs` — the route table (`set_up_routes`) and `start_server`.
-- `src/routes/api_caller/` — the handlers, one file per area (`authentication.rs`, `totp.rs`, `library.rs`); `extractors.rs` holds the session extractors (`AuthSession`, `AdminSession`, `AuthTOTPLoginSession`, `AuthRefreshSession`), and `helpers.rs` the shared response builders and `ping_server`, the liveness check and the placeholder for routes without a handler.
+- `src/routes/api_caller/` — the handlers, one file per area (`authentication.rs`, `totp.rs`, `library.rs`); `extractors.rs` holds the request extractors — the session ones (`AuthSession`, `AdminSession`, `AuthTOTPLoginSession`, `AuthRefreshSession`) and `JsonBody` / `PathParams`, and `helpers.rs` the shared response builders and `ping_server`, the liveness check and the placeholder for routes without a handler.
 - `src/routes/auth.rs` — account, password and session building blocks, including the checks a new username, email or password passes; `login.rs` — login, refresh and logout; `registration.rs` — sign-up and email verification; `password_reset.rs` — the reset flow; `email_codes.rs` — the emailed codes of both: making them, mailing them within the limits, checking them; `totp_management.rs` — TOTP two-factor and recovery codes; `totp_cipher.rs` — `TotpCipher`, which encrypts TOTP secrets at rest; `email_helper.rs` — `Mailer`, the one sender every email goes through.
 - `src/database_related_scripts/` — `db.rs` (`Database`: the r2d2 pool and every DB operation), one file per operation trait, `db_email_codes.rs` / `db_login_challenges.rs` / `db_login_throttle.rs` (one table each), `db_users.rs` (the user queries the traits can't express), `migrations.rs`.
 - `src/data_models/` — `models.rs` (domain structs, `*DatabaseColumns` enums, `WithId<T>`) and the request/response bodies.
@@ -21,7 +21,7 @@
 - API-first: every change to data is an HTTP endpoint; the frontend and the admin view are both clients of that same API, no endpoint is reachable from only one of them, and business logic stays in the backend.
 - Every route lives under `/api/v1/`, except `/health`.
 - Routes are resource paths — plural nouns and `{id}` segments, never verbs: `GET /libraries/{id}/series`, not `/get_series_from_library/{id}`.
-- A handler takes at most one body extractor (`Json<T>`), and it comes last.
+- A handler reads its body with `JsonBody<T>` and its path with `PathParams<T>`, never with axum's `Json` or `Path`; at most one body extractor, and it comes last.
 - `user_id` always comes from the session (`AuthSession`), never from the request body or path.
 - Session, refresh and challenge tokens travel as `Authorization: Bearer <token>`; every failed token check answers the same 401, and a response that carries tokens sends `Cache-Control: no-store`.
 - Tokens are stored only as `hash_token` (BLAKE3) hashes and looked up by hash; passwords and emailed codes, which people choose or type, are Argon2-hashed; recovery codes, 80 random bits, are BLAKE3-hashed like tokens.

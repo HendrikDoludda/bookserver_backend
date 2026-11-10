@@ -332,6 +332,111 @@ mod tests {
         assert_eq!(books[0]["last_modified"], serde_json::Value::Null);
     }
 
+    #[tokio::test]
+    async fn a_body_that_cannot_be_read_answers_400_json() {
+        let temp = TempDatabase::open();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let login = |content_type: Option<&str>, body: &str| {
+            let mut request = Request::post("/api/v1/auth/login");
+            if let Some(content_type) = content_type {
+                request = request.header("content-type", content_type);
+            }
+            request.body(Body::from(body.to_string())).unwrap()
+        };
+        let json_type = Some("application/json");
+
+        for (label, request) in [
+            ("malformed JSON", login(json_type, r#"{"username_or_email":"#)),
+            ("an empty body", login(json_type, "")),
+            (
+                "a missing field",
+                login(json_type, r#"{"username_or_email":"alice"}"#),
+            ),
+            (
+                "a wrong field type",
+                login(
+                    json_type,
+                    r#"{"username_or_email":"alice","password":123456,"device_name":"phone","platform":"ios"}"#,
+                ),
+            ),
+            (
+                "no content type",
+                login(
+                    None,
+                    r#"{"username_or_email":"alice","password":"correct horse battery","device_name":"phone","platform":"ios"}"#,
+                ),
+            ),
+        ] {
+            let (status, _, body) = call(&app, request).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{label}");
+            // Exactly the key: the parse error, which can quote the sent value, stays out.
+            assert_eq!(
+                json(&body),
+                serde_json::json!({ "error": "invalid_request" }),
+                "{label}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_guarded_route_reads_its_body_only_after_the_session() {
+        let temp = TempDatabase::open();
+        let user = temp
+            .db
+            .setup_new_transaction(|conn| Ok(insert_user(conn, "alice")))
+            .unwrap();
+        add_session(
+            &temp,
+            user,
+            "d1",
+            "session-1",
+            "refresh-1",
+            unix_now() + 600,
+        );
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let broken_body = |token: Option<&str>| {
+            let mut request = Request::post("/api/v1/account/totp/confirm")
+                .header("content-type", "application/json");
+            if let Some(token) = token {
+                request = request.header("authorization", format!("Bearer {token}"));
+            }
+            request.body(Body::from(r#"{"code":"#)).unwrap()
+        };
+
+        let (status, _, _) = call(&app, broken_body(None)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "no session, no body reading");
+
+        let (status, _, body) = call(&app, broken_body(Some("session-1"))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            json(&body),
+            serde_json::json!({ "error": "invalid_request" })
+        );
+    }
+
+    #[tokio::test]
+    async fn an_id_that_is_not_a_number_answers_400_json() {
+        let temp = TempDatabase::open();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        for (method, uri) in [
+            ("GET", "/api/v1/books/abc"),
+            ("GET", "/api/v1/books/abc/file"),
+            ("GET", "/api/v1/libraries/abc/series"),
+            ("GET", "/api/v1/series/abc/books"),
+            ("DELETE", "/api/v1/libraries/abc"),
+            ("GET", "/api/v1/books/99999999999999999999"),
+        ] {
+            let (status, _, body) = call(&app, bare(method, uri)).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {uri}");
+            assert_eq!(
+                json(&body),
+                serde_json::json!({ "error": "invalid_request" }),
+                "{method} {uri}"
+            );
+        }
+    }
+
     fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
         Request::post(uri)
             .header("content-type", "application/json")

@@ -410,6 +410,7 @@ mod tests {
             },
             Err(AppErrors::Email(_)) => "email error",
             Err(AppErrors::Database(_)) => "database error",
+            Err(AppErrors::InvalidRequest) => "invalid request",
         }
     }
 

@@ -361,6 +361,8 @@ pub enum AppErrors {
     Authentication(#[from] AuthenticationError),
     #[error(transparent)]
     Email(#[from] EmailErrors),
+    #[error("The request's body or path could not be read")]
+    InvalidRequest,
 }
 
 impl AppErrors {
@@ -369,6 +371,7 @@ impl AppErrors {
             AppErrors::Database(err) => err.status_and_key(),
             AppErrors::Authentication(err) => err.status_and_key(),
             AppErrors::Email(err) => err.status_and_key(),
+            AppErrors::InvalidRequest => (StatusCode::BAD_REQUEST, "invalid_request"),
         }
     }
 }
@@ -524,6 +527,11 @@ mod tests {
                 DatabaseError::EntryNotFound.into(),
                 StatusCode::NOT_FOUND,
                 "not_found",
+            ),
+            (
+                AppErrors::InvalidRequest,
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
             ),
         ];
 

@@ -26,7 +26,7 @@ use crate::{
 };
 
 use super::{
-    extractors::{AuthSession, AuthTOTPLoginSession},
+    extractors::{AuthSession, AuthTOTPLoginSession, JsonBody},
     helpers::no_store,
 };
 
@@ -53,7 +53,7 @@ pub async fn finalize_totp_set_up(
     session: AuthSession,
     State(db): State<Arc<Database>>,
     State(cipher): State<TotpCipher>,
-    Json(request): Json<ConfirmTOTPRequest>,
+    JsonBody(request): JsonBody<ConfirmTOTPRequest>,
 ) -> Result<Response<Body>, AppErrors> {
     let AuthSession(session) = session;
     let codes = confirm_setup(
@@ -73,7 +73,7 @@ pub async fn disable_totp(
     session: AuthSession,
     State(db): State<Arc<Database>>,
     State(cipher): State<TotpCipher>,
-    Json(request): Json<DisableTOTPRequest>,
+    JsonBody(request): JsonBody<DisableTOTPRequest>,
 ) -> Result<StatusCode, AppErrors> {
     disable(db, &cipher, session.0.user_id, request, SystemTime::now()).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -85,7 +85,7 @@ pub async fn sign_in_totp_with_recovery_code(
     challenge: AuthTOTPLoginSession,
     State(db): State<Arc<Database>>,
     State(cipher): State<TotpCipher>,
-    Json(request): Json<RecoveryCodeSignInRequest>,
+    JsonBody(request): JsonBody<RecoveryCodeSignInRequest>,
 ) -> Result<Response<Body>, AppErrors> {
     let code = TypedCode::Recovery(request.code);
     let tokens = finish_login(db, &cipher, challenge.0, code, SystemTime::now()).await?;
@@ -97,7 +97,7 @@ pub async fn sign_in_totp(
     challenge: AuthTOTPLoginSession,
     State(db): State<Arc<Database>>,
     State(cipher): State<TotpCipher>,
-    Json(request): Json<TOTPSignInRequest>,
+    JsonBody(request): JsonBody<TOTPSignInRequest>,
 ) -> Result<Response<Body>, AppErrors> {
     let code = TypedCode::Authenticator(request.code);
     let tokens = finish_login(db, &cipher, challenge.0, code, SystemTime::now()).await?;
