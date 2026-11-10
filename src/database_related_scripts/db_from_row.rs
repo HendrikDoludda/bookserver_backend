@@ -27,10 +27,14 @@ impl FromRow for BookMetadata {
 
         let time = read_optional_time(row, "last_modified")?;
 
+        // `"".split(',')` yields one empty piece, so empty pieces are dropped: no tags reads
+        // back as none.
         let tags: Vec<String> = row
             .get::<_, String>("tags")?
             .split(',')
-            .map(|tag| tag.trim().to_string())
+            .map(str::trim)
+            .filter(|tag| !tag.is_empty())
+            .map(String::from)
             .collect();
 
         Ok(Self {

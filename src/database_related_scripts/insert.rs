@@ -2,7 +2,7 @@ use crate::data_models::models::{
     BookMetadata, BookSeriesMetadata, LibraryMetadata, RecoveryCodes, SeriesLibraryConnection,
     Sessions, UserMetadata, TOTP,
 };
-use crate::database_related_scripts::db::convert_system_time_to_unix_time;
+use crate::database_related_scripts::db::{checked_unix_time, convert_system_time_to_unix_time};
 use crate::error_types::DatabaseError;
 use rusqlite::{params, Connection};
 
@@ -32,7 +32,7 @@ impl Insert for BookMetadata {
             self.chapter_number,
             self.page_number,
             self.file_hash.clone(),
-            convert_system_time_to_unix_time(self.last_modified.unwrap()),
+            self.last_modified.and_then(checked_unix_time),
             self.file_size.map(|size| size as i64),
             self.series
         ];
@@ -195,11 +195,131 @@ mod tests {
     use crate::{
         database_related_scripts::db::Database,
         models::{
-            DatabaseTypes, LibraryType, QuerySeparator, RecoveryCodesColumns,
-            SessionsDatabaseColumns, TOTPDatabaseColumns, UserDatabaseColumns,
+            BookFormat, BookLanguage, DatabaseTypes, LibraryType, QuerySeparator,
+            RecoveryCodesColumns, SessionsDatabaseColumns, TOTPDatabaseColumns,
+            UserDatabaseColumns,
         },
         test_support::{insert_user, memory_connection},
     };
+
+    /// A book the way the scanner writes one when a file tells it nothing more.
+    fn bare_book(file_path: &str) -> BookMetadata {
+        BookMetadata {
+            title: "The Long Road".to_string(),
+            author: "Unknown Author".to_string(),
+            cover_image: None,
+            format: BookFormat::Cbz,
+            tags: vec![],
+            description: None,
+            file_path: file_path.to_string(),
+            language: BookLanguage::Other("unknown".to_string()),
+            page_count: None,
+            series: None,
+            volume_number: None,
+            chapter_number: None,
+            page_number: None,
+            file_hash: None,
+            last_modified: None,
+            file_size: None,
+        }
+    }
+
+    #[test]
+    fn book_round_trip() {
+        let conn = memory_connection();
+        conn.execute("INSERT INTO series (name) VALUES ('a quiet sea')", [])
+            .unwrap();
+        let series_id = conn.last_insert_rowid();
+        let book = BookMetadata {
+            title: "A Quiet Sea".to_string(),
+            author: "R. Writer".to_string(),
+            cover_image: Some("./cover_images/abc.jpg".to_string()),
+            format: BookFormat::Epub,
+            tags: vec!["sea".to_string(), "quiet".to_string()],
+            description: Some("Twelve chapters".to_string()),
+            file_path: "/books/A Quiet Sea v03 c12.epub".to_string(),
+            language: BookLanguage::German,
+            page_count: Some(240),
+            series: Some(series_id),
+            volume_number: Some(3),
+            chapter_number: Some(12),
+            page_number: Some(7),
+            file_hash: Some("abc".to_string()),
+            last_modified: Some(at(1_700_000_000)),
+            file_size: Some(1_048_576),
+        };
+        let id = Database::insert_with_connection(&conn, &book).unwrap();
+
+        let stored = Database::get_entry_with_connection::<BookMetadata>(&conn, id).unwrap();
+        assert_eq!(stored.title, "A Quiet Sea");
+        assert_eq!(stored.author, "R. Writer");
+        assert_eq!(stored.cover_image.as_deref(), Some("./cover_images/abc.jpg"));
+        assert_eq!(stored.format.as_str(), "epub");
+        assert_eq!(stored.tags, ["sea", "quiet"]);
+        assert_eq!(stored.description.as_deref(), Some("Twelve chapters"));
+        assert_eq!(stored.file_path, "/books/A Quiet Sea v03 c12.epub");
+        assert_eq!(stored.language.to_code(), "de");
+        assert_eq!(stored.page_count, Some(240));
+        assert_eq!(stored.series, Some(series_id));
+        assert_eq!(stored.volume_number, Some(3));
+        assert_eq!(stored.chapter_number, Some(12));
+        assert_eq!(stored.page_number, Some(7));
+        assert_eq!(stored.file_hash.as_deref(), Some("abc"));
+        assert_eq!(stored.last_modified, Some(at(1_700_000_000)));
+        assert_eq!(stored.file_size, Some(1_048_576));
+    }
+
+    #[test]
+    fn a_book_with_nothing_optional_round_trips() {
+        let conn = memory_connection();
+        let id = Database::insert_with_connection(&conn, &bare_book("/books/a.cbz")).unwrap();
+
+        let stored = Database::get_entry_with_connection::<BookMetadata>(&conn, id).unwrap();
+        assert!(
+            stored.tags.is_empty(),
+            "no tags must read back as none, got {:?}",
+            stored.tags
+        );
+        assert_eq!(stored.last_modified, None);
+        assert_eq!(stored.cover_image, None);
+        assert_eq!(stored.description, None);
+        assert_eq!(stored.page_count, None);
+        assert_eq!(stored.series, None);
+        assert_eq!(stored.file_hash, None);
+        assert_eq!(stored.file_size, None);
+    }
+
+    #[test]
+    fn a_file_time_before_1970_is_stored_as_unknown() {
+        let conn = memory_connection();
+        let mut book = bare_book("/books/old.cbz");
+        book.last_modified = Some(UNIX_EPOCH - Duration::from_secs(24 * 60 * 60));
+
+        let id = Database::insert_with_connection(&conn, &book).unwrap();
+
+        let stored = Database::get_entry_with_connection::<BookMetadata>(&conn, id).unwrap();
+        assert_eq!(stored.last_modified, None);
+    }
+
+    #[test]
+    fn listing_books_pairs_each_with_its_id_and_skips_a_missing_one() {
+        let conn = memory_connection();
+        let first = Database::insert_with_connection(&conn, &bare_book("/books/a.cbz")).unwrap();
+        let second = Database::insert_with_connection(&conn, &bare_book("/books/b.cbz")).unwrap();
+
+        let mut listed = Database::get_entries_batch_with_connection::<BookMetadata>(
+            &conn,
+            &[second, 999, first],
+        )
+        .unwrap();
+        listed.sort_by_key(|row| row.id);
+
+        let found: Vec<(i64, &str)> = listed
+            .iter()
+            .map(|row| (row.id, row.data.file_path.as_str()))
+            .collect();
+        assert_eq!(found, [(first, "/books/a.cbz"), (second, "/books/b.cbz")]);
+    }
 
     #[test]
     fn library_round_trip() {

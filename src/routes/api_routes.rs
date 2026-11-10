@@ -297,6 +297,41 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn the_books_of_a_series_load_what_the_scanner_wrote() {
+        let temp = TempDatabase::open();
+        let (series, book) = temp
+            .db
+            .setup_new_transaction(|conn| {
+                conn.execute("INSERT INTO series (name) VALUES ('the long road')", [])
+                    .unwrap();
+                let series = conn.last_insert_rowid();
+                // Like the scanner: no tags, and a file time it couldn't read.
+                conn.execute(
+                    "INSERT INTO books (title, author, format, language, tags, file_path, \
+                     volume_number, series) \
+                     VALUES ('The Long Road', 'Unknown Author', 'cbz', 'unknown', '', \
+                     '/books/The Long Road v01.cbz', 1, ?1)",
+                    [series],
+                )
+                .unwrap();
+                Ok((series, conn.last_insert_rowid()))
+            })
+            .unwrap();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        let uri = format!("/api/v1/series/{series}/books");
+        let (status, _, body) = call(&app, bare("GET", &uri)).await;
+        assert_eq!(status, StatusCode::OK);
+        let books = json(&body);
+        assert_eq!(books.as_array().unwrap().len(), 1);
+        assert_eq!(books[0]["id"], book);
+        assert_eq!(books[0]["title"], "The Long Road");
+        assert_eq!(books[0]["volume_number"], 1);
+        assert_eq!(books[0]["tags"], serde_json::json!([]));
+        assert_eq!(books[0]["last_modified"], serde_json::Value::Null);
+    }
+
     fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
         Request::post(uri)
             .header("content-type", "application/json")

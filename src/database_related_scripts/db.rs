@@ -464,9 +464,15 @@ impl Database {
 /// Converts a `SystemTime` to whole seconds since the Unix epoch, the format every
 /// timestamp column uses. Panics for times before 1970.
 pub fn convert_system_time_to_unix_time(time: SystemTime) -> i64 {
+    checked_unix_time(time).expect("the server's own times lie after 1970")
+}
+
+/// Whole seconds since the Unix epoch, or `None` for a time before it — for times the
+/// server doesn't make itself, such as a file's modification time.
+pub fn checked_unix_time(time: SystemTime) -> Option<i64> {
     time.duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64
+        .ok()
+        .map(|age| age.as_secs() as i64)
 }
 
 #[cfg(test)]
@@ -602,6 +608,20 @@ mod tests {
         let removed_again =
             Database::remove_entry_with_connection(&conn, DatabaseTypes::Totp, user_id).unwrap();
         assert_eq!(removed_again, 0);
+    }
+
+    #[test]
+    fn a_time_before_1970_has_no_unix_time() {
+        let epoch = std::time::UNIX_EPOCH;
+        assert_eq!(checked_unix_time(epoch), Some(0));
+        assert_eq!(
+            checked_unix_time(epoch + std::time::Duration::from_secs(5)),
+            Some(5)
+        );
+        assert_eq!(
+            checked_unix_time(epoch - std::time::Duration::from_secs(1)),
+            None
+        );
     }
 
     #[test]
