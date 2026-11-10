@@ -6,7 +6,7 @@
 - `src/config.rs` — env-var readers and the generated `secrets.toml` (in the OS config directory).
 - `src/app_state.rs` — `AppState`, the router state (database, mailer, setup code, TOTP cipher); handlers take their part through `FromRef` (`State<Arc<Database>>`, `State<Mailer>`, `State<SetupCode>`, `State<TotpCipher>`).
 - `src/routes/api_routes.rs` — the route table (`set_up_routes`) and `start_server`.
-- `src/routes/api_caller/` — the handlers, one file per area (`authentication.rs`, `totp.rs`, `library.rs`); `extractors.rs` holds the request extractors — the session ones (`AuthSession`, `AdminSession`, `AuthTOTPLoginSession`, `AuthRefreshSession`) and `JsonBody` / `PathParams`, and `helpers.rs` the shared response builders and `ping_server`, the liveness check and the placeholder for routes without a handler.
+- `src/routes/api_caller/` — the handlers, one file per area (`authentication.rs`, `totp.rs`, `library.rs`); `extractors.rs` holds the request extractors — the session ones (`AuthSession`, `AdminSession`, `AuthTOTPLoginSession`, `AuthRefreshSession`) and `JsonBody` / `PathParams`, and `helpers.rs` the shared response builders: `ping_server` (the liveness check), `not_implemented` (every route without a handler yet) and the router's fallbacks `not_found` / `method_not_allowed`.
 - `src/routes/auth.rs` — account, password and session building blocks, including the checks a new username, email or password passes; `login.rs` — login, refresh and logout; `registration.rs` — sign-up and email verification; `password_reset.rs` — the reset flow; `email_codes.rs` — the emailed codes of both: making them, mailing them within the limits, checking them; `totp_management.rs` — TOTP two-factor and recovery codes; `totp_cipher.rs` — `TotpCipher`, which encrypts TOTP secrets at rest; `email_helper.rs` — `Mailer`, the one sender every email goes through.
 - `src/database_related_scripts/` — `db.rs` (`Database`: the r2d2 pool and every DB operation), one file per operation trait, `db_email_codes.rs` / `db_login_challenges.rs` / `db_login_throttle.rs` (one table each), `db_users.rs` (the user queries the traits can't express), `migrations.rs`.
 - `src/data_models/` — `models.rs` (domain structs, `*DatabaseColumns` enums, `WithId<T>`) and the request/response bodies.
@@ -37,6 +37,7 @@
 - One `thiserror` enum per domain, in `error_types.rs`.
 - Every error answer is JSON `{"error": "<key>"}` — a stable key the app translates; a 500 answers `internal_error` and logs the detail server-side.
 - An error enum that reaches a handler implements `IntoResponse` through a `status_and_key` match with one arm per variant and no `_` arm, so a new variant can't silently become a 500.
+- A route whose handler isn't built answers 501 `not_implemented`; a path no route matches answers 404 `not_found`, a method the route lacks 405 `method_not_allowed`.
 - A handler returns `Result<_, AppErrors>` and uses `?`; an error type without `IntoResponse` (such as `anyhow`) is logged and answered with `internal_error_response()`.
 
 ## Email

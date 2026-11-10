@@ -22,7 +22,7 @@ use crate::{
     stream_reader::streaming_file,
 };
 
-use super::extractors::{AuthSession, PathParams};
+use super::extractors::PathParams;
 
 // === Library, series & book handlers =========================================
 
@@ -100,25 +100,4 @@ pub async fn delete_library(
 ) -> Result<&'static str, DatabaseError> {
     db.remove_entry(DatabaseTypes::Library, id)?;
     Ok("Library deleted")
-}
-
-// === Not yet implemented =====================================================
-
-// Blocked: the request shape is undecided.
-pub async fn update_database_entry(_session: AuthSession) -> impl IntoResponse {
-    failed_getting_response()
-}
-
-// Blocked: the request shape is undecided.
-pub async fn insert_database_entry(_session: AuthSession) -> impl IntoResponse {
-    failed_getting_response()
-}
-
-// Blocked: online metadata fetching doesn't exist yet (see `scanner/metadata_fetcher.rs`).
-pub async fn scan_for_metadata(_session: AuthSession) -> impl IntoResponse {
-    failed_getting_response()
-}
-
-fn failed_getting_response() -> Response<Body> {
-    Response::new("Failed to get response".into())
 }

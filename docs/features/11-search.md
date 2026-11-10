@@ -8,7 +8,7 @@ One search box across titles, authors and tags, backed by SQLite's built-in full
 ## Build
 - [ ] 3 h · FTS5 table over `books.title` / `author` / `tags` and `series.name` — pick the tokenizer up front (`porter` for stemming, or `unicode61 remove_diacritics 2`), since changing it means rebuilding the index [DB]
 - [ ] 3 h · Keep the index in step with every write, per the index-sync decision [DB]
-- [ ] 2 h · `GET /search` handler (now `ping_server`): the term goes in as a bound parameter, wrapped in double quotes so FTS syntax such as `*`, `AND` or `-` is treated as text; results shaped per the result decision [BE]
+- [ ] 2 h · `GET /search` handler (answers 501 until then): the term goes in as a bound parameter, wrapped in double quotes so FTS syntax such as `*`, `AND` or `-` is treated as text; results shaped per the result decision [BE]
 - [ ] 1 h · Ship an SQLite that has FTS5, per the SQLite decision [BE]
 - [ ] 4 h · Search box and results view [FE]
 

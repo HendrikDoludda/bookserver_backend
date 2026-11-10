@@ -14,11 +14,10 @@ use crate::{
             confirm_password_reset, log_out, refresh_session, request_password_reset,
             resend_verification_code, sign_in, sign_up, verify_email,
         },
-        helpers::ping_server,
+        helpers::{method_not_allowed, not_found, not_implemented, ping_server},
         library::{
             delete_library, get_libraries, get_series_children, get_series_in_library,
-            insert_database_entry, request_file, retrieve_metadata, scan_all_directories,
-            scan_for_metadata, update_database_entry,
+            request_file, retrieve_metadata, scan_all_directories,
         },
         totp::{
             disable_totp, finalize_totp_set_up, sign_in_totp, sign_in_totp_with_recovery_code,
@@ -47,16 +46,13 @@ pub async fn start_server(state: AppState) -> Result<(), RoutingErrors> {
 }
 
 /// The route table. Everything except `/health` lives under `/api/v1`.
-/// Routes mapped to `ping_server` are placeholders whose handlers don't exist yet.
+/// Routes mapped to `not_implemented` are placeholders whose handlers don't exist yet.
 pub fn set_up_routes() -> Router<AppState> {
     let api = Router::new()
-        .route(
-            "/libraries",
-            get(get_libraries).post(insert_database_entry),
-        )
+        .route("/libraries", get(get_libraries).post(not_implemented))
         .route(
             "/libraries/{id}",
-            delete(delete_library).patch(update_database_entry),
+            delete(delete_library).patch(not_implemented),
         )
         .route("/libraries/{id}/series", get(get_series_in_library))
         .route("/series/{id}/books", get(get_series_children))
@@ -64,14 +60,14 @@ pub fn set_up_routes() -> Router<AppState> {
         .route("/books/{id}/file", get(request_file))
         .route(
             "/books/{id}/progress",
-            get(ping_server).patch(ping_server),
+            get(not_implemented).patch(not_implemented),
         )
-        .route("/covers/{kind}/{id}", get(ping_server))
+        .route("/covers/{kind}/{id}", get(not_implemented))
         .route("/scan", post(scan_all_directories))
-        .route("/scan/status", get(ping_server))
-        .route("/directories/{id}/scan", post(ping_server))
-        .route("/metadata/scan", post(scan_for_metadata))
-        .route("/search", get(ping_server))
+        .route("/scan/status", get(not_implemented))
+        .route("/directories/{id}/scan", post(not_implemented))
+        .route("/metadata/scan", post(not_implemented))
+        .route("/search", get(not_implemented))
         .route("/auth/register", post(sign_up))
         .route("/auth/verify_email", post(verify_email))
         .route("/auth/verify_email/resend", post(resend_verification_code))
@@ -92,6 +88,8 @@ pub fn set_up_routes() -> Router<AppState> {
     Router::new()
         .route("/health", get(ping_server))
         .nest("/api/v1", api)
+        .fallback(not_found)
+        .method_not_allowed_fallback(method_not_allowed)
 }
 
 #[cfg(test)]
@@ -206,22 +204,6 @@ mod tests {
         assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
 
         for (method, uri) in [
-            ("POST", "/api/v1/libraries"),
-            ("PATCH", "/api/v1/libraries/1"),
-            ("GET", "/api/v1/books/1/progress"),
-            ("PATCH", "/api/v1/books/1/progress"),
-            ("GET", "/api/v1/covers/book/1"),
-            ("GET", "/api/v1/scan/status"),
-            ("POST", "/api/v1/directories/1/scan"),
-            ("POST", "/api/v1/metadata/scan"),
-            ("GET", "/api/v1/search"),
-        ] {
-            let (status, _, _) = call(&app, bare(method, uri)).await;
-            assert_ne!(status, StatusCode::NOT_FOUND, "{method} {uri}");
-            assert_ne!(status, StatusCode::METHOD_NOT_ALLOWED, "{method} {uri}");
-        }
-
-        for (method, uri) in [
             ("GET", "/api/v1/get_libraries"),
             ("GET", "/api/v1/get_series_from_library/1"),
             ("GET", "/api/v1/get_series_children/1"),
@@ -239,6 +221,66 @@ mod tests {
         ] {
             let (status, _, _) = call(&app, bare(method, uri)).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn every_unbuilt_route_answers_501_json() {
+        let temp = TempDatabase::open();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        for (method, uri) in [
+            ("POST", "/api/v1/libraries"),
+            ("PATCH", "/api/v1/libraries/1"),
+            ("GET", "/api/v1/books/1/progress"),
+            ("PATCH", "/api/v1/books/1/progress"),
+            ("GET", "/api/v1/covers/book/1"),
+            ("GET", "/api/v1/scan/status"),
+            ("POST", "/api/v1/directories/1/scan"),
+            ("POST", "/api/v1/metadata/scan"),
+            ("GET", "/api/v1/search"),
+        ] {
+            let (status, _, body) = call(&app, bare(method, uri)).await;
+            assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{method} {uri}");
+            assert_eq!(
+                json(&body),
+                serde_json::json!({ "error": "not_implemented" }),
+                "{method} {uri}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unknown_path_answers_404_json_and_a_wrong_method_405_json() {
+        let temp = TempDatabase::open();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        for uri in ["/nope", "/api/v1/nope", "/api/v1/books/1/nope"] {
+            let (status, _, body) = call(&app, bare("GET", uri)).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+            assert_eq!(
+                json(&body),
+                serde_json::json!({ "error": "not_found" }),
+                "{uri}"
+            );
+        }
+
+        for (method, uri) in [
+            ("GET", "/api/v1/scan"),
+            ("DELETE", "/health"),
+            ("PUT", "/api/v1/auth/login"),
+        ] {
+            let (status, headers, body) = call(&app, bare(method, uri)).await;
+            assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{method} {uri}");
+            assert_eq!(
+                json(&body),
+                serde_json::json!({ "error": "method_not_allowed" }),
+                "{method} {uri}"
+            );
+            assert!(
+                headers.contains_key("allow"),
+                "a 405 names the allowed methods: {method} {uri}"
+            );
         }
     }
 

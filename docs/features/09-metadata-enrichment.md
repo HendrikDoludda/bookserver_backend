@@ -23,7 +23,7 @@ entry. The adapters are [63](63-book-metadata.md) books, [64](64-manga-metadata.
 - [ ] 1 h · Sensitive items skip every online lookup: one check in the provider dispatch, not per adapter, so a new adapter can't forget it ([10](10-sensitive-content-controls.md)) [BE]
 - [ ] 3 h · Per-entry search and confirm endpoints, per the endpoint decision [BE]
 - [ ] 4 h · Bulk enrichment pass behind `POST /metadata/scan`, run in the background — not inline, where an unresponsive provider would stall the response — per the endpoint decision [BE]
-- [ ] 0.5 h · Require `AdminSession` on the enrichment endpoints — today `scan_for_metadata` takes an `AuthSession` [BE]
+- [ ] 0.5 h · Require `AdminSession` on the enrichment endpoints [BE]
 - [ ] 4 h · Candidate list and confirm screen [FE]
 
 ## Open decisions

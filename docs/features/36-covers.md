@@ -9,7 +9,7 @@ serves them yet, and series and libraries have no covers of their own.
 ## Build
 - [ ] 2 h · Without the PDFium library, PDFs are left out of the catalog entirely: `Pdfium::default()` panics during cover extraction, which runs before the book row is inserted. Bind with a call that returns an error instead, so a missing library costs the cover, not the book [BE]
 - [ ] 4 h · Bundle the PDFium library so PDF covers work on every OS, and on macOS without symlinking the dylib (TODO in `cover_image_retriever.rs`) [BE]
-- [ ] 2 h · Serve covers at `GET /covers/{kind}/{id}` (now `ping_server`) through `ServeFile`, the way `request_file` streams books, with `kind` per the cover-route decision [BE]
+- [ ] 2 h · Serve covers at `GET /covers/{kind}/{id}` (answers 501 until then) through `ServeFile`, the way `request_file` streams books, with `kind` per the cover-route decision [BE]
 - [ ] 3 h · Covers for series and libraries that a user can set, falling back to the first book's cover, per the cover-default decision — the columns exist, but the scanner always writes NULL and no endpoint sets them [BE]
 - [ ] 3 h · Set a series or library cover from the frontend [FE]
 - [ ] 3 h · EPUB: take the cover the OPF manifest names instead of `epub.images.first()`, and stop deriving the file extension from the media type (`image/svg+xml` becomes `.svg+xml`) [BE]

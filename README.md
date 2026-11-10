@@ -151,7 +151,7 @@ Implemented endpoints:
 
 Errors answer with JSON `{"error": "<key>"}` and a matching status code.
 
-The other registered routes are placeholders for upcoming features.
+The other registered routes answer 501 `not_implemented` until their features are built.
 
 > **Security note:** the library routes don't require a session yet, and the server listens
 > on all interfaces over plain HTTP. Run it on a trusted network only.

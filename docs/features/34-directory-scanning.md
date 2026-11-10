@@ -8,7 +8,7 @@ file. It works, but it can report success before it is done, swallows per-file e
 never picks up a file that changed.
 
 ## Build
-- [ ] 6 h · Run a scan as a job, per the scan-job decision: `POST /scan` answers 202, and `GET /scan/status` (now `ping_server`) reports progress and per-file failures — router state grows from `Arc<Database>` into an `AppState` that also holds the scan status [BE]
+- [ ] 6 h · Run a scan as a job, per the scan-job decision: `POST /scan` answers 202, and `GET /scan/status` (answers 501 until then) reports progress and per-file failures — router state grows from `Arc<Database>` into an `AppState` that also holds the scan status [BE]
 - [ ] 1 h · Wait for every spawned file task before a scan counts as done — `scan_folder` drops the `JoinHandle`s, so the last file can still be in progress when the scan reports success (`futures::future::join_all`; `futures` is already a dependency) [BE]
 - [ ] 2 h · Report per-file failures instead of discarding them — only a task panic is logged; `create_book_entry`'s own errors disappear [BE]
 - [ ] 2 h · `create_book_entry` creates a file's series before its cover step and book insert, so a file whose cover step panics (a PDF without PDFium, [36](36-covers.md)) or whose insert fails leaves an empty series behind — extract the cover first, then create the series, link it and insert the book in one transaction, so a failure leaves none of them [BE]
