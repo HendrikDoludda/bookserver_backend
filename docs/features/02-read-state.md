@@ -9,7 +9,7 @@ first truly per-user feature, so it needs a logged-in user.
 ## Build
 - [ ] 2 h · Read-state table keyed by `(user_id, book_id)`, holding the position (shaped per [reading position](41-reading-position.md)), a finished flag and `last_read_at` — no `id` column, so it gets dedicated `Database` methods instead of `Extract`, like `library_elements`; never reuse `books.page_number`, which is parsed from the file name [DB]
 - [ ] 1 h · Save progress in one statement — `INSERT … ON CONFLICT(user_id, book_id) DO UPDATE` — so there is no read-then-write race; read `last_read_at` as `Option<i64>`, because `convert_to_system_time` fails on NULL [BE]
-- [ ] 2 h · `GET` and `PATCH /reading_progress/{book_id}` (now `ping_server`), with `user_id` from the session [BE]
+- [ ] 2 h · `GET` and `PATCH /books/{id}/progress` (now `ping_server`), with `user_id` from the session [BE]
 - [ ] 1 h · Set "finished" per the finished decision [BE]
 - [ ] 2 h · "Continue reading": the calling user's started, unfinished books, most recently read first, from a collection endpoint of its own [BE]
 - [ ] 3 h · "Continue reading" surface [FE]

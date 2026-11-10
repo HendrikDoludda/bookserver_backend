@@ -100,7 +100,7 @@ cd bookserver_backend
 BOOK_DIRS=/path/to/books cargo run
 
 curl http://localhost:8080/health                              # → pong
-curl -X POST http://localhost:8080/api/v1/scan_all_directories
+curl -X POST http://localhost:8080/api/v1/scan
 ```
 
 On first run the server creates its SQLite database at `./data/databases/app_data.sqlite`.
@@ -127,14 +127,13 @@ Implemented endpoints:
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/health` | Liveness check |
-| `GET` | `/api/v1/get_libraries` | All libraries |
-| `GET` | `/api/v1/get_series_from_library/{id}` | Series in a library |
-| `GET` | `/api/v1/get_series_children/{id}` | Books in a series |
-| `GET` | `/api/v1/book_metadata/{id}` | One book's metadata |
-| `GET` | `/api/v1/book/{id}` | Stream the book file (supports `Range`) |
-| `POST` | `/api/v1/scan_all_directories` | Scan `BOOK_DIRS` and catalog new files |
-| `POST` | `/api/v1/setup_db` | Run any pending migrations |
-| `DELETE` | `/api/v1/delete_library/{id}` | Delete a library |
+| `GET` | `/api/v1/libraries` | All libraries |
+| `GET` | `/api/v1/libraries/{id}/series` | Series in a library |
+| `GET` | `/api/v1/series/{id}/books` | Books in a series |
+| `GET` | `/api/v1/books/{id}` | One book's metadata |
+| `GET` | `/api/v1/books/{id}/file` | Stream the book file (supports `Range`) |
+| `POST` | `/api/v1/scan` | Scan `BOOK_DIRS` and catalog new files |
+| `DELETE` | `/api/v1/libraries/{id}` | Delete a library |
 | `POST` | `/api/v1/auth/register` | Sign up; the first account sends the setup code from the server log and becomes admin. Answers the login tokens, or `202` when the account must first confirm its email |
 | `POST` | `/api/v1/auth/verify_email` | Confirm the email with the mailed code and the password; answers like login |
 | `POST` | `/api/v1/auth/verify_email/resend` | Mail a new verification code; always `202` |

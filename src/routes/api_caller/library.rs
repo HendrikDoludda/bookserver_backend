@@ -82,12 +82,6 @@ pub async fn retrieve_metadata(
     Ok(Json(metadata))
 }
 
-/// (Re)run migrations / ensure the database is set up.
-pub async fn initiate_database() -> Result<&'static str, DatabaseError> {
-    Database::new()?;
-    Ok("Database initialized")
-}
-
 /// Kick off a scan of every configured book directory.
 pub async fn scan_all_directories(State(db): State<Arc<Database>>) -> Response<Body> {
     match scan_all_folders(db).await {

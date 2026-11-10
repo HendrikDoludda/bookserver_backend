@@ -12,4 +12,4 @@ later decide per user who may do this.
 - [ ] ? h · Check by hand: a downloaded book opens in the reader with the network off
 
 ## Open decisions
-- [ ] A route of its own (`GET /book/{id}/download`), or a flag on `GET /book/{id}`? — blocks: the download endpoint. Suggested: a route of its own — easier to gate per user later and to tell apart from reading in the logs.
+- [ ] A route of its own (`GET /books/{id}/download`), or a flag on `GET /books/{id}/file`? — blocks: the download endpoint. Suggested: a route of its own — easier to gate per user later and to tell apart from reading in the logs.

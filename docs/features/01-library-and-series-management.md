@@ -7,15 +7,15 @@ library and assign series to it, edit and delete both — through the same API f
 frontend and the admin view. Only deleting a library exists today.
 
 ## Build
-- [ ] 3 h · Create a library and assign existing series to it, per the request-shape decision — `POST /insert_entry` is still a hollow stub [BE]
-- [ ] 2 h · Edit a library's name, type and description, per the request-shape decision — `PUT /update_entry` is still a hollow stub [BE]
-- [ ] 2 h · Edit a series' name, description and release years — no route exists [BE]
-- [ ] 1 h · Delete a series — no route exists [BE]
+- [ ] 3 h · Create a library and assign existing series to it: `POST /libraries`, still a hollow stub [BE]
+- [ ] 2 h · Edit a library's name, type and description: `PATCH /libraries/{id}`, still a hollow stub [BE]
+- [ ] 2 h · Edit a series' name, description and release years: `PATCH /series/{id}` — no route exists [BE]
+- [ ] 1 h · Delete a series: `DELETE /series/{id}` — no route exists [BE]
 - [ ] 2 h · Make deleting a library follow the library-delete decision — today its `library_elements` rows cascade away, but `books.series` has no foreign key, so its series and books are left behind [DB] [BE]
+- [ ] 0.5 h · `DELETE /libraries/{id}` answers 200 "Library deleted" for an id no library has — `remove_entry` returns the deleted-row count; answer 404 `not_found` when it is 0 [BE]
 - [ ] 0.5 h · Delete the unused `GetLibraryRequest` [BE]
 - [ ] 3 h · Create a library and assign series to it from the frontend [FE]
 - [ ] 3 h · Edit and delete libraries and series from the frontend [FE]
 
 ## Open decisions
-- [ ] One generic `insert_entry` / `update_entry` envelope, or typed endpoints per resource (`POST /libraries`, `PATCH /libraries/{id}`, `POST /series`, …)? — blocks: creating and editing libraries and series. Suggested: typed endpoints per resource — real request validation and honest status codes; the generic envelope pushes validation into the client.
 - [ ] What happens to a library's series and books when it is deleted? — blocks: deleting a library. Suggested: add the missing `books.series` foreign key, and make deleting a library *unlink* its series rather than delete them — removing a curated grouping should not remove content.

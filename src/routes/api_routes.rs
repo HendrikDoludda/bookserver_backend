@@ -1,5 +1,5 @@
 use axum::{
-    routing::{delete, get, patch, post, put},
+    routing::{delete, get, post},
     Router,
 };
 use tokio::net::TcpListener;
@@ -17,8 +17,8 @@ use crate::{
         helpers::ping_server,
         library::{
             delete_library, get_libraries, get_series_children, get_series_in_library,
-            initiate_database, insert_database_entry, request_file, retrieve_metadata,
-            scan_all_directories, scan_for_metadata, update_database_entry,
+            insert_database_entry, request_file, retrieve_metadata, scan_all_directories,
+            scan_for_metadata, update_database_entry,
         },
         totp::{
             disable_totp, finalize_totp_set_up, sign_in_totp, sign_in_totp_with_recovery_code,
@@ -50,24 +50,27 @@ pub async fn start_server(state: AppState) -> Result<(), RoutingErrors> {
 /// Routes mapped to `ping_server` are placeholders whose handlers don't exist yet.
 pub fn set_up_routes() -> Router<AppState> {
     let api = Router::new()
-        .route("/get_libraries", get(get_libraries))
-        .route("/get_series_from_library/{id}", get(get_series_in_library))
-        .route("/get_series_children/{id}", get(get_series_children))
-        .route("/update_entry", put(update_database_entry))
-        .route("/insert_entry", post(insert_database_entry))
-        .route("/scan_metadata", post(scan_for_metadata))
-        .route("/setup_db", post(initiate_database))
-        .route("/scan_all_directories", post(scan_all_directories))
-        .route("/book/{id}", get(request_file))
-        .route("/delete_library/{id}", delete(delete_library))
         .route(
-            "/reading_progress/{id}",
-            patch(ping_server).get(ping_server),
+            "/libraries",
+            get(get_libraries).post(insert_database_entry),
         )
-        .route("/book_metadata/{id}", get(retrieve_metadata))
-        .route("/scan_directory/{id}", post(ping_server))
-        .route("/get_cover/{kind}/{id}", get(ping_server))
+        .route(
+            "/libraries/{id}",
+            delete(delete_library).patch(update_database_entry),
+        )
+        .route("/libraries/{id}/series", get(get_series_in_library))
+        .route("/series/{id}/books", get(get_series_children))
+        .route("/books/{id}", get(retrieve_metadata))
+        .route("/books/{id}/file", get(request_file))
+        .route(
+            "/books/{id}/progress",
+            get(ping_server).patch(ping_server),
+        )
+        .route("/covers/{kind}/{id}", get(ping_server))
+        .route("/scan", post(scan_all_directories))
         .route("/scan/status", get(ping_server))
+        .route("/directories/{id}/scan", post(ping_server))
+        .route("/metadata/scan", post(scan_for_metadata))
         .route("/search", get(ping_server))
         .route("/auth/register", post(sign_up))
         .route("/auth/verify_email", post(verify_email))
@@ -138,12 +141,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_guarded_route_without_a_session_answers_401_json() {
-        let (status, body) = json_answer(
-            Request::put("/api/v1/update_entry")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await;
+        let (status, body) = json_answer(guarded(None)).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(body, serde_json::json!({ "error": "unauthorized" }));
     }
@@ -151,13 +149,97 @@ mod tests {
     #[tokio::test]
     async fn a_missing_book_answers_404_json() {
         let (status, body) = json_answer(
-            Request::get("/api/v1/book_metadata/999")
+            Request::get("/api/v1/books/999")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(body, serde_json::json!({ "error": "not_found" }));
+    }
+
+    fn bare(method: &str, uri: &str) -> Request<Body> {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn every_route_answers_on_its_new_path_and_the_old_paths_are_gone() {
+        let temp = TempDatabase::open();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        for uri in [
+            "/api/v1/libraries",
+            "/api/v1/libraries/1/series",
+            "/api/v1/series/1/books",
+        ] {
+            let (status, _, body) = call(&app, bare("GET", uri)).await;
+            assert_eq!(status, StatusCode::OK, "{uri}");
+            assert_eq!(json(&body), serde_json::json!([]), "{uri}");
+        }
+        for uri in ["/api/v1/books/1", "/api/v1/books/1/file"] {
+            let (status, _, body) = call(&app, bare("GET", uri)).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+            assert_eq!(json(&body), serde_json::json!({ "error": "not_found" }), "{uri}");
+        }
+
+        let library = temp
+            .db
+            .setup_new_transaction(|conn| {
+                conn.execute(
+                    "INSERT INTO library (library_name, library_type) VALUES ('books', 'books')",
+                    [],
+                )
+                .unwrap();
+                Ok(conn.last_insert_rowid())
+            })
+            .unwrap();
+        let uri = format!("/api/v1/libraries/{library}");
+        let (status, _, _) = call(&app, bare("DELETE", &uri)).await;
+        assert_eq!(status, StatusCode::OK);
+
+        // A GET proves the path exists without starting a scan of the real BOOK_DIRS.
+        let (status, _, _) = call(&app, bare("GET", "/api/v1/scan")).await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+
+        for (method, uri) in [
+            ("POST", "/api/v1/libraries"),
+            ("PATCH", "/api/v1/libraries/1"),
+            ("GET", "/api/v1/books/1/progress"),
+            ("PATCH", "/api/v1/books/1/progress"),
+            ("GET", "/api/v1/covers/book/1"),
+            ("GET", "/api/v1/scan/status"),
+            ("POST", "/api/v1/directories/1/scan"),
+            ("POST", "/api/v1/metadata/scan"),
+            ("GET", "/api/v1/search"),
+        ] {
+            let (status, _, _) = call(&app, bare(method, uri)).await;
+            assert_ne!(status, StatusCode::NOT_FOUND, "{method} {uri}");
+            assert_ne!(status, StatusCode::METHOD_NOT_ALLOWED, "{method} {uri}");
+        }
+
+        for (method, uri) in [
+            ("GET", "/api/v1/get_libraries"),
+            ("GET", "/api/v1/get_series_from_library/1"),
+            ("GET", "/api/v1/get_series_children/1"),
+            ("GET", "/api/v1/book_metadata/1"),
+            ("GET", "/api/v1/book/1"),
+            ("POST", "/api/v1/scan_all_directories"),
+            ("POST", "/api/v1/setup_db"),
+            ("DELETE", "/api/v1/delete_library/1"),
+            ("PUT", "/api/v1/update_entry"),
+            ("POST", "/api/v1/insert_entry"),
+            ("POST", "/api/v1/scan_metadata"),
+            ("GET", "/api/v1/reading_progress/1"),
+            ("POST", "/api/v1/scan_directory/1"),
+            ("GET", "/api/v1/get_cover/book/1"),
+        ] {
+            let (status, _, _) = call(&app, bare(method, uri)).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}");
+        }
     }
 
     fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
@@ -283,8 +365,9 @@ mod tests {
         (status, headers, body)
     }
 
+    /// A request to a route behind `AuthSession` that answers 200 for any live session.
     fn guarded(authorization: Option<&str>) -> Request<Body> {
-        let mut request = Request::put("/api/v1/update_entry");
+        let mut request = Request::get("/api/v1/account/totp");
         if let Some(value) = authorization {
             request = request.header("authorization", value);
         }

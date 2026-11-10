@@ -2,8 +2,8 @@
 
 State: in progress
 
-`GET /book/{id}` streams a book's file with HTTP range support through `tower-http`'s
-`ServeFile`, and `GET /book_metadata/{id}` returns its metadata (404 for an unknown id). PDF,
+`GET /books/{id}/file` streams a book's file with HTTP range support through `tower-http`'s
+`ServeFile`, and `GET /books/{id}` returns its metadata (404 for an unknown id). PDF,
 EPUB and CBZ files stream; a folder of page images can't be served, and the readers don't
 exist yet.
 

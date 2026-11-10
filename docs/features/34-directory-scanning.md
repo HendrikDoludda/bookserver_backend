@@ -8,7 +8,7 @@ file. It works, but it can report success before it is done, swallows per-file e
 never picks up a file that changed.
 
 ## Build
-- [ ] 6 h · Run a scan as a job, per the scan-job decision: `POST /scan_all_directories` answers 202, and `GET /scan/status` (now `ping_server`) reports progress and per-file failures — router state grows from `Arc<Database>` into an `AppState` that also holds the scan status [BE]
+- [ ] 6 h · Run a scan as a job, per the scan-job decision: `POST /scan` answers 202, and `GET /scan/status` (now `ping_server`) reports progress and per-file failures — router state grows from `Arc<Database>` into an `AppState` that also holds the scan status [BE]
 - [ ] 1 h · Wait for every spawned file task before a scan counts as done — `scan_folder` drops the `JoinHandle`s, so the last file can still be in progress when the scan reports success (`futures::future::join_all`; `futures` is already a dependency) [BE]
 - [ ] 2 h · Report per-file failures instead of discarding them — only a task panic is logged; `create_book_entry`'s own errors disappear [BE]
 - [ ] 1 h · One missing directory aborts the whole scan, so the directories after it are never scanned — report it and carry on [BE]

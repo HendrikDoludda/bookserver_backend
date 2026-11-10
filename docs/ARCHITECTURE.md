@@ -20,6 +20,7 @@
 ## API
 - API-first: every change to data is an HTTP endpoint; the frontend and the admin view are both clients of that same API, no endpoint is reachable from only one of them, and business logic stays in the backend.
 - Every route lives under `/api/v1/`, except `/health`.
+- Routes are resource paths — plural nouns and `{id}` segments, never verbs: `GET /libraries/{id}/series`, not `/get_series_from_library/{id}`.
 - A handler takes at most one body extractor (`Json<T>`), and it comes last.
 - `user_id` always comes from the session (`AuthSession`), never from the request body or path.
 - Session, refresh and challenge tokens travel as `Authorization: Bearer <token>`; every failed token check answers the same 401, and a response that carries tokens sends `Cache-Control: no-store`.

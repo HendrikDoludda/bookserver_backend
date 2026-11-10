@@ -10,7 +10,7 @@ database, managed through the API from both UIs.
 - [ ] 1 h · Scannable-directories table, shaped per the directories decision [DB]
 - [ ] 3 h · Endpoints to add, list and remove scannable directories [BE]
 - [ ] 1 h · Reject a directory that doesn't exist when it is added — today a missing `BOOK_DIRS` entry still gets a library row before its scan fails [BE]
-- [ ] 2 h · Scan one directory: `POST /scan_directory/{id}` (now `ping_server`) [BE]
+- [ ] 2 h · Scan one directory: `POST /directories/{id}/scan` (now `ping_server`) [BE]
 - [ ] 2 h · Scan the directories from the table and stop reading `BOOK_DIRS` [BE]
 - [ ] 1 h · A directory gets a required library type when it is added — nothing can infer it from the files, and today every auto-created library is hard-coded to `LibraryType::Books` and named after the lowercased path [BE]
 - [ ] 3 h · Add and remove directories from the frontend [FE]

@@ -7,7 +7,7 @@
 | `mailpit` | `brew install mailpit && mailpit` |
 | `run-mail` | `BOOK_DIRS=/path/to/books SMTP_HOST=localhost SMTP_PORT=1025 SMTP_TLS=none SMTP_FROM=server@localhost SMTP_FROM_NAME="Book Server" cargo run` |
 | `health` | `curl http://localhost:8080/health` |
-| `scan` | `curl -X POST http://localhost:8080/api/v1/scan_all_directories` |
+| `scan` | `curl -X POST http://localhost:8080/api/v1/scan` |
 
 ## Run
 1. For PDF covers only: put the PDFium shared library (`libpdfium.dylib`, `libpdfium.so` or `pdfium.dll`, prebuilt at [bblanchon/pdfium-binaries](https://github.com/bblanchon/pdfium-binaries)) in the working directory or on the library path.

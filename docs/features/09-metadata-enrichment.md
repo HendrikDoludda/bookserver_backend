@@ -22,7 +22,7 @@ entry. The adapters are [63](63-book-metadata.md) books, [64](64-manga-metadata.
 - [ ] 2 h · Store provider API keys per the key-storage decision; never log a key [BE]
 - [ ] 1 h · Sensitive items skip every online lookup: one check in the provider dispatch, not per adapter, so a new adapter can't forget it ([10](10-sensitive-content-controls.md)) [BE]
 - [ ] 3 h · Per-entry search and confirm endpoints, per the endpoint decision [BE]
-- [ ] 4 h · Bulk enrichment pass behind `POST /scan_metadata`, run in the background — not inline, where an unresponsive provider would stall the response — per the endpoint decision [BE]
+- [ ] 4 h · Bulk enrichment pass behind `POST /metadata/scan`, run in the background — not inline, where an unresponsive provider would stall the response — per the endpoint decision [BE]
 - [ ] 0.5 h · Require `AdminSession` on the enrichment endpoints — today `scan_for_metadata` takes an `AuthSession` [BE]
 - [ ] 4 h · Candidate list and confirm screen [FE]
 
@@ -33,6 +33,6 @@ entry. The adapters are [63](63-book-metadata.md) books, [64](64-manga-metadata.
 - [ ] Where do API keys live: env vars, `secrets.toml`, or a database table the admin web view can edit? — blocks: key storage. Suggested: the database, with env vars as the bootstrap fallback.
 - [ ] Cache in a database table or in memory? — blocks: the cache. Suggested: a table keyed by provider and query or external id — it survives restarts.
 - [ ] Keep `books.tags` a comma-joined string, or make tags a relation? — blocks: tag merging. Suggested: keep the string for now; a relation also changes the search plan in [11](11-search.md).
-- [ ] Is `POST /scan_metadata` the bulk pass or a single lookup? — blocks: the endpoints. Suggested: the bulk pass, with separate per-entry search and confirm endpoints.
+- [ ] Is `POST /metadata/scan` the bulk pass or a single lookup? — blocks: the endpoints. Suggested: the bulk pass, with separate per-entry search and confirm endpoints.
 - [ ] Add the `is_sensitive` column here, since enrichment (Tier 3) ships before the sensitive toggle (Tier 4)? — blocks: the sensitive skip. Suggested: yes — add it with this feature and honour it from the first request.
 - [ ] Can an admin bypass the skip for one sensitive item? — blocks: the sensitive skip. Suggested: no — a sensitive item gets hand-entered metadata only ([66](66-manual-metadata-editing.md)).

@@ -2,12 +2,12 @@
 
 State: in progress
 
-Admins and members. Admin-only actions — database setup, scanning, deleting libraries — need
-an admin session; every other endpoint needs a logged-in user. The `AdminSession` and
-`AuthSession` extractors exist, but no routed endpoint uses them yet.
+Admins and members. Admin-only actions — scanning, deleting libraries — need an admin session;
+every other endpoint needs a logged-in user. The `AdminSession` extractor exists, but no routed
+endpoint uses it yet.
 
 ## Build
-- [ ] 1 h · Require `AdminSession` on `POST /setup_db`, `POST /scan_all_directories` and `DELETE /delete_library/{id}` — today they need no session at all [BE]
+- [ ] 1 h · Require `AdminSession` on `POST /scan` and `DELETE /libraries/{id}` — today they need no session at all [BE]
 - [ ] 2 h · Require `AuthSession` on every other endpoint except the liveness ping and the public auth routes (login, sign-up, email verification, password reset) [BE]
 - [ ] 2 h · Admin endpoint listing all users — username, email, verified, admin, created and last login; never the password hash [BE]
 - [ ] 2 h · Admin endpoint to make a user admin or member, per the role decision — refusing to demote the last admin [BE]
