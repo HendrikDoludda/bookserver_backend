@@ -403,7 +403,7 @@ mod tests {
                 AuthenticationError::PasswordTooShort => "password too short",
                 AuthenticationError::IncorrectCredentials => "incorrect",
                 AuthenticationError::InvalidValidationCode => "invalid code",
-                AuthenticationError::TooManyAttempts => "too many",
+                AuthenticationError::TooManyAttempts { .. } => "too many",
                 AuthenticationError::EmailNotVerified => "unverified",
                 AuthenticationError::InvalidSetupCode => "invalid setup code",
                 _ => "other auth error",

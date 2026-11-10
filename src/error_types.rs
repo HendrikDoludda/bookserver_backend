@@ -1,8 +1,8 @@
-use std::fmt::Display;
+use std::{fmt::Display, time::Duration};
 
 use axum::{
     body::Body,
-    http::StatusCode,
+    http::{header::RETRY_AFTER, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -256,7 +256,7 @@ pub enum AuthenticationError {
     #[error("The new password is too long")]
     PasswordTooLong,
     #[error("Too many failed tries; wait a while before trying again")]
-    TooManyAttempts,
+    TooManyAttempts { retry_after: Duration },
     #[error("The email address is not verified yet")]
     EmailNotVerified,
     #[error("The email address is not valid")]
@@ -298,7 +298,7 @@ impl AuthenticationError {
                 (StatusCode::BAD_REQUEST, "password_too_short")
             }
             AuthenticationError::PasswordTooLong => (StatusCode::BAD_REQUEST, "password_too_long"),
-            AuthenticationError::TooManyAttempts => {
+            AuthenticationError::TooManyAttempts { .. } => {
                 (StatusCode::TOO_MANY_REQUESTS, "too_many_attempts")
             }
             AuthenticationError::EmailNotVerified => (StatusCode::FORBIDDEN, "email_not_verified"),
@@ -378,8 +378,22 @@ impl AppErrors {
 
 impl IntoResponse for AppErrors {
     fn into_response(self) -> Response<Body> {
-        respond(self.status_and_key(), &self)
+        let mut response = respond(self.status_and_key(), &self);
+        if let AppErrors::Authentication(AuthenticationError::TooManyAttempts { retry_after }) =
+            self
+        {
+            response.headers_mut().insert(
+                RETRY_AFTER,
+                HeaderValue::from(whole_seconds_rounded_up(retry_after)),
+            );
+        }
+        response
     }
+}
+
+/// Rounded up, so a client that waits exactly this long finds the lock open.
+fn whole_seconds_rounded_up(duration: Duration) -> u64 {
+    duration.as_secs() + u64::from(duration.subsec_nanos() > 0)
 }
 
 #[derive(Error, Debug)]
@@ -509,7 +523,10 @@ mod tests {
                 "password_too_long",
             ),
             (
-                Auth::TooManyAttempts.into(),
+                Auth::TooManyAttempts {
+                    retry_after: Duration::from_secs(60),
+                }
+                .into(),
                 StatusCode::TOO_MANY_REQUESTS,
                 "too_many_attempts",
             ),
@@ -583,6 +600,26 @@ mod tests {
             assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{label}");
             assert_eq!(body, json!({ "error": "internal_error" }), "{label}");
         }
+    }
+
+    #[test]
+    fn a_429_says_when_to_try_again_in_whole_seconds_rounded_up() {
+        for (retry_after, expected) in [
+            (Duration::from_secs(90), "90"),
+            (Duration::from_millis(1500), "2"),
+            (Duration::from_millis(1), "1"),
+        ] {
+            let error: AppErrors = AuthenticationError::TooManyAttempts { retry_after }.into();
+            let response = error.into_response();
+            assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(response.headers()[RETRY_AFTER], expected, "{retry_after:?}");
+        }
+
+        let other: AppErrors = AuthenticationError::IncorrectCredentials.into();
+        assert!(
+            !other.into_response().headers().contains_key(RETRY_AFTER),
+            "only a 429 says when to retry"
+        );
     }
 
     #[tokio::test]

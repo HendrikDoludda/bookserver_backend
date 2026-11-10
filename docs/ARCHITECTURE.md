@@ -37,6 +37,7 @@
 - One `thiserror` enum per domain, in `error_types.rs`.
 - Every error answer is JSON `{"error": "<key>"}` — a stable key the app translates; a 500 answers `internal_error` and logs the detail server-side.
 - An error enum that reaches a handler implements `IntoResponse` through a `status_and_key` match with one arm per variant and no `_` arm, so a new variant can't silently become a 500.
+- A 429 sends `Retry-After`: the seconds left on the lock, rounded up, carried by `TooManyAttempts`.
 - A route whose handler isn't built answers 501 `not_implemented`; a path no route matches answers 404 `not_found`, a method the route lacks 405 `method_not_allowed`.
 - A handler returns `Result<_, AppErrors>` and uses `?`; an error type without `IntoResponse` (such as `anyhow`) is logged and answered with `internal_error_response()`.
 

@@ -337,7 +337,8 @@ fn reserve_code_try(conn: &Connection, user_id: i64, now: SystemTime) -> Result<
     let totp = find_setup(conn, user_id)?
         .filter(|totp| totp.confirmed)
         .ok_or(AuthenticationError::TotpNotEnabled)?;
-    let counters = counters_for_next_try(&totp, now).ok_or(AuthenticationError::TooManyAttempts)?;
+    let counters = counters_for_next_try(&totp, now)
+        .map_err(|retry_after| AuthenticationError::TooManyAttempts { retry_after })?;
     save_try_counters(conn, user_id, &counters)?;
     Ok(totp)
 }
@@ -432,21 +433,23 @@ struct TryCounters {
     last_failed_at: SystemTime,
 }
 
-/// The counters for one more try at a code now, or `None` while the user is locked out. The
-/// fifth try of a round starts a lock; once it is over, the next try starts a new round.
-fn counters_for_next_try(totp: &TOTP, now: SystemTime) -> Option<TryCounters> {
+/// The counters for one more try at a code now, or — while the user is locked out — how long
+/// the lock still lasts. The fifth try of a round starts a lock; once it is over, the next try
+/// starts a new round.
+fn counters_for_next_try(totp: &TOTP, now: SystemTime) -> Result<TryCounters, Duration> {
     let tries_this_round = if totp.failed_attempts < TRIES_PER_ROUND {
         totp.failed_attempts
-    } else if totp
-        .last_failed_at
-        .is_some_and(|locked_at| elapsed(locked_at, now) < lock_length(totp.lockouts))
-    {
-        return None;
     } else {
+        let lock_left = totp.last_failed_at.map_or(Duration::ZERO, |locked_at| {
+            lock_length(totp.lockouts).saturating_sub(elapsed(locked_at, now))
+        });
+        if !lock_left.is_zero() {
+            return Err(lock_left);
+        }
         0
     };
     let failed_attempts = tries_this_round + 1;
-    Some(TryCounters {
+    Ok(TryCounters {
         failed_attempts,
         lockouts: totp.lockouts + i64::from(failed_attempts == TRIES_PER_ROUND),
         last_failed_at: now,
@@ -866,7 +869,7 @@ mod tests {
             Err(AppErrors::Authentication(err)) => match err {
                 AuthenticationError::IncorrectPassword => "password",
                 AuthenticationError::InvalidValidationCode => "code",
-                AuthenticationError::TooManyAttempts => "locked",
+                AuthenticationError::TooManyAttempts { .. } => "locked",
                 AuthenticationError::UnauthorizedSession => "unauthorized",
                 AuthenticationError::TotpSetupNotPending => "not pending",
                 AuthenticationError::TotpNotEnabled => "not enabled",
@@ -1074,8 +1077,8 @@ mod tests {
         }
     }
 
-    fn counted(failed_attempts: i64, lockouts: i64, secs: u64) -> Option<TryCounters> {
-        Some(TryCounters {
+    fn counted(failed_attempts: i64, lockouts: i64, secs: u64) -> Result<TryCounters, Duration> {
+        Ok(TryCounters {
             failed_attempts,
             lockouts,
             last_failed_at: at(secs),
@@ -1097,7 +1100,8 @@ mod tests {
         );
         assert_eq!(
             counters_for_next_try(&tries(5, 1, Some(LATER)), at(LATER + 1)),
-            None
+            Err(Duration::from_secs(15 * 60 - 1)),
+            "locked, with the time the lock still lasts"
         );
     }
 
@@ -1106,7 +1110,7 @@ mod tests {
         let first_lock = tries(5, 1, Some(NOW));
         assert_eq!(
             counters_for_next_try(&first_lock, at(NOW + 15 * 60 - 1)),
-            None
+            Err(Duration::from_secs(1))
         );
         assert_eq!(
             counters_for_next_try(&first_lock, at(NOW + 15 * 60)),
@@ -1116,7 +1120,7 @@ mod tests {
         let second_lock = tries(5, 2, Some(NOW));
         assert_eq!(
             counters_for_next_try(&second_lock, at(NOW + 30 * 60 - 1)),
-            None
+            Err(Duration::from_secs(1))
         );
         assert_eq!(
             counters_for_next_try(&second_lock, at(NOW + 30 * 60)),
@@ -1137,7 +1141,8 @@ mod tests {
     fn a_clock_that_went_backwards_keeps_the_lock() {
         assert_eq!(
             counters_for_next_try(&tries(5, 1, Some(NOW)), at(NOW - 60 * 60)),
-            None
+            Err(Duration::from_secs(15 * 60)),
+            "the whole lock: a clock that went back can't shorten it"
         );
     }
 
@@ -1423,6 +1428,14 @@ mod tests {
             outcome(&try_at(LATER, true).await),
             "locked",
             "even the right code"
+        );
+        assert!(
+            matches!(
+                try_at(LATER + 60, true).await,
+                Err(AppErrors::Authentication(AuthenticationError::TooManyAttempts { retry_after }))
+                    if retry_after == Duration::from_secs(14 * 60)
+            ),
+            "the refusal says how long the lock still lasts"
         );
         assert_eq!(
             lock_state(&temp, user),

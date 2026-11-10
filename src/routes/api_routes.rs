@@ -536,6 +536,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn too_many_logins_answer_429_with_retry_after() {
+        let temp = TempDatabase::open();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let wrong_login = || {
+            post_json(
+                "/api/v1/auth/login",
+                serde_json::json!({
+                    "username_or_email": "nobody",
+                    "password": "wrong password 123",
+                    "device_name": "phone",
+                    "platform": "ios",
+                }),
+            )
+        };
+        for _ in 0..10 {
+            let (status, _, _) = call(&app, wrong_login()).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
+        }
+
+        let (status, headers, body) = call(&app, wrong_login()).await;
+
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            json(&body),
+            serde_json::json!({ "error": "too_many_attempts" })
+        );
+        let seconds: u64 = headers["retry-after"].to_str().unwrap().parse().unwrap();
+        assert!(
+            (890..=900).contains(&seconds),
+            "about the 15-minute window: {seconds}"
+        );
+    }
+
+    #[tokio::test]
     async fn a_reset_with_a_bad_code_answers_400_json() {
         let (status, body) = json_answer(post_json(
             "/api/v1/auth/password_reset/confirm",

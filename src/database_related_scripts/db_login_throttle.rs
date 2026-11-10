@@ -5,25 +5,29 @@ use std::time::{Duration, SystemTime};
 use rusqlite::{params, Connection};
 
 use crate::{
-    database_related_scripts::db::{convert_system_time_to_unix_time, logged},
+    database_related_scripts::{
+        db::{convert_system_time_to_unix_time, logged},
+        db_from_row::read_time,
+    },
     error_types::DatabaseError,
 };
 
-/// Counts one login try for `name`. `false` while the name is locked: it already had
-/// `max_tries` tries in the window that began with its first counted try.
+/// Counts one login try for `name`, or — while the name is locked, because it already had
+/// `max_tries` tries in the window that began with its first counted try — answers how long
+/// the lock still lasts.
 pub fn reserve(
     conn: &Connection,
     name: &str,
     now: SystemTime,
     window: Duration,
     max_tries: i64,
-) -> Result<bool, DatabaseError> {
-    let now = convert_system_time_to_unix_time(now);
+) -> Result<Option<Duration>, DatabaseError> {
+    let now_secs = convert_system_time_to_unix_time(now);
     // Drops every window that is over, this name's included, so the table stays small and
     // an expired lock starts again from zero.
     conn.execute(
         "DELETE FROM login_failures WHERE window_started_at <= ?1",
-        [now - window.as_secs() as i64],
+        [now_secs - window.as_secs() as i64],
     )
     .map_err(logged(
         "deleting from",
@@ -34,14 +38,29 @@ pub fn reserve(
         .execute(
             "INSERT INTO login_failures (name, attempts, window_started_at) VALUES (?1, 1, ?2) \
              ON CONFLICT (name) DO UPDATE SET attempts = attempts + 1 WHERE attempts < ?3",
-            params![name, now, max_tries],
+            params![name, now_secs, max_tries],
         )
         .map_err(logged(
             "updating",
             "login_failures",
             DatabaseError::UpdatingFailure,
         ))?;
-    Ok(changed == 1)
+    if changed == 1 {
+        return Ok(None);
+    }
+    let window_started_at = conn
+        .query_row(
+            "SELECT window_started_at FROM login_failures WHERE name = ?1",
+            [name],
+            |row| read_time(row, "window_started_at"),
+        )
+        .map_err(logged(
+            "reading",
+            "login_failures",
+            DatabaseError::QueryFailure,
+        ))?;
+    let waited = now.duration_since(window_started_at).unwrap_or_default();
+    Ok(Some(window.saturating_sub(waited)))
 }
 
 /// Forgets the tries for `name`, after a successful login.
@@ -78,11 +97,16 @@ mod tests {
         let conn = memory_connection();
         let now = at(1_700_000_000);
         for _ in 0..3 {
-            assert!(reserve(&conn, "alice", now, WINDOW, 3).unwrap());
+            assert_eq!(reserve(&conn, "alice", now, WINDOW, 3).unwrap(), None);
         }
-        assert!(!reserve(&conn, "alice", now, WINDOW, 3).unwrap());
-        assert!(
+        assert_eq!(
+            reserve(&conn, "alice", now, WINDOW, 3).unwrap(),
+            Some(WINDOW),
+            "locked for the whole window"
+        );
+        assert_eq!(
             reserve(&conn, "bob", now, WINDOW, 3).unwrap(),
+            None,
             "other names are not affected"
         );
     }
@@ -94,15 +118,26 @@ mod tests {
         for _ in 0..3 {
             reserve(&conn, "alice", start, WINDOW, 3).unwrap();
         }
-        assert!(!reserve(
-            &conn,
-            "alice",
-            start + WINDOW - Duration::from_secs(1),
-            WINDOW,
-            3
-        )
-        .unwrap());
-        assert!(reserve(&conn, "alice", start + WINDOW, WINDOW, 3).unwrap());
+        let ten_minutes = Duration::from_secs(10 * 60);
+        assert_eq!(
+            reserve(&conn, "alice", start + ten_minutes, WINDOW, 3).unwrap(),
+            Some(WINDOW - ten_minutes)
+        );
+        assert_eq!(
+            reserve(
+                &conn,
+                "alice",
+                start + WINDOW - Duration::from_secs(1),
+                WINDOW,
+                3
+            )
+            .unwrap(),
+            Some(Duration::from_secs(1))
+        );
+        assert_eq!(
+            reserve(&conn, "alice", start + WINDOW, WINDOW, 3).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -113,7 +148,7 @@ mod tests {
             reserve(&conn, "alice", now, WINDOW, 3).unwrap();
         }
         clear(&conn, "alice").unwrap();
-        assert!(reserve(&conn, "alice", now, WINDOW, 3).unwrap());
+        assert_eq!(reserve(&conn, "alice", now, WINDOW, 3).unwrap(), None);
     }
 
     #[test]

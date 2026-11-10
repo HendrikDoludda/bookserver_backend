@@ -1,12 +1,10 @@
 # Error responses & status codes
 
-State: in progress
+State: completed
 
-Every failure should reach the client as an honest status code and a JSON body
-`{"error": "<key>"}` that the app translates through the [catalog](13-internationalization.md),
-while the detail goes to the server log. `DatabaseError` already picks its status this way
-(`EntryNotFound` → 404, anything else → 500 with the detail logged), but only 2 of the 10 error
-enums turn into responses at all, and the auth handlers put raw error text into their 500 bodies.
+Every failure reaches the client as an honest status code and a JSON body `{"error": "<key>"}`
+that the app translates through the [catalog](13-internationalization.md), while the detail goes
+to the server log.
 
 ## Build
 - [x] 3 h · Give `AppErrors` an `IntoResponse` in `DatabaseError::into_response`'s shape — a status and a key per `AuthenticationError` / `EmailErrors` case (e.g. `EmailTaken` → 409, `IncorrectCredentials` → 401), the detail logged for 5xx and `{"error": "internal_error"}` sent instead — so handlers can use `?`. The specific errors only get this far once [26](26-database-layer-fixes.md) stops `setup_new_transaction` from flattening them [BE]
@@ -20,4 +18,4 @@ enums turn into responses at all, and the auth handlers put raw error text into 
 - [x] 0.5 h · An unknown path answers 404 and a wrong method 405, both with an empty body — router fallbacks answer 404 `not_found` and 405 `method_not_allowed` as JSON (the 405 keeps axum's `Allow` header) [BE]
 - [x] 1 h · Move the `log::` call sites to `tracing::` and drop the `log` dependency — consistency only; both already reach the output [BE]
 - [x] 0.5 h · Delete the error variants nothing constructs, with their rows in the error tests: `AuthenticationError::{AccountAlreadyExists, PasswordHashingFailure, ErrorCreatingSalt, UserNotFound}`, `EmailErrors::MissingEmail`, `DatabaseError::{EmailAlreadyExists, UsernameAlreadyExists, InvalidRequest, UnexpectedSearchResult}`, `ApplicationSetUpErrors::KeyEncodingFailure`, `FolderScannerError::{DatabaseConnectionFailed, RegexFailure}`, `CoverImageError::{DatabaseEngineFailed, NetworkError, FileAlreadyExists}` [BE]
-- [ ] 1.5 h · Every 429 sends `Retry-After` with the seconds left — login's throttle and the 2FA code lock ([04](04-two-factor-auth-totp.md)), which grows to 24 h — so the app can say when to try again; the error has to carry the time [BE]
+- [x] 1.5 h · Every 429 sends `Retry-After` with the seconds left — login's throttle and the 2FA code lock ([04](04-two-factor-auth-totp.md)), which grows to 24 h — so the app can say when to try again; the error has to carry the time [BE]

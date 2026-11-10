@@ -179,7 +179,7 @@ impl FromRow for EmailCode {
 
 /// Reads a unix-seconds column that must have a value. A NULL becomes rusqlite's own
 /// `InvalidColumnType` error, with the column's real position and name.
-fn read_time(row: &Row, column: &str) -> rusqlite::Result<SystemTime> {
+pub(crate) fn read_time(row: &Row, column: &str) -> rusqlite::Result<SystemTime> {
     Ok(row.get::<_, UnixSeconds>(column)?.0)
 }
 

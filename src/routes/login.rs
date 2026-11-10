@@ -91,8 +91,10 @@ pub(crate) async fn check_password(
     let key = throttle_key.clone();
     let user = db
         .transact(move |conn| {
-            if !db_login_throttle::reserve(conn, &key, now, LOGIN_TRY_WINDOW, MAX_LOGIN_TRIES)? {
-                return Err(AuthenticationError::TooManyAttempts.into());
+            if let Some(retry_after) =
+                db_login_throttle::reserve(conn, &key, now, LOGIN_TRY_WINDOW, MAX_LOGIN_TRIES)?
+            {
+                return Err(AuthenticationError::TooManyAttempts { retry_after }.into());
             }
             Ok(find_user_for_login(conn, &name)?)
         })
@@ -384,7 +386,9 @@ mod tests {
             Err(AppErrors::Authentication(AuthenticationError::IncorrectCredentials)) => {
                 "incorrect"
             }
-            Err(AppErrors::Authentication(AuthenticationError::TooManyAttempts)) => "too many",
+            Err(AppErrors::Authentication(AuthenticationError::TooManyAttempts { .. })) => {
+                "too many"
+            }
             Err(AppErrors::Authentication(AuthenticationError::EmailNotVerified)) => "unverified",
             Err(_) => "other error",
             Ok(_) => "accepted",
@@ -516,6 +520,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_locked_name_says_how_long_the_lock_still_lasts() {
+        let temp = TempDatabase::open();
+        // Whole seconds, like the stored window start, so the time left comes out exact.
+        let start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        for _ in 0..MAX_LOGIN_TRIES {
+            login(&temp, "nobody", "guess", None, start).await.ok();
+        }
+
+        let five_minutes = Duration::from_secs(5 * 60);
+        let refused = login(&temp, "nobody", "guess", None, start + five_minutes).await;
+
+        assert!(matches!(
+            refused,
+            Err(AppErrors::Authentication(AuthenticationError::TooManyAttempts { retry_after }))
+                if retry_after == LOGIN_TRY_WINDOW - five_minutes
+        ));
+    }
+
+    #[tokio::test]
     async fn a_successful_login_resets_the_count() {
         let temp = TempDatabase::open();
         alice(&temp).await;
@@ -602,7 +625,7 @@ mod tests {
         assert!(matches!(
             check(PASSWORD).await,
             Err(AppErrors::Authentication(
-                AuthenticationError::TooManyAttempts
+                AuthenticationError::TooManyAttempts { .. }
             ))
         ));
         assert_eq!(

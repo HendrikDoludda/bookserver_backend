@@ -4,7 +4,7 @@
 |---|---|---|---|
 | API route naming | 0 | completed | [07-api-route-naming](features/07-api-route-naming.md) |
 | Database layer fixes | 0 | completed | [26-database-layer-fixes](features/26-database-layer-fixes.md) |
-| Error responses & status codes | 0 | in progress | [33-error-responses](features/33-error-responses.md) |
+| Error responses & status codes | 0 | completed | [33-error-responses](features/33-error-responses.md) |
 | Login, logout & sessions | 1 | in progress | [03-login-and-sessions](features/03-login-and-sessions.md) |
 | Two-factor auth (TOTP) | 1 | in progress | [04-two-factor-auth-totp](features/04-two-factor-auth-totp.md) |
 | Registration & email verification | 1 | in progress | [27-registration-and-email-verification](features/27-registration-and-email-verification.md) |
