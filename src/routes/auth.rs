@@ -7,7 +7,7 @@ use argon2::Argon2;
 use rusqlite::Connection;
 
 use crate::data_models::authentication_model::{ChangePasswordRequest, DeviceInformation};
-use crate::database_related_scripts::{db::Database, db_login_challenges, db_sessions};
+use crate::database_related_scripts::{db::Database, db_login_challenges};
 use crate::error_types::{AuthenticationError, DatabaseError};
 use crate::models::{
     DatabaseTypes, QuerySeparator, Sessions, SessionsDatabaseColumns, UserDatabaseColumns,
@@ -240,10 +240,16 @@ pub fn create_new_session(
         created_at: now,
         last_used_at: now,
     };
-    db_sessions::delete_for_device(conn, user_id, device_information.device_id).map_err(|err| {
-        log::error!("removing the device's earlier session failed: {err}");
-        AuthenticationError::FailedDataStoring
-    })?;
+    Database::remove_entry_with_connection_based_on_columns::<Sessions>(
+        conn,
+        &[
+            SessionsDatabaseColumns::UserId,
+            SessionsDatabaseColumns::DeviceId,
+        ],
+        &[&user_id, &device_information.device_id],
+        QuerySeparator::And,
+    )
+    .map_err(|_| AuthenticationError::FailedDataStoring)?;
     Database::insert_with_connection(conn, &session)
         .map_err(|_| AuthenticationError::FailedDataStoring)?;
     Ok(CreatedTokensReadable {

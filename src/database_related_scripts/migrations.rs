@@ -173,6 +173,47 @@ mod tests {
         }
     }
 
+    fn add_session(
+        conn: &Connection,
+        user_id: i64,
+        device: &str,
+        session: &str,
+        refresh: &str,
+    ) -> rusqlite::Result<usize> {
+        conn.execute(
+            "INSERT INTO sessions (user_id, device_id, device_name, platform, \
+             refresh_token_hashed, refresh_token_valid_until, session_token_hashed, \
+             session_token_valid_until, last_used_at) \
+             VALUES (?1, ?2, 'phone', 'ios', ?3, 0, ?4, 0, 0)",
+            params![user_id, device, refresh, session],
+        )
+    }
+
+    #[test]
+    fn a_user_has_at_most_one_session_per_device() {
+        let conn = memory_connection();
+        let alice = insert_user(&conn, "alice");
+        let bob = insert_user(&conn, "bob");
+        add_session(&conn, alice, "device-1", "s1", "r1").unwrap();
+
+        assert!(add_session(&conn, alice, "device-1", "s2", "r2").is_err());
+        assert!(
+            add_session(&conn, bob, "device-1", "s3", "r3").is_ok(),
+            "the same device id on another account is a different session"
+        );
+    }
+
+    #[test]
+    fn session_and_refresh_tokens_are_unique() {
+        let conn = memory_connection();
+        let alice = insert_user(&conn, "alice");
+        add_session(&conn, alice, "device-1", "same-session", "r1").unwrap();
+        add_session(&conn, alice, "device-2", "s2", "same-refresh").unwrap();
+
+        assert!(add_session(&conn, alice, "device-3", "same-session", "r3").is_err());
+        assert!(add_session(&conn, alice, "device-4", "s4", "same-refresh").is_err());
+    }
+
     /// Whether a column refuses NULL, read from the schema itself.
     fn refuses_null(conn: &Connection, table: &str, column: &str) -> bool {
         conn.query_row(

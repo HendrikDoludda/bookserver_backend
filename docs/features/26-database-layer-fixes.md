@@ -1,6 +1,6 @@
 # Database layer fixes
 
-State: in progress
+State: completed
 
 The generic database layer (`Extract`, `Insert`, `Update`, `Search`, `FromRow`,
 `DatabaseTypes`, `setup_new_transaction`) has column-name, NULL-handling, primary-key and
@@ -26,7 +26,7 @@ every read of a user, and the library and series lists. Each fix comes with a ro
 - [x] 2 h · Remove `SelectionMethod`: `PassedInColumns` selects only the searched columns, so `from_row` fails whenever a row matches — in `validate_new_user` a taken email comes back as `DatabaseSearchFailure` instead of `EmailTaken`, and the admin check errors as soon as an admin exists. Every search selects `*` [BE]
 - [x] 1 h · `search_for_row` turns every SQL and `FromRow` error into `EntryNotFound` — a 404 once errors reach clients, and never logged; log it and return `QueryFailure` [BE]
 - [x] 2 h · `extract`, `extract_batch` and `search_for_multiple_rows` — and on the write side `remove_entry_with_connection`, `Update`, `Delete` and the `db_login_challenges` functions — replace the rusqlite error with a generic variant without logging it, so a row that fails to load or write leaves no trace of why; so do the `Insert` impls, `db.rs`'s own queries, the login throttle, the email codes and the migration runner. Log it once, through one helper [BE]
-- [ ] 1 h · Move `db_sessions.rs`'s hand-written queries onto the generic functions, per ARCHITECTURE: `delete_for_device` (`Delete` with two columns), `delete_by_token_hash` (`Delete` with `Or`) and `rotate_tokens` (a read and `update_multiple` in the transaction) [BE]
+- [x] 1 h · Move `db_sessions.rs`'s hand-written queries onto the generic functions, per ARCHITECTURE: `delete_for_device` (`Delete` with two columns), `delete_by_token_hash` (`Delete` with `Or`) and `rotate_tokens` (a read and `update_multiple` in the transaction) [BE]
 - [x] 3 h · `setup_new_transaction` replaces the closure's error with `DatabaseError::OperationFailure` — pass the original error through, so `EmailTaken`, `IncorrectCredentials` and the extractors' 401 branches can reach the client [BE]
 - [x] 2 h · `setup_new_transaction` opens a deferred transaction, and one that reads and then writes fails at once with `SQLITE_BUSY_SNAPSHOT` when another connection wrote in between (WAL) — the busy timeout doesn't help. Use `IMMEDIATE`, plus an async helper that runs the transaction on Tokio's blocking pool [BE]
 - [x] 1 h · `UserDatabaseColumns::UserId` maps to `"user_id"`; the key column of `users` is `id` [BE]

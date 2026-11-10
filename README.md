@@ -151,9 +151,7 @@ Implemented endpoints:
 
 Errors answer with JSON `{"error": "<key>"}` and a matching status code.
 
-The other registered routes are placeholders for upcoming features. Known issues that still
-affect some of these endpoints are tracked in
-[Database layer fixes](docs/features/26-database-layer-fixes.md).
+The other registered routes are placeholders for upcoming features.
 
 > **Security note:** the library routes don't require a session yet, and the server listens
 > on all interfaces over plain HTTP. Run it on a trusted network only.

@@ -13,15 +13,13 @@ use crate::{
         DeviceInformation, LoginRequest, LoginResponse, SessionTokens,
     },
     database_related_scripts::{
-        db::convert_system_time_to_unix_time,
-        db_login_challenges, db_login_throttle,
-        db_sessions::{self, NewTokens},
+        db::convert_system_time_to_unix_time, db_login_challenges, db_login_throttle,
     },
     db::Database,
     error_types::{AppErrors, AuthenticationError, DatabaseError},
     models::{
-        LoginChallenge, QuerySeparator, Sessions, TOTPDatabaseColumns, UserDatabaseColumns,
-        UserMetadata, TOTP,
+        LoginChallenge, QuerySeparator, Sessions, SessionsDatabaseColumns, TOTPDatabaseColumns,
+        UserDatabaseColumns, UserMetadata, TOTP,
     },
     routes::auth::{
         create_new_session, create_new_token, create_token_pair, hash_token, secret_matches,
@@ -258,22 +256,36 @@ pub async fn refresh(
     now: SystemTime,
 ) -> Result<SessionTokens, AppErrors> {
     db.transact(move |conn| {
-        let tokens = create_token_pair(now)?;
-        let rotated = db_sessions::rotate_tokens(
+        // Read again inside the write lock: a parallel refresh with the same token may have
+        // replaced it since the extractor's lookup.
+        let current = Database::search_for_single_row_with_connection::<Sessions>(
             conn,
-            session.session_id,
-            &session.refresh_token,
-            &NewTokens {
-                session_hash: &tokens.session_token_hashed,
-                session_expires_at: tokens.session_token_valid_until,
-                refresh_hash: &tokens.refresh_token_hashed,
-                refresh_expires_at: tokens.refresh_token_valid_until,
-            },
-            now,
+            &[SessionsDatabaseColumns::SessionId],
+            &[&session.session_id],
+            QuerySeparator::And,
         )?;
-        if !rotated {
+        if current.is_none_or(|current| current.refresh_token != session.refresh_token) {
             return Err(AuthenticationError::UnauthorizedSession.into());
         }
+        let tokens = create_token_pair(now)?;
+        Database::update_multiple_values_with_connection::<Sessions>(
+            conn,
+            &[
+                SessionsDatabaseColumns::SessionToken,
+                SessionsDatabaseColumns::SessionTokenExpirationDate,
+                SessionsDatabaseColumns::RefreshToken,
+                SessionsDatabaseColumns::RefreshTokenExpirationDate,
+                SessionsDatabaseColumns::LastUsedAt,
+            ],
+            &[
+                &tokens.session_token_hashed,
+                &convert_system_time_to_unix_time(tokens.session_token_valid_until),
+                &tokens.refresh_token_hashed,
+                &convert_system_time_to_unix_time(tokens.refresh_token_valid_until),
+                &convert_system_time_to_unix_time(now),
+            ],
+            session.session_id,
+        )?;
         Ok(SessionTokens {
             session_token: tokens.session_token,
             session_expires_at: convert_system_time_to_unix_time(tokens.session_token_valid_until),
@@ -293,7 +305,15 @@ pub async fn end_session(db: Arc<Database>, token: Option<String>) -> Result<(),
     };
     let hash = hash_token(&token);
     db.transact(move |conn| {
-        db_sessions::delete_by_token_hash(conn, &hash)?;
+        Database::remove_entry_with_connection_based_on_columns::<Sessions>(
+            conn,
+            &[
+                SessionsDatabaseColumns::SessionToken,
+                SessionsDatabaseColumns::RefreshToken,
+            ],
+            &[&hash, &hash],
+            QuerySeparator::Or,
+        )?;
         Ok(())
     })
     .await
@@ -668,6 +688,28 @@ mod tests {
         let replayed = refresh(Arc::clone(&temp.db), session, now).await;
         assert!(matches!(
             replayed,
+            Err(AppErrors::Authentication(
+                AuthenticationError::UnauthorizedSession
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_refresh_of_a_session_ended_since_its_lookup_answers_401() {
+        let temp = TempDatabase::open();
+        alice(&temp).await;
+        let now = SystemTime::now();
+        let first = tokens(login(&temp, "alice", PASSWORD, None, now).await);
+        // What the extractor found, before a logout on another request ended the session.
+        let session = session_row(&temp, &first.session_token);
+        end_session(Arc::clone(&temp.db), Some(first.refresh_token))
+            .await
+            .unwrap();
+
+        let result = refresh(Arc::clone(&temp.db), session, now).await;
+
+        assert!(matches!(
+            result,
             Err(AppErrors::Authentication(
                 AuthenticationError::UnauthorizedSession
             ))
