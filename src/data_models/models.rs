@@ -28,7 +28,7 @@ pub enum DatabaseTypes {
 }
 
 impl DatabaseTypes {
-    pub fn get_table_name(&self) -> &str {
+    pub fn get_table_name(&self) -> &'static str {
         match self {
             DatabaseTypes::Books => "books",
             DatabaseTypes::Library => "library",

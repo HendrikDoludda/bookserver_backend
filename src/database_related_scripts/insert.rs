@@ -2,7 +2,9 @@ use crate::data_models::models::{
     BookMetadata, BookSeriesMetadata, LibraryMetadata, RecoveryCodes, SeriesLibraryConnection,
     Sessions, UserMetadata, TOTP,
 };
-use crate::database_related_scripts::db::{checked_unix_time, convert_system_time_to_unix_time};
+use crate::database_related_scripts::db::{
+    checked_unix_time, convert_system_time_to_unix_time, logged,
+};
 use crate::error_types::DatabaseError;
 use rusqlite::{params, Connection};
 
@@ -37,8 +39,11 @@ impl Insert for BookMetadata {
             self.series
         ];
 
-        conn.execute(query, params)
-            .map_err(|_| DatabaseError::InsertionFailure)?;
+        conn.execute(query, params).map_err(logged(
+            "inserting into",
+            "books",
+            DatabaseError::InsertionFailure,
+        ))?;
         let id = conn.last_insert_rowid();
         Ok(id)
     }
@@ -57,8 +62,11 @@ impl Insert for BookSeriesMetadata {
             self.end_release_year
         ];
 
-        conn.execute(query, params)
-            .map_err(|_| DatabaseError::InsertionFailure)?;
+        conn.execute(query, params).map_err(logged(
+            "inserting into",
+            "series",
+            DatabaseError::InsertionFailure,
+        ))?;
         let id = conn.last_insert_rowid();
         Ok(id)
     }
@@ -76,8 +84,11 @@ impl Insert for LibraryMetadata {
             self.description.clone()
         ];
 
-        conn.execute(query, params)
-            .map_err(|_| DatabaseError::InsertionFailure)?;
+        conn.execute(query, params).map_err(logged(
+            "inserting into",
+            "library",
+            DatabaseError::InsertionFailure,
+        ))?;
         let id = conn.last_insert_rowid();
         Ok(id)
     }
@@ -98,8 +109,11 @@ impl Insert for UserMetadata {
             self.last_login.map(convert_system_time_to_unix_time),
         ];
 
-        conn.execute(query, params)
-            .map_err(|_| DatabaseError::InsertionFailure)?;
+        conn.execute(query, params).map_err(logged(
+            "inserting into",
+            "users",
+            DatabaseError::InsertionFailure,
+        ))?;
         let id = conn.last_insert_rowid();
         Ok(id)
     }
@@ -111,8 +125,11 @@ impl Insert for SeriesLibraryConnection {
 
         let params = params![self.library_id, self.series_id];
 
-        conn.execute(query, params)
-            .map_err(|_| DatabaseError::InsertionFailure)?;
+        conn.execute(query, params).map_err(logged(
+            "inserting into",
+            "library_elements",
+            DatabaseError::InsertionFailure,
+        ))?;
         let id = conn.last_insert_rowid();
         Ok(id)
     }
@@ -142,8 +159,11 @@ impl Insert for Sessions {
             created_at,
             last_used,
         ];
-        conn.execute(query, params)
-            .map_err(|_| DatabaseError::InsertionFailure)?;
+        conn.execute(query, params).map_err(logged(
+            "inserting into",
+            "sessions",
+            DatabaseError::InsertionFailure,
+        ))?;
         let id = conn.last_insert_rowid();
         Ok(id)
     }
@@ -166,8 +186,11 @@ impl Insert for TOTP {
             convert_system_time_to_unix_time(self.created_at),
         ];
 
-        conn.execute(query, params)
-            .map_err(|_| DatabaseError::InsertionFailure)?;
+        conn.execute(query, params).map_err(logged(
+            "inserting into",
+            "totp",
+            DatabaseError::InsertionFailure,
+        ))?;
         let id = conn.last_insert_rowid();
         Ok(id)
     }
@@ -178,8 +201,11 @@ impl Insert for RecoveryCodes {
         let query = "INSERT INTO recovery_codes (user_id, code_hash, used) VALUES (?1, ?2, ?3)";
 
         let params = params![self.user_id, self.code_hashed, self.used];
-        conn.execute(query, params)
-            .map_err(|_| DatabaseError::InsertionFailure)?;
+        conn.execute(query, params).map_err(logged(
+            "inserting into",
+            "recovery_codes",
+            DatabaseError::InsertionFailure,
+        ))?;
         let id = conn.last_insert_rowid();
         Ok(id)
     }
@@ -199,8 +225,28 @@ mod tests {
             RecoveryCodesColumns, SessionsDatabaseColumns, TOTPDatabaseColumns,
             UserDatabaseColumns,
         },
-        test_support::{insert_user, memory_connection},
+        test_support::{capture_logs, insert_user, memory_connection},
     };
+
+    #[test]
+    fn a_failed_insert_is_logged_with_its_table_and_cause() {
+        let conn = memory_connection();
+        Database::insert_with_connection(&conn, &user("alice", "alice@example.com")).unwrap();
+
+        let mut result = None;
+        let logs = capture_logs(|| {
+            result = Some(Database::insert_with_connection(
+                &conn,
+                &user("alice", "alice@example.com"),
+            ));
+        });
+
+        assert!(matches!(result, Some(Err(DatabaseError::InsertionFailure))));
+        assert!(
+            logs.contains("inserting into users failed: UNIQUE constraint failed"),
+            "{logs}"
+        );
+    }
 
     /// A book the way the scanner writes one when a file tells it nothing more.
     fn bare_book(file_path: &str) -> BookMetadata {

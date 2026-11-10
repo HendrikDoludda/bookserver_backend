@@ -5,7 +5,8 @@ use std::time::{Duration, SystemTime};
 use rusqlite::{params, Connection};
 
 use crate::{
-    database_related_scripts::db::convert_system_time_to_unix_time, error_types::DatabaseError,
+    database_related_scripts::db::{convert_system_time_to_unix_time, logged},
+    error_types::DatabaseError,
 };
 
 /// Counts one login try for `name`. `false` while the name is locked: it already had
@@ -24,21 +25,33 @@ pub fn reserve(
         "DELETE FROM login_failures WHERE window_started_at <= ?1",
         [now - window.as_secs() as i64],
     )
-    .map_err(|_| DatabaseError::QueryFailure)?;
+    .map_err(logged(
+        "deleting from",
+        "login_failures",
+        DatabaseError::QueryFailure,
+    ))?;
     let changed = conn
         .execute(
             "INSERT INTO login_failures (name, attempts, window_started_at) VALUES (?1, 1, ?2) \
              ON CONFLICT (name) DO UPDATE SET attempts = attempts + 1 WHERE attempts < ?3",
             params![name, now, max_tries],
         )
-        .map_err(|_| DatabaseError::UpdatingFailure)?;
+        .map_err(logged(
+            "updating",
+            "login_failures",
+            DatabaseError::UpdatingFailure,
+        ))?;
     Ok(changed == 1)
 }
 
 /// Forgets the tries for `name`, after a successful login.
 pub fn clear(conn: &Connection, name: &str) -> Result<(), DatabaseError> {
     conn.execute("DELETE FROM login_failures WHERE name = ?1", [name])
-        .map_err(|_| DatabaseError::QueryFailure)?;
+        .map_err(logged(
+            "deleting from",
+            "login_failures",
+            DatabaseError::QueryFailure,
+        ))?;
     Ok(())
 }
 

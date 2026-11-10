@@ -180,12 +180,6 @@ pub fn update_password_to_new_password(
     Ok(())
 }
 
-fn verify_new_password() {
-    //requires the same new password twice
-    //if the new passwords are the same continue
-    //if the new password is not the same as the old password continue
-}
-
 /// Ends every session of the user, and every login still waiting for its TOTP code —
 /// e.g. after their password changed.
 pub fn end_all_sessions(conn: &Connection, user_id: i64) -> Result<usize, DatabaseError> {
@@ -250,10 +244,8 @@ pub fn create_new_session(
         log::error!("removing the device's earlier session failed: {err}");
         AuthenticationError::FailedDataStoring
     })?;
-    Database::insert_with_connection(conn, &session).map_err(|err| {
-        log::error!("storing a new session failed: {err}");
-        AuthenticationError::FailedDataStoring
-    })?;
+    Database::insert_with_connection(conn, &session)
+        .map_err(|_| AuthenticationError::FailedDataStoring)?;
     Ok(CreatedTokensReadable {
         session_token: tokens.session_token,
         refresh_token: tokens.refresh_token,

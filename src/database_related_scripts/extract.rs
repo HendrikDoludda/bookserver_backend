@@ -3,7 +3,7 @@ use crate::{
         BookMetadata, BookSeriesMetadata, LibraryMetadata, RecoveryCodes, Sessions, UserMetadata,
         WithId, TOTP,
     },
-    database_related_scripts::db_from_row::FromRow,
+    database_related_scripts::{db::logged, db_from_row::FromRow},
     error_types::DatabaseError,
 };
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
@@ -27,7 +27,7 @@ pub trait Extract: FromRow {
 
         conn.query_row(&query, params![id], Self::from_row)
             .optional()
-            .map_err(|_| DatabaseError::QueryFailure)
+            .map_err(logged("reading", Self::TABLE, DatabaseError::QueryFailure))
     }
 
     /// Fetch many rows by key in a single query. Returns each row paired with its
@@ -54,9 +54,11 @@ pub trait Extract: FromRow {
             placeholders
         );
 
-        let mut stmt = conn
-            .prepare(&query)
-            .map_err(|_| DatabaseError::TaskPreparationFailure)?;
+        let mut stmt = conn.prepare(&query).map_err(logged(
+            "reading",
+            Self::TABLE,
+            DatabaseError::TaskPreparationFailure,
+        ))?;
 
         let rows = stmt
             .query_map(params_from_iter(ids), |row| {
@@ -65,10 +67,10 @@ pub trait Extract: FromRow {
                     data: Self::from_row(row)?,
                 })
             })
-            .map_err(|_| DatabaseError::QueryFailure)?;
+            .map_err(logged("reading", Self::TABLE, DatabaseError::QueryFailure))?;
 
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|_| DatabaseError::NextRowFailure)
+            .map_err(logged("reading", Self::TABLE, DatabaseError::NextRowFailure))
     }
 }
 
@@ -124,7 +126,30 @@ impl Extract for Sessions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{insert_user, memory_connection};
+    use crate::test_support::{capture_logs, insert_user, memory_connection};
+
+    #[test]
+    fn an_unreadable_row_is_logged_once_per_read_with_its_table_and_cause() {
+        let conn = memory_connection();
+        let user_id = insert_user(&conn, "alice");
+        conn.execute(
+            "INSERT INTO totp (user_id, authentication_secret, created_at) \
+             VALUES (?1, 'secret', 'not a time')",
+            [user_id],
+        )
+        .unwrap();
+
+        let mut results = Vec::new();
+        let logs = capture_logs(|| {
+            results.push(TOTP::extract(&conn, user_id).map(|_| ()));
+            results.push(TOTP::extract_batch(&conn, &[user_id]).map(|_| ()));
+        });
+
+        assert!(matches!(results[0], Err(DatabaseError::QueryFailure)));
+        assert!(matches!(results[1], Err(DatabaseError::NextRowFailure)));
+        assert_eq!(logs.matches("reading totp failed:").count(), 2, "{logs}");
+        assert!(logs.contains("created_at"), "the cause names the column: {logs}");
+    }
 
     fn insert_totp(conn: &Connection, user_id: i64, secret: &str) {
         conn.execute(

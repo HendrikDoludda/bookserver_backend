@@ -38,6 +38,19 @@ pub fn configure(conn: &Connection) -> Result<()> {
     )
 }
 
+/// For `map_err` on a rusqlite call: logs the cause with what was being done, and answers
+/// `error` in its place — the variant alone can't say why a query failed.
+pub(crate) fn logged(
+    action: &'static str,
+    what: &'static str,
+    error: DatabaseError,
+) -> impl FnOnce(rusqlite::Error) -> DatabaseError {
+    move |cause| {
+        tracing::error!("{action} {what} failed: {cause}");
+        error
+    }
+}
+
 impl Database {
     pub fn new() -> Result<Self, DatabaseError> {
         // Ensure the database folder exists
@@ -52,9 +65,11 @@ impl Database {
         let manager = SqliteConnectionManager::file(path).with_init(|conn| configure(conn));
 
         {
-            let mut conn = manager
-                .connect()
-                .map_err(|_| DatabaseError::FailedToConnectToDatabase)?;
+            let mut conn = manager.connect().map_err(logged(
+                "opening",
+                "the database",
+                DatabaseError::FailedToConnectToDatabase,
+            ))?;
 
             migrations::run(&mut conn)?;
         }
@@ -168,7 +183,11 @@ impl Database {
             key
         );
         conn.execute(&query, rusqlite::params![id])
-            .map_err(|_| DatabaseError::ConnectionExecutableFailure)
+            .map_err(logged(
+                "deleting from",
+                db_type.get_table_name(),
+                DatabaseError::ConnectionExecutableFailure,
+            ))
     }
 
     pub fn remove_entry_with_connection_based_on_columns<T>(
@@ -285,14 +304,16 @@ impl Database {
             .pool
             .get()
             .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
-        let mut stmt = conn
-            .prepare("SELECT id FROM library")
-            .map_err(|_| DatabaseError::TaskPreparationFailure)?;
+        let mut stmt = conn.prepare("SELECT id FROM library").map_err(logged(
+            "reading",
+            "library",
+            DatabaseError::TaskPreparationFailure,
+        ))?;
         let rows = stmt
             .query_map([], |row| row.get::<_, i64>("id"))
-            .map_err(|_| DatabaseError::QueryFailure)?;
+            .map_err(logged("reading", "library", DatabaseError::QueryFailure))?;
         rows.collect::<Result<Vec<i64>, _>>()
-            .map_err(|_| DatabaseError::NextRowFailure)
+            .map_err(logged("reading", "library", DatabaseError::NextRowFailure))
     }
 
     pub fn get_books_in_series(&self, series_id: i64) -> Result<Vec<i64>, DatabaseError> {
@@ -302,12 +323,16 @@ impl Database {
             .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
         let mut stmt = conn
             .prepare("SELECT id FROM books WHERE series = ?1")
-            .map_err(|_| DatabaseError::TaskPreparationFailure)?;
+            .map_err(logged(
+                "reading",
+                "books",
+                DatabaseError::TaskPreparationFailure,
+            ))?;
         let rows = stmt
             .query_map(rusqlite::params![series_id], |row| row.get::<_, i64>("id"))
-            .map_err(|_| DatabaseError::QueryFailure)?;
+            .map_err(logged("reading", "books", DatabaseError::QueryFailure))?;
         rows.collect::<Result<Vec<i64>, _>>()
-            .map_err(|_| DatabaseError::NextRowFailure)
+            .map_err(logged("reading", "books", DatabaseError::NextRowFailure))
     }
 
     pub fn remove_entry_from_library_elements(
@@ -329,7 +354,11 @@ impl Database {
     ) -> Result<(), DatabaseError> {
         let query = "DELETE FROM library_elements WHERE series_id = ?1 AND library_id = ?2";
         conn.execute(query, rusqlite::params![series_id, library_id])
-            .map_err(|_| DatabaseError::ConnectionExecutableFailure)?;
+            .map_err(logged(
+                "deleting from",
+                "library_elements",
+                DatabaseError::ConnectionExecutableFailure,
+            ))?;
         Ok(())
     }
 
@@ -350,14 +379,25 @@ impl Database {
     ) -> Result<Vec<i64>, DatabaseError> {
         let mut stmt = conn
             .prepare("SELECT series_id FROM library_elements WHERE library_id = ?1")
-            .map_err(|_| DatabaseError::OperationFailure)?;
+            .map_err(logged(
+                "reading",
+                "library_elements",
+                DatabaseError::OperationFailure,
+            ))?;
         let rows = stmt
             .query_map(rusqlite::params![library_id], |row| {
                 row.get::<_, i64>("series_id")
             })
-            .map_err(|_| DatabaseError::OperationFailure)?;
-        rows.collect::<Result<Vec<i64>, _>>()
-            .map_err(|_| DatabaseError::OperationFailure)
+            .map_err(logged(
+                "reading",
+                "library_elements",
+                DatabaseError::OperationFailure,
+            ))?;
+        rows.collect::<Result<Vec<i64>, _>>().map_err(logged(
+            "reading",
+            "library_elements",
+            DatabaseError::OperationFailure,
+        ))
     }
 
     /// Looks up a row id by a single column value.
@@ -380,15 +420,24 @@ impl Database {
             ColumnSelector::User(col) => col.as_ref().to_string(),
         };
         let query = format!("SELECT id FROM {} WHERE {} = ?1", table_name, column_name);
-        let mut stmt = conn
-            .prepare(&query)
-            .map_err(|_| DatabaseError::TaskPreparationFailure)?;
+        let mut stmt = conn.prepare(&query).map_err(logged(
+            "reading",
+            table_name,
+            DatabaseError::TaskPreparationFailure,
+        ))?;
         let mut rows = stmt
             .query(rusqlite::params![value_to_search_for])
-            .map_err(|_| DatabaseError::QueryFailure)?;
+            .map_err(logged("reading", table_name, DatabaseError::QueryFailure))?;
 
-        if let Some(row) = rows.next().map_err(|_| DatabaseError::NextRowFailure)? {
-            let id: i64 = row.get(0).map_err(|_| DatabaseError::IdRetrievalFailure)?;
+        if let Some(row) = rows
+            .next()
+            .map_err(logged("reading", table_name, DatabaseError::NextRowFailure))?
+        {
+            let id: i64 = row.get(0).map_err(logged(
+                "reading",
+                table_name,
+                DatabaseError::IdRetrievalFailure,
+            ))?;
             Ok(Some(id))
         } else {
             Ok(None)
@@ -479,7 +528,23 @@ pub fn checked_unix_time(time: SystemTime) -> Option<i64> {
 mod tests {
     use super::*;
     use crate::error_types::AuthenticationError;
-    use crate::test_support::{insert_user, memory_connection, TempDatabase};
+    use crate::test_support::{capture_logs, insert_user, memory_connection, TempDatabase};
+
+    #[test]
+    fn logged_logs_what_failed_with_its_cause_and_answers_the_given_error() {
+        let mut answer = None;
+        let logs = capture_logs(|| {
+            answer = Some(logged("reading", "books", DatabaseError::QueryFailure)(
+                rusqlite::Error::QueryReturnedNoRows,
+            ));
+        });
+
+        assert!(matches!(answer, Some(DatabaseError::QueryFailure)));
+        assert!(
+            logs.contains("reading books failed: Query returned no rows"),
+            "{logs}"
+        );
+    }
 
     fn count_users(db: &Database) -> i64 {
         let conn = db.pool.get().unwrap();

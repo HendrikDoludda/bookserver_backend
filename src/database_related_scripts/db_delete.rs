@@ -1,7 +1,7 @@
 use rusqlite::{params_from_iter, Connection, ToSql};
 
 use crate::{
-    database_related_scripts::db_from_row::FromRow,
+    database_related_scripts::{db::logged, db_from_row::FromRow},
     error_types::DatabaseError,
     models::{
         BookDatabaseColumns, BookMetadata, BookSeriesMetadata, LibraryDatabaseColumns,
@@ -35,7 +35,7 @@ pub trait Delete: FromRow {
         let query = format!("DELETE FROM {} WHERE {}", Self::TABLE, columns_to_check);
 
         conn.execute(&query, params_from_iter(values.iter()))
-            .map_err(|_| DatabaseError::QueryFailure)
+            .map_err(logged("deleting from", Self::TABLE, DatabaseError::QueryFailure))
     }
 }
 
@@ -77,7 +77,31 @@ impl Delete for TOTP {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{insert_user, memory_connection};
+    use crate::test_support::{capture_logs, insert_user, memory_connection};
+
+    #[test]
+    fn a_failed_delete_is_logged_with_its_table_and_cause() {
+        let conn = memory_connection();
+        insert_user(&conn, "alice");
+        // Makes SQLite refuse every write on this connection.
+        conn.execute_batch("PRAGMA query_only = ON").unwrap();
+
+        let mut result = None;
+        let logs = capture_logs(|| {
+            result = Some(UserMetadata::delete(
+                &conn,
+                &[UserDatabaseColumns::Username],
+                &[&"alice"],
+                QuerySeparator::And,
+            ));
+        });
+
+        assert!(matches!(result, Some(Err(DatabaseError::QueryFailure))));
+        assert!(
+            logs.contains("deleting from users failed: attempt to write a readonly database"),
+            "{logs}"
+        );
+    }
 
     #[test]
     fn delete_reports_how_many_rows_matched() {

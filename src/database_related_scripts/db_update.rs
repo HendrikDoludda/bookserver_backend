@@ -3,6 +3,7 @@ use crate::data_models::models::{
     RecoveryCodes, RecoveryCodesColumns, SeriesDatabaseColumns, Sessions, SessionsDatabaseColumns,
     TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, TOTP,
 };
+use crate::database_related_scripts::db::logged;
 use crate::error_types::DatabaseError;
 use rusqlite::{params, params_from_iter, Connection, ToSql};
 
@@ -27,7 +28,7 @@ pub trait Update {
         );
 
         conn.execute(&query, params![new_value, id])
-            .map_err(|_| DatabaseError::UpdatingFailure)
+            .map_err(logged("updating", Self::TABLE, DatabaseError::UpdatingFailure))
     }
 
     fn update_multiple(
@@ -57,7 +58,7 @@ pub trait Update {
         let mut bound: Vec<&dyn ToSql> = values.to_vec();
         bound.push(&id);
         conn.execute(&query, params_from_iter(bound))
-            .map_err(|_| DatabaseError::UpdatingFailure)
+            .map_err(logged("updating", Self::TABLE, DatabaseError::UpdatingFailure))
     }
 }
 
@@ -106,7 +107,30 @@ impl Update for TOTP {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{insert_user, memory_connection};
+    use crate::test_support::{capture_logs, insert_user, memory_connection};
+
+    #[test]
+    fn a_failed_update_is_logged_with_its_table_and_cause() {
+        let conn = memory_connection();
+        insert_user(&conn, "alice");
+        let bob = insert_user(&conn, "bob");
+
+        let mut result = None;
+        let logs = capture_logs(|| {
+            result = Some(UserMetadata::update(
+                &conn,
+                UserDatabaseColumns::Username,
+                &"alice",
+                bob,
+            ));
+        });
+
+        assert!(matches!(result, Some(Err(DatabaseError::UpdatingFailure))));
+        assert!(
+            logs.contains("updating users failed: UNIQUE constraint failed: users.username"),
+            "{logs}"
+        );
+    }
 
     #[test]
     fn update_reports_how_many_rows_changed() {

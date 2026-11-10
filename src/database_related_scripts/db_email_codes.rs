@@ -10,7 +10,10 @@ use rusqlite::{
 };
 
 use crate::{
-    database_related_scripts::{db::convert_system_time_to_unix_time, db_from_row::FromRow},
+    database_related_scripts::{
+        db::{convert_system_time_to_unix_time, logged},
+        db_from_row::FromRow,
+    },
     error_types::DatabaseError,
     models::{CodePurpose, EmailCode},
 };
@@ -42,10 +45,7 @@ pub fn find(
         EmailCode::from_row,
     )
     .optional()
-    .map_err(|err| {
-        log::error!("reading an email code failed: {err}");
-        DatabaseError::QueryFailure
-    })
+    .map_err(logged("reading", "email_codes", DatabaseError::QueryFailure))
 }
 
 /// Writes the row for this user and purpose, replacing an earlier one.
@@ -72,10 +72,11 @@ pub fn save(conn: &Connection, code: &EmailCode) -> Result<(), DatabaseError> {
             convert_system_time_to_unix_time(code.window_started_at),
         ],
     )
-    .map_err(|err| {
-        log::error!("saving an email code failed: {err}");
-        DatabaseError::InsertionFailure
-    })?;
+    .map_err(logged(
+        "inserting into",
+        "email_codes",
+        DatabaseError::InsertionFailure,
+    ))?;
     Ok(())
 }
 
@@ -99,7 +100,11 @@ pub fn reserve_attempt(
                 convert_system_time_to_unix_time(now)
             ],
         )
-        .map_err(|_| DatabaseError::UpdatingFailure)?;
+        .map_err(logged(
+            "updating",
+            "email_codes",
+            DatabaseError::UpdatingFailure,
+        ))?;
     Ok(changed == 1)
 }
 
@@ -116,7 +121,11 @@ pub fn consume(
             "DELETE FROM email_codes WHERE user_id = ?1 AND purpose = ?2 AND code_hash = ?3",
             params![user_id, purpose, code_hash],
         )
-        .map_err(|_| DatabaseError::QueryFailure)?;
+        .map_err(logged(
+            "deleting from",
+            "email_codes",
+            DatabaseError::QueryFailure,
+        ))?;
     Ok(changed == 1)
 }
 

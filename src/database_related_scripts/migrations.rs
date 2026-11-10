@@ -1,5 +1,6 @@
+use crate::database_related_scripts::db::logged;
 use crate::error_types::DatabaseError;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 // A single migration: a version number, a human-readable label, and the SQL
 // to run. Versions must be unique and applied in ascending order.
@@ -33,30 +34,43 @@ pub fn run(conn: &mut Connection) -> Result<(), DatabaseError> {
         )",
         [],
     )
-    .map_err(|_| DatabaseError::DatabaseInitializationFailure)?;
+    .map_err(logged(
+        "creating",
+        "schema_migrations",
+        DatabaseError::DatabaseInitializationFailure,
+    ))?;
 
     // 2. Walk the migrations in order and apply any that are missing.
     for m in MIGRATIONS {
-        let already_applied = match conn.query_row(
-            "SELECT 1 FROM schema_migrations WHERE version = ?1",
-            [m.version],
-            |_| Ok(()),
-        ) {
-            Ok(()) => true,
-            Err(rusqlite::Error::QueryReturnedNoRows) => false,
-            Err(_) => return Err(DatabaseError::OperationFailure),
-        };
+        let already_applied = conn
+            .query_row(
+                "SELECT 1 FROM schema_migrations WHERE version = ?1",
+                [m.version],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(logged(
+                "reading",
+                "schema_migrations",
+                DatabaseError::OperationFailure,
+            ))?
+            .is_some();
 
         if already_applied {
             continue;
         }
 
-        let tx = conn
-            .transaction()
-            .map_err(|_| DatabaseError::TransactionFailure)?;
+        let tx = conn.transaction().map_err(logged(
+            "starting a transaction for migration",
+            m.name,
+            DatabaseError::TransactionFailure,
+        ))?;
 
-        tx.execute_batch(m.sql)
-            .map_err(|_| DatabaseError::DatabaseInitializationFailure)?;
+        tx.execute_batch(m.sql).map_err(logged(
+            "applying migration",
+            m.name,
+            DatabaseError::DatabaseInitializationFailure,
+        ))?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -67,10 +81,17 @@ pub fn run(conn: &mut Connection) -> Result<(), DatabaseError> {
             "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
             rusqlite::params![m.version, now],
         )
-        .map_err(|_| DatabaseError::ConnectionExecutableFailure)?;
+        .map_err(logged(
+            "recording migration",
+            m.name,
+            DatabaseError::ConnectionExecutableFailure,
+        ))?;
 
-        tx.commit()
-            .map_err(|_| DatabaseError::OperationCommitFailure)?;
+        tx.commit().map_err(logged(
+            "committing migration",
+            m.name,
+            DatabaseError::OperationCommitFailure,
+        ))?;
 
         tracing::info!("Applied migration {:04} {}", m.version, m.name);
     }

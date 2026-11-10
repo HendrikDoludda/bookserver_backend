@@ -3,9 +3,9 @@ use crate::data_models::models::{
     QuerySeparator, RecoveryCodes, RecoveryCodesColumns, SeriesDatabaseColumns, Sessions,
     SessionsDatabaseColumns, TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, TOTP,
 };
-use crate::database_related_scripts::db_from_row::FromRow;
+use crate::database_related_scripts::{db::logged, db_from_row::FromRow};
 use crate::error_types::DatabaseError;
-use rusqlite::{Connection, Result, ToSql};
+use rusqlite::{Connection, OptionalExtension, Result, ToSql};
 
 /// Find rows by arbitrary column values, joined with `AND` or `OR`.
 /// Column names come from trusted enums; values are always bound parameters.
@@ -33,15 +33,9 @@ pub trait Search: FromRow {
             Self::TABLE,
             values_to_check
         );
-        let result = conn.query_row(&query, values, Self::from_row);
-        match result {
-            Ok(entry) => Ok(Some(entry)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(err) => {
-                log::error!("searching {} failed: {err}", Self::TABLE);
-                Err(DatabaseError::QueryFailure)
-            }
-        }
+        conn.query_row(&query, values, Self::from_row)
+            .optional()
+            .map_err(logged("reading", Self::TABLE, DatabaseError::QueryFailure))
     }
 
     fn search_for_multiple_rows(
@@ -61,15 +55,17 @@ pub trait Search: FromRow {
             .join(query_separator.as_str());
         let query = format!("SELECT * FROM {} WHERE {}", Self::TABLE, values_to_check);
 
-        let mut stmt = conn
-            .prepare(&query)
-            .map_err(|_| DatabaseError::TaskPreparationFailure)?;
+        let mut stmt = conn.prepare(&query).map_err(logged(
+            "reading",
+            Self::TABLE,
+            DatabaseError::TaskPreparationFailure,
+        ))?;
 
         let result = stmt
             .query_map(values, Self::from_row)
-            .map_err(|_| DatabaseError::QueryFailure)?
+            .map_err(logged("reading", Self::TABLE, DatabaseError::QueryFailure))?
             .collect::<Result<Vec<Self>, _>>()
-            .map_err(|_| DatabaseError::OperationFailure)?;
+            .map_err(logged("reading", Self::TABLE, DatabaseError::OperationFailure))?;
         Ok(result)
     }
 }
@@ -112,7 +108,44 @@ impl Search for TOTP {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{insert_user, memory_connection};
+    use crate::test_support::{capture_logs, insert_user, memory_connection};
+
+    #[test]
+    fn an_unreadable_row_is_logged_once_per_search_and_a_missing_one_not_at_all() {
+        let conn = memory_connection();
+        let user_id = insert_user(&conn, "alice");
+        insert_totp(&conn, user_id, &"not a number");
+        let by_user = |user: i64| {
+            TOTP::search_for_row(
+                &conn,
+                &[TOTPDatabaseColumns::UserId],
+                &[&user],
+                QuerySeparator::And,
+            )
+        };
+
+        let mut results = Vec::new();
+        let logs = capture_logs(|| {
+            results.push(by_user(user_id).map(|_| ()));
+            results.push(
+                TOTP::search_for_multiple_rows(
+                    &conn,
+                    &[TOTPDatabaseColumns::UserId],
+                    &[&user_id],
+                    QuerySeparator::And,
+                )
+                .map(|_| ()),
+            );
+        });
+        assert!(matches!(results[0], Err(DatabaseError::QueryFailure)));
+        assert!(matches!(results[1], Err(DatabaseError::OperationFailure)));
+        assert_eq!(logs.matches("reading totp failed:").count(), 2, "{logs}");
+
+        let mut missing = None;
+        let logs = capture_logs(|| missing = Some(by_user(user_id + 1)));
+        assert!(matches!(missing, Some(Ok(None))));
+        assert_eq!(logs, "", "finding nothing is no error");
+    }
 
     fn insert_totp(conn: &Connection, user_id: i64, created_at: &dyn ToSql) {
         conn.execute(

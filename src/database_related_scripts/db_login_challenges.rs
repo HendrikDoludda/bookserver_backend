@@ -5,7 +5,10 @@ use std::time::SystemTime;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
-    database_related_scripts::{db::convert_system_time_to_unix_time, db_from_row::FromRow},
+    database_related_scripts::{
+        db::{convert_system_time_to_unix_time, logged},
+        db_from_row::FromRow,
+    },
     error_types::DatabaseError,
     models::LoginChallenge,
 };
@@ -20,7 +23,11 @@ pub fn create(
         "DELETE FROM login_challenges WHERE expires_at <= ?1",
         [convert_system_time_to_unix_time(now)],
     )
-    .map_err(|_| DatabaseError::QueryFailure)?;
+    .map_err(logged(
+        "deleting from",
+        "login_challenges",
+        DatabaseError::QueryFailure,
+    ))?;
     conn.execute(
         "INSERT INTO login_challenges \
              (user_id, token_hashed, expires_at, device_id, device_name, platform) \
@@ -34,10 +41,11 @@ pub fn create(
             challenge.platform,
         ],
     )
-    .map_err(|err| {
-        log::error!("storing a login challenge failed: {err}");
-        DatabaseError::InsertionFailure
-    })?;
+    .map_err(logged(
+        "inserting into",
+        "login_challenges",
+        DatabaseError::InsertionFailure,
+    ))?;
     Ok(())
 }
 
@@ -53,15 +61,20 @@ pub fn find_live(
         LoginChallenge::from_row,
     )
     .optional()
-    .map_err(|err| {
-        log::error!("reading a login challenge failed: {err}");
-        DatabaseError::QueryFailure
-    })
+    .map_err(logged(
+        "reading",
+        "login_challenges",
+        DatabaseError::QueryFailure,
+    ))
 }
 
 pub fn delete_for_user(conn: &Connection, user_id: i64) -> Result<usize, DatabaseError> {
     conn.execute("DELETE FROM login_challenges WHERE user_id = ?1", [user_id])
-        .map_err(|_| DatabaseError::QueryFailure)
+        .map_err(logged(
+            "deleting from",
+            "login_challenges",
+            DatabaseError::QueryFailure,
+        ))
 }
 
 #[cfg(test)]

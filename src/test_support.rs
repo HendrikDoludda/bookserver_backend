@@ -2,8 +2,9 @@
 
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use rusqlite::{params, Connection};
@@ -56,6 +57,36 @@ pub fn code_in(mail: &EmailInformation) -> String {
         .find_map(|line| line.strip_prefix("    "))
         .expect("the mail carries a code")
         .to_string()
+}
+
+/// Runs `f` and answers everything it logged through `tracing` on this thread, as plain text.
+pub fn capture_logs(f: impl FnOnce()) -> String {
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let writer = {
+        let buffer = Arc::clone(&buffer);
+        move || LogBuffer(Arc::clone(&buffer))
+    };
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(writer)
+        .with_ansi(false)
+        .finish();
+    tracing::subscriber::with_default(subscriber, f);
+    let bytes = buffer.lock().unwrap().clone();
+    String::from_utf8(bytes).expect("log lines are UTF-8")
+}
+
+/// The writer behind `capture_logs`: every line lands in the shared buffer.
+struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+impl Write for LogBuffer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 /// A mailer whose SMTP server refuses every connection, for the paths where sending fails.
