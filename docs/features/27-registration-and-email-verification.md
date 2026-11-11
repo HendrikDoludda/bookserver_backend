@@ -1,6 +1,6 @@
 # Registration & email verification
 
-State: in progress
+State: completed
 
 New accounts, by open sign-up. The first account needs the setup code the server logs at start,
 becomes admin and is verified on the spot.
@@ -19,4 +19,4 @@ together with the password marks the email verified and logs the user in.
 - [x] 1 h · `check_email` and `check_username` in `auth.rs`, run on sign-up: the email is printable ASCII with exactly one `@` between non-empty parts, none of `( ) < > [ ] : ; \ , "` and at most 254 characters; the username is 3–32 characters from `A–Z a–z 0–9 _ . -` [BE]
 - [x] 2 h · Keep verification codes in `email_codes` ([30](30-password-reset.md)), with its limit of 5 tries per code; the `email_verification` table goes [DB] [BE]
 - [x] 2 h · `POST /api/v1/auth/verify_email/resend` with `{username_or_email}` mails a new code to an unverified account, within the `email_codes` limits, from a background task: 202 at once, 503 `email_not_configured` when email is off [BE]
-- [ ] 1 h · Each sign-up first deletes the accounts still unverified 48 hours after they were created, through the generic `Delete` with `AtMost`, before checking whether the email and username are free — today they stay forever, so anyone can hold an address or a username they don't own [BE]
+- [x] 1 h · Each sign-up first deletes the accounts still unverified 48 hours after they were created, through the generic `Delete` with `AtMost`, before checking whether the email and username are free — otherwise they would stay forever, so anyone could hold an address or a username they don't own [BE]

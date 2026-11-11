@@ -317,6 +317,7 @@ pub enum UserDatabaseColumns {
     Email,
     EmailVerified,
     Role,
+    CreatedAt,
     LastLogin,
 }
 impl AsRef<str> for UserDatabaseColumns {
@@ -328,6 +329,7 @@ impl AsRef<str> for UserDatabaseColumns {
             UserDatabaseColumns::Email => "email",
             UserDatabaseColumns::EmailVerified => "email_verified",
             UserDatabaseColumns::Role => "role",
+            UserDatabaseColumns::CreatedAt => "created_at",
             UserDatabaseColumns::LastLogin => "last_login",
         }
     }

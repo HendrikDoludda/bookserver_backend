@@ -1,6 +1,9 @@
 //! Signing up, and confirming the email address with the emailed code.
 
-use std::{sync::Arc, time::SystemTime};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use rusqlite::Connection;
 
@@ -8,10 +11,14 @@ use crate::{
     data_models::authentication_model::{
         DeviceInformation, LoginResponse, UserCreationRequest, VerifyEmailRequest,
     },
-    database_related_scripts::{db_email_codes, db_login_throttle, db_users},
+    database_related_scripts::{
+        db::convert_system_time_to_unix_time, db_email_codes, db_login_throttle, db_users,
+    },
     db::Database,
-    error_types::{AppErrors, AuthenticationError},
-    models::{CodePurpose, QuerySeparator, Role, UserDatabaseColumns, UserMetadata},
+    error_types::{AppErrors, AuthenticationError, DatabaseError},
+    models::{
+        CodePurpose, Comparison, QuerySeparator, Role, UserDatabaseColumns, UserMetadata,
+    },
     routes::{
         auth::{check_email, check_new_password, check_username, hash_secret},
         email_codes::{
@@ -24,6 +31,8 @@ use crate::{
 };
 
 const PURPOSE: CodePurpose = CodePurpose::VerifyEmail;
+/// How long a new account may stay unverified before the next sign-up deletes it.
+const UNVERIFIED_LIFETIME: Duration = Duration::from_secs(48 * 60 * 60);
 
 /// How a sign-up ended.
 pub enum SignUpOutcome {
@@ -103,6 +112,8 @@ pub async fn create_account(
 
     let created = Arc::clone(&db)
         .transact(move |conn| {
+            // First, so an address or a name held by an account nobody verified is free again.
+            delete_stale_unverified(conn, now)?;
             check_name_and_email_are_free(conn, &email, &username)?;
             let first = !db_users::any_exists(conn)?;
             // Required from every address, localhost included: behind `tailscale serve` or
@@ -154,6 +165,21 @@ pub async fn create_account(
             Ok(SignUpOutcome::VerificationRequired)
         }
     }
+}
+
+/// Deletes the accounts still unverified `UNVERIFIED_LIFETIME` after they were created; the
+/// foreign keys' cascade takes their codes with them.
+fn delete_stale_unverified(conn: &Connection, now: SystemTime) -> Result<usize, DatabaseError> {
+    let cutoff = convert_system_time_to_unix_time(now) - UNVERIFIED_LIFETIME.as_secs() as i64;
+    Database::remove_entries_where_with_connection::<UserMetadata>(
+        conn,
+        &[
+            (UserDatabaseColumns::EmailVerified, Comparison::Equal),
+            (UserDatabaseColumns::CreatedAt, Comparison::AtMost),
+        ],
+        &[&false, &cutoff],
+        QuerySeparator::And,
+    )
 }
 
 /// 409 for an email address or a username another account already has, ignoring case.
@@ -716,6 +742,66 @@ mod tests {
             awaits_code(&sign_up(&temp, &mailer, "bob", now).await),
             "signing up again works"
         );
+    }
+
+    const FORTY_EIGHT_HOURS: Duration = Duration::from_secs(48 * 60 * 60);
+
+    #[tokio::test]
+    async fn a_sign_up_deletes_the_accounts_still_unverified_48_hours_after_their_sign_up() {
+        let temp = TempDatabase::open();
+        let (mailer, sent) = Mailer::capture();
+        let start = SystemTime::now();
+        signed_in(sign_up(&temp, &mailer, "alice", start).await);
+        for name in ["bob", "carol", "dave"] {
+            assert!(awaits_code(&sign_up(&temp, &mailer, name, start).await));
+        }
+        let (_, _, carols_code) = mails(&sent)
+            .into_iter()
+            .find(|(_, name, _)| name == "carol")
+            .expect("carol's code mail");
+        logged_in(verify(&temp, "carol", PASSWORD, &carols_code, start).await);
+
+        let exactly_48_hours_later = start + FORTY_EIGHT_HOURS;
+        let again = sign_up(&temp, &mailer, "bob", exactly_48_hours_later).await;
+
+        assert!(awaits_code(&again), "bob's address and name are free again");
+        assert_eq!(account(&temp, "dave"), None, "every such account goes");
+        assert_eq!(account(&temp, "alice"), Some((true, true)));
+        assert_eq!(account(&temp, "carol"), Some((false, true)));
+        assert_eq!(
+            count(&temp, "SELECT COUNT(*) FROM email_codes"),
+            1,
+            "only the new account's code is left"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_account_unverified_for_a_second_less_keeps_its_address_and_name() {
+        let temp = TempDatabase::open();
+        let (mailer, _sent) = Mailer::capture();
+        let start = SystemTime::now();
+        signed_in(sign_up(&temp, &mailer, "alice", start).await);
+        assert!(awaits_code(&sign_up(&temp, &mailer, "bob", start).await));
+        let a_second_short = start + FORTY_EIGHT_HOURS - Duration::from_secs(1);
+
+        let same_address = create(
+            &temp,
+            &mailer,
+            request("robert", "bob@example.com"),
+            a_second_short,
+        )
+        .await;
+        let same_name = create(
+            &temp,
+            &mailer,
+            request("bob", "robert@example.com"),
+            a_second_short,
+        )
+        .await;
+
+        assert_eq!(failure(&same_address), "email taken");
+        assert_eq!(failure(&same_name), "username taken");
+        assert_eq!(account(&temp, "bob"), Some((false, false)));
     }
 
     // === Verification ========================================================

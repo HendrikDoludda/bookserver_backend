@@ -137,7 +137,7 @@ Every endpoint except `/health` and `/api/v1/auth/…` needs `Authorization: Bea
 | `GET` | `/api/v1/books/{id}/file` | Stream the book file (supports `Range`) |
 | `POST` | `/api/v1/scan` | Scan `BOOK_DIRS` and catalog new files |
 | `DELETE` | `/api/v1/libraries/{id}` | Delete a library |
-| `POST` | `/api/v1/auth/register` | Sign up; the first account sends the setup code from the server log and becomes admin. Answers the login tokens, or `202` when the account must first confirm its email |
+| `POST` | `/api/v1/auth/register` | Sign up; the first account sends the setup code from the server log and becomes admin. Answers the login tokens, or `202` when the account must first confirm its email — within 48 hours, or a later sign-up deletes it |
 | `POST` | `/api/v1/auth/verify_email` | Confirm the email with the mailed code and the password; answers like login |
 | `POST` | `/api/v1/auth/verify_email/resend` | Mail a new verification code; always `202` |
 | `POST` | `/api/v1/auth/login` | Log in; answers the session and refresh tokens, or a challenge when two-factor auth is on |

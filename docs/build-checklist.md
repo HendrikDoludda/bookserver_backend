@@ -7,7 +7,7 @@
 | Error responses & status codes | 0 | completed | [33-error-responses](features/33-error-responses.md) |
 | Login, logout & sessions | 1 | completed | [03-login-and-sessions](features/03-login-and-sessions.md) |
 | Two-factor auth (TOTP) | 1 | completed | [04-two-factor-auth-totp](features/04-two-factor-auth-totp.md) |
-| Registration & email verification | 1 | in progress | [27-registration-and-email-verification](features/27-registration-and-email-verification.md) |
+| Registration & email verification | 1 | completed | [27-registration-and-email-verification](features/27-registration-and-email-verification.md) |
 | Roles & access control | 1 | completed | [28-roles-and-access-control](features/28-roles-and-access-control.md) |
 | Account management | 1 | in progress | [29-account-management](features/29-account-management.md) |
 | Password reset | 1 | in progress | [30-password-reset](features/30-password-reset.md) |
