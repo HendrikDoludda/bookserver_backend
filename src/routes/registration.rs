@@ -16,9 +16,7 @@ use crate::{
     },
     db::Database,
     error_types::{AppErrors, AuthenticationError, DatabaseError},
-    models::{
-        CodePurpose, Comparison, QuerySeparator, Role, UserDatabaseColumns, UserMetadata,
-    },
+    models::{CodePurpose, Comparison, QuerySeparator, Role, UserDatabaseColumns, UserMetadata},
     routes::{
         auth::{check_email, check_new_password, check_username, hash_secret},
         email_codes::{
@@ -948,7 +946,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_hijacked_sign_up_can_be_verified_only_after_a_password_reset() {
+    async fn a_hijacked_sign_up_goes_to_the_address_owner_through_a_password_reset() {
         let temp = TempDatabase::open();
         let (mailer, sent) = Mailer::capture();
         let start = SystemTime::now();
@@ -992,15 +990,21 @@ mod tests {
             .await
             .unwrap();
 
-        logged_in(
-            verify(
-                &temp,
-                "victim@example.com",
-                victims_password,
-                &verification_code,
-                at(40),
-            )
-            .await,
+        // The reset code reached the victim's mailbox too, so the reset verified the address.
+        logged_in(login(&temp, "victim@example.com", victims_password, at(40)).await);
+        assert_eq!(
+            failure(
+                &verify(
+                    &temp,
+                    "victim@example.com",
+                    victims_password,
+                    &verification_code,
+                    at(40),
+                )
+                .await
+            ),
+            "invalid code",
+            "a verified account has no code left to redeem"
         );
         assert_eq!(
             failure(&login(&temp, "mallory", "mallory's password", at(50)).await),

@@ -7,10 +7,10 @@ use crate::{
     },
     error_types::DatabaseError,
     models::{
-        BookDatabaseColumns, BookMetadata, BookSeriesMetadata, Comparison,
-        LibraryDatabaseColumns, LibraryMetadata, QuerySeparator, RecoveryCodes,
-        RecoveryCodesColumns, SeriesDatabaseColumns, Sessions, SessionsDatabaseColumns,
-        TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, TOTP,
+        BookDatabaseColumns, BookMetadata, BookSeriesMetadata, Comparison, LibraryDatabaseColumns,
+        LibraryMetadata, QuerySeparator, RecoveryCodes, RecoveryCodesColumns,
+        SeriesDatabaseColumns, Sessions, SessionsDatabaseColumns, TOTPDatabaseColumns,
+        UserDatabaseColumns, UserMetadata, TOTP,
     },
 };
 

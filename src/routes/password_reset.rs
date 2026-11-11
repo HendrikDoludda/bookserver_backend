@@ -22,8 +22,8 @@ pub async fn send_reset_code(db: Arc<Database>, mailer: Mailer, email: String, n
     send_code(db, mailer, PURPOSE, email, now).await;
 }
 
-/// Redeems a reset code. On success the account has the new password and no sessions;
-/// the user logs in again, so a second factor still applies.
+/// Redeems a reset code. On success the account has the new password, a verified email and no
+/// sessions; the user logs in again, so a second factor still applies.
 pub async fn confirm_reset(
     db: Arc<Database>,
     request: ConfirmPasswordResetRequest,
@@ -52,10 +52,14 @@ pub async fn confirm_reset(
         if !db_email_codes::consume(conn, user_id, PURPOSE, &code_hash)? {
             return Err(AuthenticationError::InvalidValidationCode.into());
         }
-        Database::update_value_with_connection::<UserMetadata>(
+        // The code reached the stored address, which proves it just as a verification code does.
+        Database::update_multiple_values_with_connection::<UserMetadata>(
             conn,
-            UserDatabaseColumns::PasswordHash,
-            &new_hash,
+            &[
+                UserDatabaseColumns::PasswordHash,
+                UserDatabaseColumns::EmailVerified,
+            ],
+            &[&new_hash, &true],
             user_id,
         )?;
         end_all_sessions(conn, user_id)?;
@@ -70,14 +74,15 @@ mod tests {
 
     use super::*;
     use crate::{
-        routes::{auth::secret_matches, email_codes::CODE_LIFETIME},
+        data_models::authentication_model::{LoginRequest, LoginResponse},
+        routes::{auth::secret_matches, email_codes::CODE_LIFETIME, login::log_in},
         test_support::{code_in, TempDatabase},
     };
 
     const OLD: &str = "old password 123";
     const NEW: &str = "new password 456";
 
-    /// Alice, stored as `Alice@Example.com`, with one session.
+    /// Alice, unverified, stored as `Alice@Example.com`, with one session.
     async fn alice(temp: &TempDatabase) -> i64 {
         let password_hash = hash_secret(OLD.to_string()).await.unwrap();
         temp.db
@@ -267,6 +272,53 @@ mod tests {
 
         let again = confirm(&temp, &code, start + Duration::from_secs(90)).await;
         assert!(is_invalid_code(&again), "a code works only once");
+    }
+
+    async fn log_in_as_alice(
+        temp: &TempDatabase,
+        password: &str,
+        now: SystemTime,
+    ) -> Result<LoginResponse, AppErrors> {
+        let request = LoginRequest {
+            username_or_email: "alice".to_string(),
+            password: password.to_string(),
+            device_name: "phone".to_string(),
+            device_id: None,
+            platform: "ios".to_string(),
+        };
+        log_in(Arc::clone(&temp.db), request, now).await
+    }
+
+    fn is_unverified(result: &Result<LoginResponse, AppErrors>) -> bool {
+        matches!(
+            result,
+            Err(AppErrors::Authentication(
+                AuthenticationError::EmailNotVerified
+            ))
+        )
+    }
+
+    #[tokio::test]
+    async fn the_emailed_code_also_verifies_the_email_so_the_new_password_logs_in() {
+        let temp = TempDatabase::open();
+        alice(&temp).await;
+        let (mailer, sent) = Mailer::capture();
+        let now = SystemTime::now();
+        assert!(is_unverified(&log_in_as_alice(&temp, OLD, now).await));
+        request(&temp, &mailer, "alice@example.com", now).await;
+        let code = code_in(&sent.lock().unwrap()[0]);
+
+        assert!(is_invalid_code(&confirm(&temp, "00000000", now).await));
+        assert!(
+            is_unverified(&log_in_as_alice(&temp, OLD, now).await),
+            "a wrong code verifies nothing"
+        );
+
+        confirm(&temp, &code, now).await.unwrap();
+        assert!(matches!(
+            log_in_as_alice(&temp, NEW, now).await,
+            Ok(LoginResponse::Ok(_))
+        ));
     }
 
     #[tokio::test]

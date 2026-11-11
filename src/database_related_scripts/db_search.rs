@@ -184,8 +184,7 @@ mod tests {
         let row_without_columns = TOTP::search_for_row(&conn, &[], &[], QuerySeparator::And);
         let rows_without_columns =
             TOTP::search_for_multiple_rows(&conn, &[], &[], QuerySeparator::And);
-        let row_without_value =
-            TOTP::search_for_row(&conn, &one_column, &[], QuerySeparator::And);
+        let row_without_value = TOTP::search_for_row(&conn, &one_column, &[], QuerySeparator::And);
         let rows_without_value =
             TOTP::search_for_multiple_rows(&conn, &one_column, &[], QuerySeparator::And);
 
