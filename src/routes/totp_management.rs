@@ -14,7 +14,8 @@ use crate::{
     data_models::{
         authentication_model::{DeviceInformation, SessionTokens},
         totp_model::{
-            ConfirmTOTPRequest, DisableTOTPRequest, RecoveryCodesIssued, TOTPSetup, TOTPStatus,
+            ConfirmTOTPRequest, DisableTOTPRequest, RecoveryCodesIssued, RenewRecoveryCodesRequest,
+            TOTPSetup, TOTPStatus,
         },
     },
     database_related_scripts::db_login_challenges,
@@ -269,24 +270,7 @@ pub async fn disable(
     now: SystemTime,
 ) -> Result<(), AppErrors> {
     let DisableTOTPRequest { password, code } = request;
-    let enabled = Arc::clone(&db)
-        .read(move |conn| Ok(has_totp(conn, user_id)?))
-        .await?;
-    if !enabled {
-        return Err(AuthenticationError::TotpNotEnabled.into());
-    }
-    check_current_password(Arc::clone(&db), user_id, password, now).await?;
-    let totp = Arc::clone(&db)
-        .transact(move |conn| reserve_code_try(conn, user_id, now))
-        .await?;
-    let proof = check_code(
-        Arc::clone(&db),
-        cipher,
-        totp,
-        TypedCode::from_either(code),
-        now,
-    )
-    .await?;
+    let proof = prove_second_factor(Arc::clone(&db), cipher, user_id, password, code, now).await?;
 
     db.transact(move |conn| {
         use_proof(conn, user_id, &proof)?;
@@ -296,6 +280,36 @@ pub async fn disable(
         Ok(())
     })
     .await
+}
+
+// === Renewing the recovery codes =============================================
+
+/// Replaces the recovery codes while 2FA stays on, checked like turning 2FA off. Answers the new
+/// codes, shown only now; the old ones stop working.
+pub async fn renew_recovery_codes(
+    db: Arc<Database>,
+    cipher: &TotpCipher,
+    user_id: i64,
+    request: RenewRecoveryCodesRequest,
+    now: SystemTime,
+) -> Result<RecoveryCodesIssued, AppErrors> {
+    let RenewRecoveryCodesRequest { password, code } = request;
+    let proof = prove_second_factor(Arc::clone(&db), cipher, user_id, password, code, now).await?;
+
+    let codes = generate_recovery_codes()?;
+    let hashes: Vec<String> = codes
+        .iter()
+        .map(|code| hash_token(&normalize_recovery_code(code)))
+        .collect();
+    db.transact(move |conn| {
+        use_proof(conn, user_id, &proof)?;
+        replace_recovery_codes(conn, user_id, &hashes)?;
+        Ok(())
+    })
+    .await?;
+    Ok(RecoveryCodesIssued {
+        recovery_codes: codes,
+    })
 }
 
 // === Checking a code =========================================================
@@ -328,6 +342,30 @@ enum Proof {
     AuthenticatorStep { step: i64, checked_secret: String },
     /// The hash of an unused recovery code.
     RecoveryCode { code_hash: String },
+}
+
+/// The checks before a 2FA setting changes: 2FA is on, the password is right, and so is an
+/// authenticator or recovery code, whose try counts against the wrong-code lock. Answers the proof
+/// for the caller's final transaction to use up.
+async fn prove_second_factor(
+    db: Arc<Database>,
+    cipher: &TotpCipher,
+    user_id: i64,
+    password: String,
+    code: String,
+    now: SystemTime,
+) -> Result<Proof, AppErrors> {
+    let enabled = Arc::clone(&db)
+        .read(move |conn| Ok(has_totp(conn, user_id)?))
+        .await?;
+    if !enabled {
+        return Err(AuthenticationError::TotpNotEnabled.into());
+    }
+    check_current_password(Arc::clone(&db), user_id, password, now).await?;
+    let totp = Arc::clone(&db)
+        .transact(move |conn| reserve_code_try(conn, user_id, now))
+        .await?;
+    check_code(db, cipher, totp, TypedCode::from_either(code), now).await
 }
 
 /// Counts a try against the user's wrong-code lock, inside the caller's reserve transaction, and
@@ -808,6 +846,29 @@ mod tests {
             at(secs),
         )
         .await
+    }
+
+    /// Asks for new recovery codes; answers them.
+    async fn renew(
+        temp: &TempDatabase,
+        account: &Account,
+        password: &str,
+        code: &str,
+        secs: u64,
+    ) -> Result<Vec<String>, AppErrors> {
+        let request = RenewRecoveryCodesRequest {
+            password: password.to_string(),
+            code: code.to_string(),
+        };
+        renew_recovery_codes(
+            Arc::clone(&temp.db),
+            &test_cipher(),
+            account.user_id,
+            request,
+            at(secs),
+        )
+        .await
+        .map(|issued| issued.recovery_codes)
     }
 
     fn stored_setup(temp: &TempDatabase, user_id: i64) -> Option<TOTP> {
@@ -1710,6 +1771,112 @@ mod tests {
         let mut outcomes = [outcome(&a), outcome(&b)];
         outcomes.sort_unstable();
         assert_eq!(outcomes, ["accepted", "not enabled"]);
+    }
+
+    // --- Renewing the recovery codes -------------------------------------------
+
+    #[tokio::test]
+    async fn new_recovery_codes_replace_the_old_ones_while_2fa_stays_on() {
+        let temp = TempDatabase::open();
+        let (alice, app, old_codes) = enrolled(&temp, "alice").await;
+        let user = alice.user_id;
+
+        let new_codes = renew(&temp, &alice, PASSWORD, &code_at(&app, LATER), LATER)
+            .await
+            .unwrap();
+
+        assert_eq!(new_codes.len(), RECOVERY_CODE_COUNT);
+        assert_eq!(stored_code_hashes(&temp, &alice), hashes_of(&new_codes));
+        assert!(stored_setup(&temp, user).unwrap().confirmed, "2FA stays on");
+        assert_eq!(
+            lock_state(&temp, user),
+            (0, 0, None),
+            "the right code lifts its counted try"
+        );
+        assert_eq!(
+            sessions_of(&temp, &alice),
+            vec![alice.session_id],
+            "no session ends"
+        );
+        let challenge = challenge_at(&temp, user, "tablet", LATER);
+        let old = TypedCode::Recovery(old_codes[0].clone());
+        assert_eq!(
+            outcome(&finish(&temp, challenge.clone(), old, LATER).await),
+            "code"
+        );
+        let new = TypedCode::Recovery(new_codes[0].clone());
+        assert_eq!(
+            outcome(&finish(&temp, challenge, new, LATER).await),
+            "accepted"
+        );
+    }
+
+    #[tokio::test]
+    async fn renewing_needs_the_password_and_a_code_whose_tries_count_against_the_lock() {
+        let temp = TempDatabase::open();
+        let (alice, app, old_codes) = enrolled(&temp, "alice").await;
+        let right_code = code_at(&app, LATER);
+
+        let wrong_password = renew(&temp, &alice, "wrong horse battery", &right_code, LATER).await;
+        assert_eq!(outcome(&wrong_password), "password");
+        assert_eq!(
+            lock_state(&temp, alice.user_id),
+            (0, 0, None),
+            "no code try is spent"
+        );
+
+        for _ in 0..5 {
+            let wrong = renew(&temp, &alice, PASSWORD, &wrong_code(&app, LATER), LATER).await;
+            assert_eq!(outcome(&wrong), "code");
+        }
+        let locked = renew(&temp, &alice, PASSWORD, &right_code, LATER).await;
+        assert_eq!(outcome(&locked), "locked", "even the right code");
+        assert_eq!(stored_code_hashes(&temp, &alice), hashes_of(&old_codes));
+    }
+
+    #[tokio::test]
+    async fn a_recovery_code_proves_a_renewal_too() {
+        let temp = TempDatabase::open();
+        let (alice, _, old_codes) = enrolled(&temp, "alice").await;
+
+        let new_codes = renew(&temp, &alice, PASSWORD, &old_codes[3], LATER)
+            .await
+            .unwrap();
+
+        assert_eq!(stored_code_hashes(&temp, &alice), hashes_of(&new_codes));
+        assert_eq!(codes_left(&temp, alice.user_id), RECOVERY_CODE_COUNT);
+    }
+
+    #[tokio::test]
+    async fn renewing_while_2fa_is_off_or_pending_is_refused() {
+        let temp = TempDatabase::open();
+        let alice = alice(&temp).await;
+
+        let off = renew(&temp, &alice, PASSWORD, "123456", LATER).await;
+        assert_eq!(outcome(&off), "not enabled");
+
+        begin(&temp, &alice).await.unwrap();
+        let pending = renew(&temp, &alice, PASSWORD, "123456", LATER).await;
+        assert_eq!(outcome(&pending), "not enabled");
+        assert!(stored_code_hashes(&temp, &alice).is_empty());
+    }
+
+    #[tokio::test]
+    async fn of_two_parallel_renewals_with_one_code_one_wins_and_only_its_codes_are_stored() {
+        let temp = TempDatabase::open();
+        let (alice, app, _) = enrolled(&temp, "alice").await;
+        let code = code_at(&app, LATER);
+
+        let (a, b) = tokio::join!(
+            renew(&temp, &alice, PASSWORD, &code, LATER),
+            renew(&temp, &alice, PASSWORD, &code, LATER),
+        );
+
+        let mut outcomes = [outcome(&a), outcome(&b)];
+        outcomes.sort_unstable();
+        assert_eq!(outcomes, ["accepted", "code"]);
+        let winners_codes = a.or(b).unwrap();
+        assert_eq!(stored_code_hashes(&temp, &alice), hashes_of(&winners_codes));
     }
 
     // --- Recovery code format ---------------------------------------------------

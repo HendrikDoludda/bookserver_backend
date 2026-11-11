@@ -13,15 +13,18 @@ use crate::{
     data_models::{
         authentication_model::LoginResponse,
         totp_model::{
-            ConfirmTOTPRequest, DisableTOTPRequest, RecoveryCodeSignInRequest, TOTPSignInRequest,
-            TOTPStatus,
+            ConfirmTOTPRequest, DisableTOTPRequest, RecoveryCodeSignInRequest,
+            RenewRecoveryCodesRequest, TOTPSignInRequest, TOTPStatus,
         },
     },
     db::Database,
     error_types::AppErrors,
     routes::{
         totp_cipher::TotpCipher,
-        totp_management::{begin_setup, confirm_setup, disable, finish_login, status, TypedCode},
+        totp_management::{
+            begin_setup, confirm_setup, disable, finish_login, renew_recovery_codes, status,
+            TypedCode,
+        },
     },
 };
 
@@ -77,6 +80,18 @@ pub async fn disable_totp(
 ) -> Result<StatusCode, AppErrors> {
     disable(db, &cipher, session.0.user_id, request, SystemTime::now()).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/v1/account/totp/recovery_codes`: answers new recovery codes, shown only this once.
+pub async fn renew_totp_recovery_codes(
+    session: AuthSession,
+    State(db): State<Arc<Database>>,
+    State(cipher): State<TotpCipher>,
+    JsonBody(request): JsonBody<RenewRecoveryCodesRequest>,
+) -> Result<Response<Body>, AppErrors> {
+    let codes =
+        renew_recovery_codes(db, &cipher, session.0.user_id, request, SystemTime::now()).await?;
+    Ok(no_store(Json(codes)))
 }
 
 /// `POST /api/v1/auth/login/recovery_code` with the challenge token as Bearer: answers like

@@ -28,6 +28,14 @@ pub struct DisableTOTPRequest {
     pub code: String,
 }
 
+/// `POST /api/v1/account/totp/recovery_codes`: the password and an authenticator or recovery
+/// code.
+#[derive(Deserialize)]
+pub struct RenewRecoveryCodesRequest {
+    pub password: String,
+    pub code: String,
+}
+
 /// The answer to starting a setup; the app draws the QR code from `otpauth_url`.
 #[derive(Serialize)]
 pub struct TOTPSetup {
@@ -35,7 +43,7 @@ pub struct TOTPSetup {
     pub secret_base32: String,
 }
 
-/// The answer to confirming a setup — the only time the recovery codes are shown.
+/// The answer to confirming a setup or renewing the codes — the only time they are shown.
 #[derive(Serialize)]
 pub struct RecoveryCodesIssued {
     pub recovery_codes: Vec<String>,

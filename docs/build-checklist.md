@@ -13,7 +13,7 @@
 | Password reset | 1 | completed | [30-password-reset](features/30-password-reset.md) |
 | Per-user settings | 1 | not started | [31-per-user-settings](features/31-per-user-settings.md) |
 | HTTPS (TLS) | 1 | not started | [32-https-tls](features/32-https-tls.md) |
-| Recovery codes | 1 | in progress | [50-recovery-codes](features/50-recovery-codes.md) |
+| Recovery codes | 1 | completed | [50-recovery-codes](features/50-recovery-codes.md) |
 | Translation catalog (i18n) | F0 | not started | [13-internationalization](features/13-internationalization.md) |
 | Reading files | F1 | in progress | [38-reading-files](features/38-reading-files.md) |
 | Frontend localization | F1 | not started | [57-frontend-localization](features/57-frontend-localization.md) |

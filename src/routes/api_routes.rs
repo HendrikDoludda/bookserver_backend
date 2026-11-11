@@ -20,8 +20,8 @@ use crate::{
             request_file, retrieve_metadata, scan_all_directories,
         },
         totp::{
-            disable_totp, finalize_totp_set_up, sign_in_totp, sign_in_totp_with_recovery_code,
-            totp_start_set_up, totp_status,
+            disable_totp, finalize_totp_set_up, renew_totp_recovery_codes, sign_in_totp,
+            sign_in_totp_with_recovery_code, totp_start_set_up, totp_status,
         },
         users::{list_users, update_user},
     },
@@ -85,6 +85,10 @@ pub fn set_up_routes() -> Router<AppState> {
         .route("/account/totp", get(totp_status).post(totp_start_set_up))
         .route("/account/totp/confirm", post(finalize_totp_set_up))
         .route("/account/totp/disable", post(disable_totp))
+        .route(
+            "/account/totp/recovery_codes",
+            post(renew_totp_recovery_codes),
+        )
         .route("/users", get(list_users))
         .route("/users/{id}", patch(update_user));
 
@@ -1070,6 +1074,7 @@ mod tests {
         ("POST", "/api/v1/account/totp"),
         ("POST", "/api/v1/account/totp/confirm"),
         ("POST", "/api/v1/account/totp/disable"),
+        ("POST", "/api/v1/account/totp/recovery_codes"),
         ("GET", "/api/v1/users"),
         ("PATCH", "/api/v1/users/1"),
     ];
@@ -1429,6 +1434,56 @@ mod tests {
         assert_eq!(status, StatusCode::UNAUTHORIZED, "every session ended");
         let (_, _, body) = call(&app, log_in_as_alice()).await;
         assert_eq!(json(&body)["status"], "ok", "no code step any more");
+    }
+
+    #[tokio::test]
+    async fn renewing_the_recovery_codes_over_http() {
+        let temp = TempDatabase::open();
+        add_alice_with_password(&temp).await;
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let (_, _, body) = call(&app, log_in_as_alice()).await;
+        let session = json(&body)["session_token"].as_str().unwrap().to_string();
+        let (authenticator, old_codes) = enroll_over_http(&app, &session).await;
+
+        // The confirm used the current time step, so this sends the next one.
+        let renewal = serde_json::json!({
+            "password": "correct horse battery",
+            "code": authenticator.generate(unix_now() as u64 + 30).to_string(),
+        });
+        let (status, headers, body) = call(
+            &app,
+            authorized(
+                "POST",
+                "/api/v1/account/totp/recovery_codes",
+                &session,
+                Some(renewal),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers.get("cache-control").unwrap(), "no-store");
+        let new_codes: Vec<String> =
+            serde_json::from_value(json(&body)["recovery_codes"].clone()).unwrap();
+        assert_eq!(new_codes.len(), 10);
+
+        let challenge = challenge_token(&app).await;
+        let with_code = |code: &str| {
+            authorized(
+                "POST",
+                "/api/v1/auth/login/recovery_code",
+                &challenge,
+                Some(serde_json::json!({ "code": code })),
+            )
+        };
+        let (status, _, body) = call(&app, with_code(&old_codes[0])).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "an old code");
+        assert_eq!(
+            json(&body),
+            serde_json::json!({ "error": "invalid_or_expired_code" })
+        );
+        let (status, _, body) = call(&app, with_code(&new_codes[0])).await;
+        assert_eq!(status, StatusCode::OK, "a new code");
+        assert_eq!(json(&body)["status"], "ok");
     }
 
     #[tokio::test]
