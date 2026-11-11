@@ -112,14 +112,15 @@ carries the `session_token` that scanning needs (valid 15 minutes; log in again 
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `PORT` | `8080` | HTTP port |
+| `PORT` | `8080` | The port to listen on, 1–65535 |
+| `BIND_ADDRESS` | `0.0.0.0` | The IP address to listen on — every interface by default; `127.0.0.1` behind `tailscale serve` |
 | `BOOK_DIRS` | `../Downloads` | `:`-separated list of directories to scan |
 | `SMTP_HOST` | unset | Mail server for verification and password-reset codes; email is off while unset |
 | `SMTP_PORT`, `SMTP_FROM`, `SMTP_FROM_NAME` | unset | Required once `SMTP_HOST` is set |
 | `SMTP_USERNAME`, `SMTP_PASSWORD` | unset | The mail server's login, set together; leave both out for a server without one |
 | `SMTP_TLS` | `starttls` | `starttls`, `implicit` (usually port 465) or `none` (a local catcher such as Mailpit only; refused together with a password) |
 
-An incomplete mail setup stops the server at start, naming the missing setting.
+A bad or incomplete setting stops the server at start, naming it.
 
 ## API
 
@@ -165,8 +166,9 @@ Errors answer with JSON `{"error": "<key>"}` and a matching status code.
 
 The other registered routes answer 501 `not_implemented` until their features are built.
 
-> **Security note:** the server listens on all interfaces over plain HTTP. Run it on a trusted
-> network only.
+> **Security note:** by default the server listens on all interfaces over plain HTTP. Run it on
+> a trusted network only, or behind `tailscale serve` for HTTPS
+> ([docs/run-deploy/tailscale.md](docs/run-deploy/tailscale.md)).
 
 ## Project docs
 

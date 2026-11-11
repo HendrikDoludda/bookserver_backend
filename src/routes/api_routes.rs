@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use axum::{
     routing::{delete, get, patch, post, put},
     Router,
@@ -7,7 +9,6 @@ use tracing::info;
 
 use crate::{
     app_state::AppState,
-    config::get_port,
     error_types::RoutingErrors,
     routes::api_caller::{
         account::{change_email, change_password, change_username, confirm_email_change},
@@ -29,14 +30,11 @@ use crate::{
     },
 };
 
-/// Binds to `0.0.0.0:$PORT` and serves the API until the process stops.
-pub async fn start_server(state: AppState) -> Result<(), RoutingErrors> {
+/// Binds to `address` and serves the API until the process stops.
+pub async fn start_server(state: AppState, address: SocketAddr) -> Result<(), RoutingErrors> {
     let app = set_up_routes().with_state(state);
 
-    let port = get_port();
-    let address = format!("0.0.0.0:{}", port);
-
-    info!("Starting server on {}!", address);
+    info!("Starting server on {address}!");
 
     let listener = TcpListener::bind(address)
         .await

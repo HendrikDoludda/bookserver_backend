@@ -14,6 +14,7 @@ use std::sync::Arc;
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
+    let listen_address = config::get_listen_address().context("The listen settings are invalid")?;
     let db = Arc::new(Database::new().context("Failed to initialize the database")?);
     let secrets = config::set_up_config_file().context("Failed to load secrets.toml")?;
     let totp_cipher = TotpCipher::from_signing_key(&secrets.signing_key()?);
@@ -47,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
         totp_cipher,
     };
 
-    start_server(state)
+    start_server(state, listen_address)
         .await
         .context("Server stopped with an error")?;
 

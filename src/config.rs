@@ -1,4 +1,9 @@
-use std::{env, fs, path::Path, sync::Arc};
+use std::{
+    env, fs,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::Path,
+    sync::Arc,
+};
 
 use chrono::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -123,11 +128,34 @@ fn create_new_set_up_secrets() -> Result<Secrets, ApplicationSetUpErrors> {
     Ok(secret)
 }
 
-pub fn get_port() -> u16 {
-    env::var("PORT")
-        .unwrap_or_else(|_| "8080".to_string())
-        .parse()
-        .expect("Invalid port number")
+/// Where the server listens: `BIND_ADDRESS` (default `0.0.0.0`, every interface) and `PORT`
+/// (default 8080). A value that isn't an IP address or a port is an error naming its setting.
+pub fn get_listen_address() -> Result<SocketAddr, ApplicationSetUpErrors> {
+    listen_address_from(|name| env::var(name).ok())
+}
+
+/// Reads through `lookup` for the same reason `email_config_from` does: tests pass their own.
+fn listen_address_from(
+    lookup: impl Fn(&'static str) -> Option<String>,
+) -> Result<SocketAddr, ApplicationSetUpErrors> {
+    let setting = |name: &'static str| lookup(name).filter(|value| !value.trim().is_empty());
+
+    let address = match setting("BIND_ADDRESS") {
+        None => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        Some(value) => value
+            .parse()
+            .map_err(|_| ApplicationSetUpErrors::InvalidSetting("BIND_ADDRESS"))?,
+    };
+    let port = match setting("PORT") {
+        None => 8080,
+        // Port 0 asks the system for any free port, which no client could know.
+        Some(value) => value
+            .parse::<u16>()
+            .ok()
+            .filter(|port| *port != 0)
+            .ok_or(ApplicationSetUpErrors::InvalidSetting("PORT"))?,
+    };
+    Ok(SocketAddr::new(address, port))
 }
 
 pub fn get_books_dirs() -> Vec<String> {
@@ -315,6 +343,66 @@ mod tests {
             result,
             Err(ApplicationSetUpErrors::InvalidSetting("SMTP_PORT"))
         ));
+    }
+
+    fn listen(settings: &[(&'static str, &str)]) -> Result<SocketAddr, ApplicationSetUpErrors> {
+        let settings: HashMap<&str, String> = settings
+            .iter()
+            .map(|(name, value)| (*name, value.to_string()))
+            .collect();
+        listen_address_from(|name| settings.get(name).cloned())
+    }
+
+    #[test]
+    fn without_settings_the_server_listens_on_every_interface_at_8080() {
+        for settings in [vec![], vec![("BIND_ADDRESS", " "), ("PORT", "")]] {
+            assert_eq!(listen(&settings).unwrap().to_string(), "0.0.0.0:8080");
+        }
+    }
+
+    #[test]
+    fn an_ipv4_or_ipv6_address_and_a_port_are_listened_on() {
+        for (address, expected) in [
+            ("127.0.0.1", "127.0.0.1:8443"),
+            ("100.101.102.103", "100.101.102.103:8443"),
+            ("::1", "[::1]:8443"),
+            ("::", "[::]:8443"),
+        ] {
+            let listened = listen(&[("BIND_ADDRESS", address), ("PORT", "8443")]).unwrap();
+            assert_eq!(listened.to_string(), expected, "{address}");
+        }
+    }
+
+    #[test]
+    fn an_address_that_is_not_a_bare_ip_is_refused_by_name() {
+        for address in [
+            "localhost",
+            "0.0.0.0:8080",
+            "256.1.1.1",
+            "192.168.1.0/24",
+            "[::1]",
+        ] {
+            assert!(
+                matches!(
+                    listen(&[("BIND_ADDRESS", address)]),
+                    Err(ApplicationSetUpErrors::InvalidSetting("BIND_ADDRESS"))
+                ),
+                "{address}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_port_outside_1_to_65535_is_refused_by_name() {
+        for port in ["0", "65536", "-1", "http"] {
+            assert!(
+                matches!(
+                    listen(&[("PORT", port)]),
+                    Err(ApplicationSetUpErrors::InvalidSetting("PORT"))
+                ),
+                "{port}"
+            );
+        }
     }
 
     /// A folder under the system temp directory, deleted with everything in it when dropped.

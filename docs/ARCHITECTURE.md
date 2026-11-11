@@ -41,6 +41,7 @@
 - A 429 sends `Retry-After`: the seconds left on the lock, rounded up, carried by `TooManyAttempts`.
 - A route whose handler isn't built answers 501 `not_implemented`; a path no route matches answers 404 `not_found`, a method the route lacks 405 `method_not_allowed`.
 - A handler returns `Result<_, AppErrors>` and uses `?`; an error type without `IntoResponse` (such as `anyhow`) is logged and answered with `internal_error_response()`.
+- A setting the server can't use stops it at start with an `ApplicationSetUpErrors` naming the setting — never a panic.
 
 ## Email
 - Mail is sent inline only at sign-up, whose caller just created the account and waits for its code; every other mail (reset and resent verification codes, upload notices) goes out from a background task after the commit, so an answer never shows whether a mail went out.
@@ -97,3 +98,4 @@
 
 ## Hosting
 - A home server on the LAN, reached remotely only through Tailscale — never public port-forwarding. Hardening that only matters on the open internet lives in [54](features/54-public-exposure-hardening.md).
+- HTTPS ends at a TLS proxy in front of the server — `tailscale serve` ([run-deploy](run-deploy/tailscale.md)); the server speaks plain HTTP on `BIND_ADDRESS`, `127.0.0.1` behind the proxy, so the LAN gets no plain connection.
