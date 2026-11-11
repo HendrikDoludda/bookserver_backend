@@ -10,9 +10,8 @@ use axum::{
 
 use crate::{
     data_models::authentication_model::{
-        ChangeEmailRequest, ChangeUserNameRequest, ConfirmPasswordResetRequest, LoginRequest,
-        PasswordResetRequest, ResendVerificationRequest, UserCreationRequest, VerificationRequired,
-        VerifyEmailRequest,
+        ChangeEmailRequest, ConfirmPasswordResetRequest, LoginRequest, PasswordResetRequest,
+        ResendVerificationRequest, UserCreationRequest, VerificationRequired, VerifyEmailRequest,
     },
     db::Database,
     error_types::{AppErrors, EmailErrors},
@@ -108,23 +107,6 @@ pub async fn refresh_session(
 ) -> Result<Response<Body>, AppErrors> {
     let tokens = refresh(db, session.0, SystemTime::now()).await?;
     Ok(no_store(Json(tokens)))
-}
-
-pub async fn change_username(
-    session: AuthSession,
-    State(db): State<Arc<Database>>,
-    request: ChangeUserNameRequest,
-) -> Result<Response<Body>, AppErrors> {
-    db.setup_new_transaction(|conn| {
-        Database::update_value_with_connection::<UserMetadata>(
-            conn,
-            UserDatabaseColumns::Username,
-            &request.new_username,
-            session.0.user_id,
-        )?;
-        Ok(())
-    })?;
-    Ok((StatusCode::ACCEPTED, "Username has been changed").into_response())
 }
 
 pub async fn change_email(

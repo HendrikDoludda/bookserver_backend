@@ -67,11 +67,13 @@ pub struct ChangeEmailRequest {
     pub new_email: String,
 }
 
+/// `PUT /api/v1/account/username`
 #[derive(Debug, Deserialize, Clone)]
 pub struct ChangeUserNameRequest {
     pub new_username: String,
 }
 
+/// `PUT /api/v1/account/password`
 #[derive(Deserialize, Clone)]
 pub struct ChangePasswordRequest {
     pub current_password: String,

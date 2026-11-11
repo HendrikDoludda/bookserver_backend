@@ -29,7 +29,7 @@
 - TOTP secrets are stored encrypted with `TotpCipher` (the user id as associated data), not hashed — checking a code needs the secret itself.
 - An account endpoint re-checks the password with `check_current_password` (`login.rs`): login's throttle, and 400 `incorrect_password` for a wrong one — never login's 401, which the app reads as an ended session.
 - A permission check is an Axum extractor composed on `AuthSession` (as `AdminSession` is), not an `if` inside handlers.
-- Auth answers never reveal whether an account exists: an unknown user and a wrong password get the same response, and so do password-reset and verification-resend requests for an unknown address. The one exception is sign-up, which answers 409 for a taken email or username.
+- Auth answers never reveal whether an account exists: an unknown user and a wrong password get the same response, and so do password-reset and verification-resend requests for an unknown address. The exceptions answer 409 for a taken one: sign-up for an email or username, and the username change for a username — sign-up reveals it anyway.
 - Every stored email address and username has passed `check_email` / `check_username` (`auth.rs`).
 - Never return or `Debug`-log a struct that carries secrets — `UserMetadata`, `Sessions`, `TOTP` and `RecoveryCodes` derive `Serialize` / `Debug` over the password hash, the token hashes or the TOTP secret; build a response struct. Request bodies that carry a password or a code, `EmailConfig` (the SMTP password) and `EmailInformation` (a body carries codes) don't derive `Debug` at all.
 - List endpoints return `WithId<T>`: the row id plus the metadata, flattened in JSON.

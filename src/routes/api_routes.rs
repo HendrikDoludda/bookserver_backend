@@ -10,7 +10,7 @@ use crate::{
     config::get_port,
     error_types::RoutingErrors,
     routes::api_caller::{
-        account::change_password,
+        account::{change_password, change_username},
         authentication::{
             confirm_password_reset, log_out, refresh_session, request_password_reset,
             resend_verification_code, sign_in, sign_up, verify_email,
@@ -84,6 +84,7 @@ pub fn set_up_routes() -> Router<AppState> {
         .route("/auth/password_reset", post(request_password_reset))
         .route("/auth/password_reset/confirm", post(confirm_password_reset))
         .route("/account/password", put(change_password))
+        .route("/account/username", put(change_username))
         .route("/account/totp", get(totp_status).post(totp_start_set_up))
         .route("/account/totp/confirm", post(finalize_totp_set_up))
         .route("/account/totp/disable", post(disable_totp))
@@ -1073,6 +1074,7 @@ mod tests {
         ("POST", "/api/v1/metadata/scan"),
         ("GET", "/api/v1/search"),
         ("PUT", "/api/v1/account/password"),
+        ("PUT", "/api/v1/account/username"),
         ("GET", "/api/v1/account/totp"),
         ("POST", "/api/v1/account/totp"),
         ("POST", "/api/v1/account/totp/confirm"),
@@ -1534,6 +1536,54 @@ mod tests {
         );
         let (status, _, _) = call(&app, with_the_new_password).await;
         assert_eq!(status, StatusCode::OK, "the new password");
+    }
+
+    #[tokio::test]
+    async fn changing_the_username_over_http() {
+        let temp = TempDatabase::open();
+        add_alice_with_password(&temp).await;
+        temp.db
+            .setup_new_transaction(|conn| Ok(insert_user(conn, "bob")))
+            .unwrap();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let (_, _, body) = call(&app, log_in_as_alice()).await;
+        let session = json(&body)["session_token"].as_str().unwrap().to_string();
+        let rename = |name: &str| {
+            authorized(
+                "PUT",
+                "/api/v1/account/username",
+                &session,
+                Some(serde_json::json!({ "new_username": name })),
+            )
+        };
+
+        let (status, _, body) = call(&app, rename("BOB")).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(
+            json(&body),
+            serde_json::json!({ "error": "username_taken" })
+        );
+        let (status, _, body) = call(&app, rename("al")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            json(&body),
+            serde_json::json!({ "error": "invalid_username" })
+        );
+        let (status, _, body) = call(&app, rename("alicia")).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert!(body.is_empty());
+
+        let as_alicia = post_json(
+            "/api/v1/auth/login",
+            serde_json::json!({
+                "username_or_email": "alicia",
+                "password": "correct horse battery",
+                "device_name": "phone",
+                "platform": "ios",
+            }),
+        );
+        let (status, _, _) = call(&app, as_alicia).await;
+        assert_eq!(status, StatusCode::OK, "the new name logs in");
     }
 
     #[tokio::test]

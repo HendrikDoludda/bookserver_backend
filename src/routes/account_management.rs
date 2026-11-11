@@ -5,12 +5,12 @@ use std::{sync::Arc, time::SystemTime};
 use rusqlite::Connection;
 
 use crate::{
-    data_models::authentication_model::ChangePasswordRequest,
+    data_models::authentication_model::{ChangePasswordRequest, ChangeUserNameRequest},
     db::Database,
     error_types::{AppErrors, AuthenticationError},
-    models::{UserDatabaseColumns, UserMetadata},
+    models::{QuerySeparator, UserDatabaseColumns, UserMetadata},
     routes::{
-        auth::{check_new_password, end_other_sessions, hash_secret},
+        auth::{check_new_password, check_username, end_other_sessions, hash_secret},
         login::check_current_password,
     },
 };
@@ -71,6 +71,38 @@ fn save_new_password(
     )?;
     end_other_sessions(conn, user_id, current_session_id)?;
     Ok(())
+}
+
+/// Renames the account. A name another account has, in any case, answers 409; a new case of the
+/// user's own name is a rename like any other.
+pub async fn change_username(
+    db: Arc<Database>,
+    user_id: i64,
+    request: ChangeUserNameRequest,
+) -> Result<(), AppErrors> {
+    let ChangeUserNameRequest { new_username } = request;
+    check_username(&new_username)?;
+    db.transact(move |conn| {
+        // Inside the write lock, so of two renames to one name the second sees the first: a 409,
+        // never the `UNIQUE` constraint's 500.
+        let holder = Database::search_for_single_row_with_connection::<UserMetadata>(
+            conn,
+            &[UserDatabaseColumns::Username],
+            &[&new_username],
+            QuerySeparator::And,
+        )?;
+        if holder.is_some_and(|holder| holder.user_id != user_id) {
+            return Err(AuthenticationError::UsernameTaken.into());
+        }
+        Database::update_value_with_connection::<UserMetadata>(
+            conn,
+            UserDatabaseColumns::Username,
+            &new_username,
+            user_id,
+        )?;
+        Ok(())
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -181,8 +213,17 @@ mod tests {
     }
 
     async fn login(temp: &TempDatabase, password: &str, now: SystemTime) -> &'static str {
+        login_as(temp, "alice", password, now).await
+    }
+
+    async fn login_as(
+        temp: &TempDatabase,
+        name: &str,
+        password: &str,
+        now: SystemTime,
+    ) -> &'static str {
         let request = LoginRequest {
-            username_or_email: "alice".to_string(),
+            username_or_email: name.to_string(),
             password: password.to_string(),
             device_name: "laptop".to_string(),
             device_id: None,
@@ -205,6 +246,8 @@ mod tests {
                 AuthenticationError::PasswordUnchanged => "unchanged",
                 AuthenticationError::MismatchingPasswords => "mismatch",
                 AuthenticationError::PasswordTooShort => "too short",
+                AuthenticationError::UsernameTaken => "username taken",
+                AuthenticationError::InvalidUsername => "invalid username",
                 _ => "other auth error",
             },
             Err(_) => "other error",
@@ -323,5 +366,86 @@ mod tests {
         };
         assert_eq!(login(&temp, loser, now).await, "incorrect");
         assert_eq!(login(&temp, winner, now).await, "accepted");
+    }
+
+    async fn rename(
+        temp: &TempDatabase,
+        user_id: i64,
+        new_username: &str,
+    ) -> Result<(), AppErrors> {
+        let request = ChangeUserNameRequest {
+            new_username: new_username.to_string(),
+        };
+        change_username(Arc::clone(&temp.db), user_id, request).await
+    }
+
+    fn username_of(temp: &TempDatabase, user_id: i64) -> String {
+        temp.db
+            .setup_new_transaction(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT username FROM users WHERE id = ?1",
+                        [user_id],
+                        |row| row.get(0),
+                    )
+                    .unwrap())
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_renamed_account_logs_in_with_the_new_name_only() {
+        let temp = TempDatabase::open();
+        let now = SystemTime::now();
+        let alice = add_user(&temp, "alice").await;
+
+        rename(&temp, alice, "alicia").await.unwrap();
+
+        assert_eq!(username_of(&temp, alice), "alicia");
+        assert_eq!(login_as(&temp, "alicia", OLD, now).await, "accepted");
+        assert_eq!(login_as(&temp, "alice", OLD, now).await, "incorrect");
+    }
+
+    #[tokio::test]
+    async fn another_accounts_name_in_any_case_is_taken_but_a_new_case_of_your_own_is_not() {
+        let temp = TempDatabase::open();
+        let alice = add_user(&temp, "alice").await;
+        add_user(&temp, "bob").await;
+
+        for taken in ["bob", "BOB", "Bob"] {
+            let result = rename(&temp, alice, taken).await;
+            assert_eq!(outcome(&result), "username taken", "{taken}");
+        }
+        assert_eq!(username_of(&temp, alice), "alice");
+
+        rename(&temp, alice, "Alice").await.unwrap();
+        assert_eq!(username_of(&temp, alice), "Alice");
+    }
+
+    #[tokio::test]
+    async fn an_invalid_name_is_refused() {
+        let temp = TempDatabase::open();
+        let alice = add_user(&temp, "alice").await;
+
+        for invalid in ["al", "al ice", "al@ice"] {
+            let result = rename(&temp, alice, invalid).await;
+            assert_eq!(outcome(&result), "invalid username", "{invalid:?}");
+        }
+        assert_eq!(username_of(&temp, alice), "alice");
+    }
+
+    #[tokio::test]
+    async fn of_two_accounts_racing_for_one_name_one_gets_it_and_the_other_a_409() {
+        let temp = TempDatabase::open();
+        let alice = add_user(&temp, "alice").await;
+        let bob = add_user(&temp, "bob").await;
+
+        let (a, b) = tokio::join!(rename(&temp, alice, "carol"), rename(&temp, bob, "carol"));
+
+        let mut outcomes = [outcome(&a), outcome(&b)];
+        outcomes.sort_unstable();
+        assert_eq!(outcomes, ["accepted", "username taken"], "never a 500");
+        let winner = if a.is_ok() { alice } else { bob };
+        assert_eq!(username_of(&temp, winner), "carol");
     }
 }

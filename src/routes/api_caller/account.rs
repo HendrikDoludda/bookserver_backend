@@ -5,7 +5,9 @@ use std::{sync::Arc, time::SystemTime};
 use axum::{extract::State, http::StatusCode};
 
 use crate::{
-    data_models::authentication_model::ChangePasswordRequest, db::Database, error_types::AppErrors,
+    data_models::authentication_model::{ChangePasswordRequest, ChangeUserNameRequest},
+    db::Database,
+    error_types::AppErrors,
     routes::account_management,
 };
 
@@ -26,5 +28,15 @@ pub async fn change_password(
         SystemTime::now(),
     )
     .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `PUT /api/v1/account/username`
+pub async fn change_username(
+    session: AuthSession,
+    State(db): State<Arc<Database>>,
+    JsonBody(request): JsonBody<ChangeUserNameRequest>,
+) -> Result<StatusCode, AppErrors> {
+    account_management::change_username(db, session.0.user_id, request).await?;
     Ok(StatusCode::NO_CONTENT)
 }
