@@ -75,6 +75,40 @@ pub trait Extract: FromRow {
             DatabaseError::NextRowFailure,
         ))
     }
+
+    /// Fetch every row of the table in key order, each paired with its key, in one query.
+    fn extract_all(conn: &Connection) -> Result<Vec<WithId<Self>>, DatabaseError>
+    where
+        Self: Serialize,
+    {
+        let query = format!(
+            "SELECT {} FROM {} ORDER BY {}",
+            Self::COLUMNS,
+            Self::TABLE,
+            Self::KEY
+        );
+
+        let mut stmt = conn.prepare(&query).map_err(logged(
+            "reading",
+            Self::TABLE,
+            DatabaseError::TaskPreparationFailure,
+        ))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(WithId {
+                    id: row.get(Self::KEY)?,
+                    data: Self::from_row(row)?,
+                })
+            })
+            .map_err(logged("reading", Self::TABLE, DatabaseError::QueryFailure))?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(logged(
+            "reading",
+            Self::TABLE,
+            DatabaseError::NextRowFailure,
+        ))
+    }
 }
 
 impl Extract for BookMetadata {
@@ -146,11 +180,13 @@ mod tests {
         let logs = capture_logs(|| {
             results.push(TOTP::extract(&conn, user_id).map(|_| ()));
             results.push(TOTP::extract_batch(&conn, &[user_id]).map(|_| ()));
+            results.push(TOTP::extract_all(&conn).map(|_| ()));
         });
 
         assert!(matches!(results[0], Err(DatabaseError::QueryFailure)));
         assert!(matches!(results[1], Err(DatabaseError::NextRowFailure)));
-        assert_eq!(logs.matches("reading totp failed:").count(), 2, "{logs}");
+        assert!(matches!(results[2], Err(DatabaseError::NextRowFailure)));
+        assert_eq!(logs.matches("reading totp failed:").count(), 3, "{logs}");
         assert!(
             logs.contains("created_at"),
             "the cause names the column: {logs}"
@@ -202,5 +238,31 @@ mod tests {
     fn extract_batch_of_nothing_runs_no_query() {
         let conn = memory_connection();
         assert!(TOTP::extract_batch(&conn, &[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn extract_all_reads_every_row_in_key_order() {
+        let conn = memory_connection();
+        let alice = insert_user(&conn, "alice");
+        let bob = insert_user(&conn, "bob");
+        let carol = insert_user(&conn, "carol");
+        // Written out of key order, so the order has to come from the query.
+        for (user_id, secret) in [(carol, "c"), (alice, "a"), (bob, "b")] {
+            insert_totp(&conn, user_id, secret);
+        }
+
+        let rows = TOTP::extract_all(&conn).unwrap();
+
+        let found: Vec<(i64, &str)> = rows
+            .iter()
+            .map(|row| (row.id, row.data.authentication_secret.as_str()))
+            .collect();
+        assert_eq!(found, vec![(alice, "a"), (bob, "b"), (carol, "c")]);
+    }
+
+    #[test]
+    fn extract_all_of_an_empty_table_is_empty() {
+        let conn = memory_connection();
+        assert!(TOTP::extract_all(&conn).unwrap().is_empty());
     }
 }

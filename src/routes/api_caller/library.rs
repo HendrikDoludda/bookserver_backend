@@ -30,10 +30,7 @@ pub async fn get_libraries(
     _session: AuthSession,
     State(db): State<Arc<Database>>,
 ) -> Result<Json<Vec<WithId<LibraryMetadata>>>, DatabaseError> {
-    let ids = db.get_all_libraries()?;
-    let libraries = db.get_entries_batch::<LibraryMetadata>(&ids)?;
-
-    Ok(Json(libraries))
+    Ok(Json(db.get_all_entries::<LibraryMetadata>()?))
 }
 
 /// Return every series that belongs to the given library, each with its row id.

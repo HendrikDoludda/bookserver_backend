@@ -1,5 +1,5 @@
 use axum::{
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Router,
 };
 use tokio::net::TcpListener;
@@ -23,6 +23,7 @@ use crate::{
             disable_totp, finalize_totp_set_up, sign_in_totp, sign_in_totp_with_recovery_code,
             totp_start_set_up, totp_status,
         },
+        users::{list_users, update_user},
     },
 };
 
@@ -83,7 +84,9 @@ pub fn set_up_routes() -> Router<AppState> {
         .route("/auth/password_reset/confirm", post(confirm_password_reset))
         .route("/account/totp", get(totp_status).post(totp_start_set_up))
         .route("/account/totp/confirm", post(finalize_totp_set_up))
-        .route("/account/totp/disable", post(disable_totp));
+        .route("/account/totp/disable", post(disable_totp))
+        .route("/users", get(list_users))
+        .route("/users/{id}", patch(update_user));
 
     Router::new()
         .route("/health", get(ping_server))
@@ -1067,6 +1070,8 @@ mod tests {
         ("POST", "/api/v1/account/totp"),
         ("POST", "/api/v1/account/totp/confirm"),
         ("POST", "/api/v1/account/totp/disable"),
+        ("GET", "/api/v1/users"),
+        ("PATCH", "/api/v1/users/1"),
     ];
 
     #[tokio::test]
@@ -1142,6 +1147,108 @@ mod tests {
         let (status, _, _) = call(&app, authorized("DELETE", &delete, &admin, None)).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(libraries(&temp), 0);
+    }
+
+    #[tokio::test]
+    async fn only_an_admin_manages_users_and_a_new_role_counts_at_once() {
+        let temp = TempDatabase::open();
+        let admin = logged_in(&temp, "alice", "admin");
+        let member = logged_in(&temp, "bob", "member");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let list_as = |token: &str| authorized("GET", "/api/v1/users", token, None);
+        let patch = |id: &str, body: serde_json::Value| {
+            authorized("PATCH", &format!("/api/v1/users/{id}"), &admin, Some(body))
+        };
+
+        let (status, _, body) = call(&app, list_as(&member)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(json(&body), serde_json::json!({ "error": "forbidden" }));
+
+        let (status, _, body) = call(&app, list_as(&admin)).await;
+        assert_eq!(status, StatusCode::OK);
+        let text = String::from_utf8(body.clone()).unwrap();
+        assert!(
+            !text.contains("password") && !text.contains("not-a-hash"),
+            "no password hash, not even its key: {text}"
+        );
+        let users = json(&body);
+        let user = |name: &str| {
+            users
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|user| user["username"] == name)
+                .unwrap()
+                .clone()
+        };
+        let (alice, bob) = (user("alice"), user("bob"));
+        let mut keys: Vec<&String> = bob.as_object().unwrap().keys().collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            [
+                "created_at",
+                "email",
+                "email_verified",
+                "id",
+                "last_login",
+                "role",
+                "username"
+            ]
+        );
+        assert_eq!(bob["role"], "member");
+        assert!(bob["created_at"].is_i64());
+        let (alice, bob) = (alice["id"].to_string(), bob["id"].to_string());
+
+        let (status, _, body) =
+            call(&app, patch(&bob, serde_json::json!({ "role": "admin" }))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json(&body)["role"], "admin");
+        let (status, _, _) = call(&app, list_as(&member)).await;
+        assert_eq!(status, StatusCode::OK, "promoted on the very next request");
+
+        let (status, _, body) =
+            call(&app, patch(&bob, serde_json::json!({ "role": "member" }))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json(&body)["role"], "member");
+        let (status, _, _) = call(&app, list_as(&member)).await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "demoted on the very next request"
+        );
+
+        let (status, _, body) =
+            call(&app, patch(&alice, serde_json::json!({ "role": "member" }))).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(json(&body), serde_json::json!({ "error": "last_admin" }));
+
+        for (id, change, expected) in [
+            (
+                "abc",
+                serde_json::json!({ "role": "admin" }),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                bob.as_str(),
+                serde_json::json!({ "role": "owner" }),
+                StatusCode::BAD_REQUEST,
+            ),
+            (bob.as_str(), serde_json::json!({}), StatusCode::BAD_REQUEST),
+            (
+                bob.as_str(),
+                serde_json::json!({ "email_verified": false }),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                "999",
+                serde_json::json!({ "role": "admin" }),
+                StatusCode::NOT_FOUND,
+            ),
+        ] {
+            let (status, _, _) = call(&app, patch(id, change.clone())).await;
+            assert_eq!(status, expected, "{id} {change}");
+        }
     }
 
     #[tokio::test]

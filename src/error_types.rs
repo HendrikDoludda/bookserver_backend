@@ -275,6 +275,8 @@ pub enum AuthenticationError {
     TotpNotEnabled,
     #[error("A TOTP secret could not be made, encrypted or read")]
     TotpFailure,
+    #[error("The last admin can't be made a member")]
+    LastAdmin,
 }
 
 impl AuthenticationError {
@@ -315,6 +317,7 @@ impl AuthenticationError {
                 (StatusCode::CONFLICT, "totp_setup_not_pending")
             }
             AuthenticationError::TotpNotEnabled => (StatusCode::CONFLICT, "totp_not_enabled"),
+            AuthenticationError::LastAdmin => (StatusCode::CONFLICT, "last_admin"),
             AuthenticationError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             AuthenticationError::DatabaseSearchFailure
             | AuthenticationError::FailedDataStoring
@@ -507,6 +510,7 @@ mod tests {
                 StatusCode::CONFLICT,
                 "totp_not_enabled",
             ),
+            (Auth::LastAdmin.into(), StatusCode::CONFLICT, "last_admin"),
             (
                 Auth::MismatchingPasswords.into(),
                 StatusCode::BAD_REQUEST,

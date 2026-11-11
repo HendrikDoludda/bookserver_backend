@@ -151,6 +151,8 @@ Every endpoint except `/health` and `/api/v1/auth/…` needs `Authorization: Bea
 | `POST` | `/api/v1/account/totp` | Start setting up two-factor auth; answers the authenticator secret and its `otpauth://` URL |
 | `POST` | `/api/v1/account/totp/confirm` | Confirm the setup with a code and the password; answers 10 recovery codes, shown once, and ends the other sessions |
 | `POST` | `/api/v1/account/totp/disable` | Turn two-factor auth off with the password and an authenticator or recovery code; deletes the recovery codes and ends every session |
+| `GET` | `/api/v1/users` | Admin only: every account — username, email, verified, role, created and last login |
+| `PATCH` | `/api/v1/users/{id}` | Admin only: `{"role": "admin" \| "member"}` and/or `{"email_verified": true}`; answers the changed account, `409 last_admin` for demoting the last admin |
 
 Errors answer with JSON `{"error": "<key>"}` and a matching status code.
 

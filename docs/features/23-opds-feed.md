@@ -8,7 +8,7 @@ API, so the backend speaks a protocol they already know, the way
 [WebDAV](70-webdav-for-infuse.md) does for Infuse.
 
 ## Build
-- [ ] ? h · Navigation feeds for libraries → series, per the version decision, built from the existing queries `get_all_libraries` and `get_series_entries_in_library` — no new database work [BE]
+- [ ] ? h · Navigation feeds for libraries → series, per the version decision, built from the existing queries `get_all_entries::<LibraryMetadata>` and `get_series_entries_in_library` — no new database work [BE]
 - [ ] ? h · Acquisition feed listing a series' books (`get_books_in_series`, `get_entries_batch`), with download links pointing at the existing range-streaming route `GET /api/v1/books/{id}/file` (download-restricted users: see [24](24-download-permissions.md)) [BE]
 - [ ] ? h · Serve the feeds with the OPDS content type — `application/atom+xml;profile=opds-catalog;kind=navigation` for browse levels, `kind=acquisition` for book lists — from a handler returning the header plus the body; hand-render the XML with `format!` or add `quick-xml` (no XML crate is a dependency yet) [BE]
 - [ ] ? h · A cover link on every feed entry — cover serving itself (`GET /covers/{kind}/{id}`) still answers 501, owned by [36](36-covers.md) [BE]

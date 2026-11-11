@@ -242,6 +242,27 @@ impl Database {
         T::extract_batch(conn, ids)
     }
 
+    /// Every row of the table in key order, each paired with its key.
+    pub fn get_all_entries<T>(&self) -> Result<Vec<WithId<T>>, DatabaseError>
+    where
+        T: Extract + Serialize,
+    {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
+        Self::get_all_entries_with_connection::<T>(&conn)
+    }
+
+    pub fn get_all_entries_with_connection<T>(
+        conn: &Connection,
+    ) -> Result<Vec<WithId<T>>, DatabaseError>
+    where
+        T: Extract + Serialize,
+    {
+        T::extract_all(conn)
+    }
+
     pub fn search_for_single_row<T>(
         &self,
         columns: &[T::Column],
@@ -296,26 +317,6 @@ impl Database {
         T: Search,
     {
         T::search_for_multiple_rows(conn, columns, values, query_separator)
-    }
-
-    pub fn get_all_libraries(&self) -> Result<Vec<i64>, DatabaseError> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|_| DatabaseError::PoolConnectionRetrievalFailure)?;
-        let mut stmt = conn.prepare("SELECT id FROM library").map_err(logged(
-            "reading",
-            "library",
-            DatabaseError::TaskPreparationFailure,
-        ))?;
-        let rows = stmt
-            .query_map([], |row| row.get::<_, i64>("id"))
-            .map_err(logged("reading", "library", DatabaseError::QueryFailure))?;
-        rows.collect::<Result<Vec<i64>, _>>().map_err(logged(
-            "reading",
-            "library",
-            DatabaseError::NextRowFailure,
-        ))
     }
 
     pub fn get_books_in_series(&self, series_id: i64) -> Result<Vec<i64>, DatabaseError> {

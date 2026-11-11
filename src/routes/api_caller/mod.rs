@@ -5,3 +5,4 @@ pub mod extractors;
 pub mod helpers;
 pub mod library;
 pub mod totp;
+pub mod users;

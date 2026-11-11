@@ -8,3 +8,4 @@ pub mod password_reset;
 pub mod registration;
 pub mod totp_cipher;
 pub mod totp_management;
+pub mod user_management;
