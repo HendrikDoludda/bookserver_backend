@@ -92,7 +92,7 @@ impl FromRow for UserMetadata {
             password_hash: row.get("password_hash")?,
             email: row.get("email")?,
             email_verified: row.get("email_verified")?,
-            is_admin: row.get("is_admin")?,
+            role: row.get("role")?,
             created_at,
             last_login,
         })

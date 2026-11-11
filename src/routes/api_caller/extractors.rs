@@ -20,7 +20,9 @@ use crate::{
         AppErrors,
         AuthenticationError::{ExpiredSession, Forbidden, UnauthorizedSession},
     },
-    models::{LoginChallenge, QuerySeparator, Sessions, SessionsDatabaseColumns, UserMetadata},
+    models::{
+        LoginChallenge, QuerySeparator, Role, Sessions, SessionsDatabaseColumns, UserMetadata,
+    },
     routes::auth::hash_token,
 };
 
@@ -148,7 +150,7 @@ where
                 )?)
             })
             .await?;
-        if !user.is_admin {
+        if user.role != Role::Admin {
             return Err(Forbidden.into());
         }
         Ok(AdminSession(session))

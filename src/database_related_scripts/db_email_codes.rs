@@ -45,7 +45,11 @@ pub fn find(
         EmailCode::from_row,
     )
     .optional()
-    .map_err(logged("reading", "email_codes", DatabaseError::QueryFailure))
+    .map_err(logged(
+        "reading",
+        "email_codes",
+        DatabaseError::QueryFailure,
+    ))
 }
 
 /// Writes the row for this user and purpose, replacing an earlier one.

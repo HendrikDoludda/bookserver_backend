@@ -100,12 +100,13 @@ cd bookserver_backend
 BOOK_DIRS=/path/to/books cargo run
 
 curl http://localhost:8080/health                              # → pong
-curl -X POST http://localhost:8080/api/v1/scan
+curl -X POST -H "Authorization: Bearer <session_token>" http://localhost:8080/api/v1/scan
 ```
 
 On first run the server creates its SQLite database at `./data/databases/app_data.sqlite`.
 Extracted covers are written to `./cover_images/`. While no account exists, the server logs a
-setup code at start; the first sign-up must send it and becomes the admin account.
+setup code at start; the first sign-up must send it and becomes the admin account. Its answer
+carries the `session_token` that scanning needs (valid 15 minutes; log in again for a new one).
 
 **Configuration** (environment variables)
 
@@ -122,7 +123,9 @@ An incomplete mail setup stops the server at start, naming the missing setting.
 
 ## API
 
-Implemented endpoints:
+Every endpoint except `/health` and `/api/v1/auth/…` needs `Authorization: Bearer
+<session_token>` and answers 401 without it; scanning and deleting a library also need an admin
+(403 for a member). Implemented endpoints:
 
 | Method | Path | Description |
 | --- | --- | --- |

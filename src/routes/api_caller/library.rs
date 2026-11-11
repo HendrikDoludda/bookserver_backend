@@ -1,4 +1,3 @@
-//! TODO: every mutating handler should eventually require an `AuthSession`.
 //! TODO: needs a database table of scannable directories (replacing `BOOK_DIRS`),
 //!       with a link to the metadata-agent result.
 //! TODO: check that served file paths lie inside a scannable directory or the
@@ -22,13 +21,13 @@ use crate::{
     stream_reader::streaming_file,
 };
 
-use super::extractors::PathParams;
+use super::extractors::{AdminSession, AuthSession, PathParams};
 
 // === Library, series & book handlers =========================================
 
 /// Return every library, each paired with its row id.
-// TODO: require an `AuthSession`.
 pub async fn get_libraries(
+    _session: AuthSession,
     State(db): State<Arc<Database>>,
 ) -> Result<Json<Vec<WithId<LibraryMetadata>>>, DatabaseError> {
     let ids = db.get_all_libraries()?;
@@ -39,6 +38,7 @@ pub async fn get_libraries(
 
 /// Return every series that belongs to the given library, each with its row id.
 pub async fn get_series_in_library(
+    _session: AuthSession,
     State(db): State<Arc<Database>>,
     PathParams(library_id): PathParams<i64>,
 ) -> Result<Json<Vec<WithId<BookSeriesMetadata>>>, DatabaseError> {
@@ -50,6 +50,7 @@ pub async fn get_series_in_library(
 
 /// Return every book that belongs to the given series, each with its row id.
 pub async fn get_series_children(
+    _session: AuthSession,
     State(db): State<Arc<Database>>,
     PathParams(series_id): PathParams<i64>,
 ) -> Result<Json<Vec<WithId<BookMetadata>>>, DatabaseError> {
@@ -61,6 +62,7 @@ pub async fn get_series_children(
 
 /// Stream a book file (with HTTP range support, handled inside `streaming_file`).
 pub async fn request_file(
+    _session: AuthSession,
     State(db): State<Arc<Database>>,
     PathParams(id): PathParams<i64>,
     request: Request<Body>,
@@ -74,6 +76,7 @@ pub async fn request_file(
 
 /// Return a single book's metadata without streaming the file itself.
 pub async fn retrieve_metadata(
+    _session: AuthSession,
     State(db): State<Arc<Database>>,
     PathParams(id): PathParams<i64>,
 ) -> Result<Json<BookMetadata>, DatabaseError> {
@@ -83,7 +86,10 @@ pub async fn retrieve_metadata(
 }
 
 /// Kick off a scan of every configured book directory.
-pub async fn scan_all_directories(State(db): State<Arc<Database>>) -> Response<Body> {
+pub async fn scan_all_directories(
+    _admin: AdminSession,
+    State(db): State<Arc<Database>>,
+) -> Response<Body> {
     match scan_all_folders(db).await {
         Ok(()) => (StatusCode::OK, "Directory scan complete").into_response(),
         Err(error) => {
@@ -95,6 +101,7 @@ pub async fn scan_all_directories(State(db): State<Arc<Database>>) -> Response<B
 
 /// Delete a library row by id.
 pub async fn delete_library(
+    _admin: AdminSession,
     State(db): State<Arc<Database>>,
     PathParams(id): PathParams<i64>,
 ) -> Result<&'static str, DatabaseError> {

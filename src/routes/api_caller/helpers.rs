@@ -6,13 +6,16 @@ use axum::{
 
 use crate::error_types::error_response;
 
+use super::extractors::AuthSession;
+
 /// Simple liveness check.
 pub async fn ping_server() -> impl IntoResponse {
     (StatusCode::OK, "pong")
 }
 
-/// The answer of every route whose handler isn't built yet.
-pub async fn not_implemented() -> Response<Body> {
+/// The answer of every route whose handler isn't built yet — to a logged-in caller only, like
+/// the handler that will replace it.
+pub async fn not_implemented(_session: AuthSession) -> Response<Body> {
     error_response(StatusCode::NOT_IMPLEMENTED, "not_implemented")
 }
 

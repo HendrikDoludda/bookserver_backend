@@ -65,7 +65,11 @@ pub trait Search: FromRow {
             .query_map(values, Self::from_row)
             .map_err(logged("reading", Self::TABLE, DatabaseError::QueryFailure))?
             .collect::<Result<Vec<Self>, _>>()
-            .map_err(logged("reading", Self::TABLE, DatabaseError::OperationFailure))?;
+            .map_err(logged(
+                "reading",
+                Self::TABLE,
+                DatabaseError::OperationFailure,
+            ))?;
         Ok(result)
     }
 }

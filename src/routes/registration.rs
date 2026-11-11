@@ -11,7 +11,7 @@ use crate::{
     database_related_scripts::{db_email_codes, db_login_throttle, db_users},
     db::Database,
     error_types::{AppErrors, AuthenticationError},
-    models::{CodePurpose, QuerySeparator, UserDatabaseColumns, UserMetadata},
+    models::{CodePurpose, QuerySeparator, Role, UserDatabaseColumns, UserMetadata},
     routes::{
         auth::{check_email, check_new_password, check_username, hash_secret},
         email_codes::{
@@ -117,7 +117,7 @@ pub async fn create_account(
                 password_hash,
                 email,
                 email_verified: code.is_none(),
-                is_admin: first,
+                role: if first { Role::Admin } else { Role::Member },
                 created_at: now,
                 last_login: None,
             };
@@ -423,13 +423,13 @@ mod tests {
             .collect()
     }
 
-    /// `(is_admin, email_verified)` of the account, or `None` when it doesn't exist.
+    /// `(is an admin, email_verified)` of the account, or `None` when it doesn't exist.
     fn account(temp: &TempDatabase, username: &str) -> Option<(bool, bool)> {
         temp.db
             .setup_new_transaction(|conn| {
                 Ok(conn
                     .query_row(
-                        "SELECT is_admin, email_verified FROM users WHERE username = ?1",
+                        "SELECT role = 'admin', email_verified FROM users WHERE username = ?1",
                         [username],
                         |row| Ok((row.get(0)?, row.get(1)?)),
                     )
@@ -565,7 +565,7 @@ mod tests {
         signed_in(alice);
         signed_in(bob);
         assert_eq!(
-            count(&temp, "SELECT COUNT(*) FROM users WHERE is_admin = 1"),
+            count(&temp, "SELECT COUNT(*) FROM users WHERE role = 'admin'"),
             1
         );
     }

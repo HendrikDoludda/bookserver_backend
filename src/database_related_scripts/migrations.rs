@@ -287,6 +287,32 @@ mod tests {
     }
 
     #[test]
+    fn a_new_user_is_a_member_and_only_admin_or_member_is_stored() {
+        let conn = memory_connection();
+        let alice = insert_user(&conn, "alice");
+        let role = || -> String {
+            conn.query_row("SELECT role FROM users WHERE id = ?1", [alice], |row| {
+                row.get(0)
+            })
+            .unwrap()
+        };
+        assert_eq!(role(), "member");
+
+        let set = |role: &str| {
+            conn.execute(
+                "UPDATE users SET role = ?1 WHERE id = ?2",
+                params![role, alice],
+            )
+        };
+        assert!(set("admin").is_ok());
+        assert_eq!(role(), "admin");
+        for refused in ["owner", "Admin", ""] {
+            assert!(set(refused).is_err(), "{refused:?} must be refused");
+        }
+        assert_eq!(role(), "admin", "a refused update changes nothing");
+    }
+
+    #[test]
     fn running_the_migrations_again_changes_nothing() {
         let mut conn = memory_connection();
         run(&mut conn).unwrap();

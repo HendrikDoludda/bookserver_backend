@@ -35,7 +35,11 @@ pub trait Delete: FromRow {
         let query = format!("DELETE FROM {} WHERE {}", Self::TABLE, columns_to_check);
 
         conn.execute(&query, params_from_iter(values.iter()))
-            .map_err(logged("deleting from", Self::TABLE, DatabaseError::QueryFailure))
+            .map_err(logged(
+                "deleting from",
+                Self::TABLE,
+                DatabaseError::QueryFailure,
+            ))
     }
 }
 

@@ -146,14 +146,15 @@ mod tests {
 
     #[tokio::test]
     async fn a_missing_book_answers_404_json() {
-        let (status, body) = json_answer(
-            Request::get("/api/v1/books/999")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await;
+        let temp = TempDatabase::open();
+        let member = logged_in(&temp, "bob", "member");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        let (status, _, body) =
+            call(&app, authorized("GET", "/api/v1/books/999", &member, None)).await;
+
         assert_eq!(status, StatusCode::NOT_FOUND);
-        assert_eq!(body, serde_json::json!({ "error": "not_found" }));
+        assert_eq!(json(&body), serde_json::json!({ "error": "not_found" }));
     }
 
     fn bare(method: &str, uri: &str) -> Request<Body> {
@@ -164,9 +165,38 @@ mod tests {
             .unwrap()
     }
 
+    /// A new user with this role (`"admin"` or `"member"`) and a live session; answers the
+    /// session token.
+    fn logged_in(temp: &TempDatabase, username: &str, role: &str) -> String {
+        let user = temp
+            .db
+            .setup_new_transaction(|conn| {
+                let user = insert_user(conn, username);
+                conn.execute(
+                    "UPDATE users SET role = ?1 WHERE id = ?2",
+                    rusqlite::params![role, user],
+                )
+                .unwrap();
+                Ok(user)
+            })
+            .unwrap();
+        let token = format!("{username}-session");
+        add_session(
+            temp,
+            user,
+            "device",
+            &token,
+            &format!("{username}-refresh"),
+            unix_now() + 600,
+        );
+        token
+    }
+
     #[tokio::test]
     async fn every_route_answers_on_its_new_path_and_the_old_paths_are_gone() {
         let temp = TempDatabase::open();
+        let member = logged_in(&temp, "bob", "member");
+        let admin = logged_in(&temp, "alice", "admin");
         let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
 
         for uri in [
@@ -174,14 +204,18 @@ mod tests {
             "/api/v1/libraries/1/series",
             "/api/v1/series/1/books",
         ] {
-            let (status, _, body) = call(&app, bare("GET", uri)).await;
+            let (status, _, body) = call(&app, authorized("GET", uri, &member, None)).await;
             assert_eq!(status, StatusCode::OK, "{uri}");
             assert_eq!(json(&body), serde_json::json!([]), "{uri}");
         }
         for uri in ["/api/v1/books/1", "/api/v1/books/1/file"] {
-            let (status, _, body) = call(&app, bare("GET", uri)).await;
+            let (status, _, body) = call(&app, authorized("GET", uri, &member, None)).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
-            assert_eq!(json(&body), serde_json::json!({ "error": "not_found" }), "{uri}");
+            assert_eq!(
+                json(&body),
+                serde_json::json!({ "error": "not_found" }),
+                "{uri}"
+            );
         }
 
         let library = temp
@@ -196,7 +230,7 @@ mod tests {
             })
             .unwrap();
         let uri = format!("/api/v1/libraries/{library}");
-        let (status, _, _) = call(&app, bare("DELETE", &uri)).await;
+        let (status, _, _) = call(&app, authorized("DELETE", &uri, &admin, None)).await;
         assert_eq!(status, StatusCode::OK);
 
         // A GET proves the path exists without starting a scan of the real BOOK_DIRS.
@@ -227,6 +261,7 @@ mod tests {
     #[tokio::test]
     async fn every_unbuilt_route_answers_501_json() {
         let temp = TempDatabase::open();
+        let member = logged_in(&temp, "bob", "member");
         let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
 
         for (method, uri) in [
@@ -240,7 +275,7 @@ mod tests {
             ("POST", "/api/v1/metadata/scan"),
             ("GET", "/api/v1/search"),
         ] {
-            let (status, _, body) = call(&app, bare(method, uri)).await;
+            let (status, _, body) = call(&app, authorized(method, uri, &member, None)).await;
             assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{method} {uri}");
             assert_eq!(
                 json(&body),
@@ -308,9 +343,11 @@ mod tests {
                 Ok((library, series))
             })
             .unwrap();
+        let member = logged_in(&temp, "bob", "member");
         let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
 
-        let (status, _, body) = call(&app, bare("GET", "/api/v1/libraries")).await;
+        let (status, _, body) =
+            call(&app, authorized("GET", "/api/v1/libraries", &member, None)).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
             json(&body),
@@ -324,7 +361,7 @@ mod tests {
         );
 
         let uri = format!("/api/v1/libraries/{library}/series");
-        let (status, _, body) = call(&app, bare("GET", &uri)).await;
+        let (status, _, body) = call(&app, authorized("GET", &uri, &member, None)).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
             json(&body),
@@ -360,10 +397,11 @@ mod tests {
                 Ok((series, conn.last_insert_rowid()))
             })
             .unwrap();
+        let member = logged_in(&temp, "bob", "member");
         let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
 
         let uri = format!("/api/v1/series/{series}/books");
-        let (status, _, body) = call(&app, bare("GET", &uri)).await;
+        let (status, _, body) = call(&app, authorized("GET", &uri, &member, None)).await;
         assert_eq!(status, StatusCode::OK);
         let books = json(&body);
         assert_eq!(books.as_array().unwrap().len(), 1);
@@ -388,7 +426,10 @@ mod tests {
         let json_type = Some("application/json");
 
         for (label, request) in [
-            ("malformed JSON", login(json_type, r#"{"username_or_email":"#)),
+            (
+                "malformed JSON",
+                login(json_type, r#"{"username_or_email":"#),
+            ),
             ("an empty body", login(json_type, "")),
             (
                 "a missing field",
@@ -446,7 +487,11 @@ mod tests {
         };
 
         let (status, _, _) = call(&app, broken_body(None)).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "no session, no body reading");
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "no session, no body reading"
+        );
 
         let (status, _, body) = call(&app, broken_body(Some("session-1"))).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -459,6 +504,7 @@ mod tests {
     #[tokio::test]
     async fn an_id_that_is_not_a_number_answers_400_json() {
         let temp = TempDatabase::open();
+        let admin = logged_in(&temp, "alice", "admin");
         let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
 
         for (method, uri) in [
@@ -469,7 +515,7 @@ mod tests {
             ("DELETE", "/api/v1/libraries/abc"),
             ("GET", "/api/v1/books/99999999999999999999"),
         ] {
-            let (status, _, body) = call(&app, bare(method, uri)).await;
+            let (status, _, body) = call(&app, authorized(method, uri, &admin, None)).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {uri}");
             assert_eq!(
                 json(&body),
@@ -876,7 +922,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn admin_and_verified_flags_in_a_sign_up_body_are_ignored() {
+    async fn a_role_or_verified_flag_in_a_sign_up_body_is_ignored() {
         let temp = TempDatabase::open();
         temp.db
             .setup_new_transaction(|conn| Ok(insert_user(conn, "alice")))
@@ -884,25 +930,25 @@ mod tests {
         let (mailer, _sent) = Mailer::capture();
         let app = set_up_routes().with_state(temp.state(mailer));
         let mut body = sign_up_body("bob", "bob@example.com");
-        body["is_admin"] = true.into();
+        body["role"] = "admin".into();
         body["email_verified"] = true.into();
 
         let (status, _, _) = call(&app, post_json("/api/v1/auth/register", body)).await;
 
         assert_eq!(status, StatusCode::ACCEPTED);
-        let flags: (bool, bool) = temp
+        let stored: (String, bool) = temp
             .db
             .setup_new_transaction(|conn| {
                 Ok(conn
                     .query_row(
-                        "SELECT is_admin, email_verified FROM users WHERE username = 'bob'",
+                        "SELECT role, email_verified FROM users WHERE username = 'bob'",
                         [],
                         |row| Ok((row.get(0)?, row.get(1)?)),
                     )
                     .unwrap())
             })
             .unwrap();
-        assert_eq!(flags, (false, false));
+        assert_eq!(stored, ("member".to_string(), false));
     }
 
     #[tokio::test]
@@ -998,28 +1044,104 @@ mod tests {
         .unwrap()
     }
 
+    /// Every route except `/health` and the public `/api/v1/auth/…` routes. A route added to
+    /// the table belongs here too, so this test proves it can't be reached without a login.
+    const GUARDED_ROUTES: &[(&str, &str)] = &[
+        ("GET", "/api/v1/libraries"),
+        ("POST", "/api/v1/libraries"),
+        ("PATCH", "/api/v1/libraries/1"),
+        ("DELETE", "/api/v1/libraries/1"),
+        ("GET", "/api/v1/libraries/1/series"),
+        ("GET", "/api/v1/series/1/books"),
+        ("GET", "/api/v1/books/1"),
+        ("GET", "/api/v1/books/1/file"),
+        ("GET", "/api/v1/books/1/progress"),
+        ("PATCH", "/api/v1/books/1/progress"),
+        ("GET", "/api/v1/covers/book/1"),
+        ("POST", "/api/v1/scan"),
+        ("GET", "/api/v1/scan/status"),
+        ("POST", "/api/v1/directories/1/scan"),
+        ("POST", "/api/v1/metadata/scan"),
+        ("GET", "/api/v1/search"),
+        ("GET", "/api/v1/account/totp"),
+        ("POST", "/api/v1/account/totp"),
+        ("POST", "/api/v1/account/totp/confirm"),
+        ("POST", "/api/v1/account/totp/disable"),
+    ];
+
     #[tokio::test]
-    async fn the_totp_account_routes_need_a_session() {
-        for request in [
-            Request::get("/api/v1/account/totp")
-                .body(Body::empty())
-                .unwrap(),
-            Request::post("/api/v1/account/totp")
-                .body(Body::empty())
-                .unwrap(),
-            post_json(
-                "/api/v1/account/totp/confirm",
-                serde_json::json!({ "code": "123456", "password": "correct horse battery" }),
-            ),
-            post_json(
-                "/api/v1/account/totp/disable",
-                serde_json::json!({ "password": "correct horse battery", "code": "123456" }),
-            ),
-        ] {
-            let (status, body) = json_answer(request).await;
-            assert_eq!(status, StatusCode::UNAUTHORIZED);
-            assert_eq!(body, serde_json::json!({ "error": "unauthorized" }));
+    async fn every_route_but_health_and_auth_needs_a_session() {
+        let temp = TempDatabase::open();
+        let user = temp
+            .db
+            .setup_new_transaction(|conn| Ok(insert_user(conn, "alice")))
+            .unwrap();
+        add_session(
+            &temp,
+            user,
+            "d1",
+            "expired",
+            "expired-refresh",
+            unix_now() - 1,
+        );
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        for &(method, uri) in GUARDED_ROUTES {
+            for token in [None, Some("expired")] {
+                let request = match token {
+                    Some(token) => authorized(method, uri, token, None),
+                    None => bare(method, uri),
+                };
+                let (status, _, body) = call(&app, request).await;
+                assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {uri} {token:?}");
+                assert_eq!(
+                    json(&body),
+                    serde_json::json!({ "error": "unauthorized" }),
+                    "{method} {uri}"
+                );
+            }
         }
+    }
+
+    #[tokio::test]
+    async fn only_an_admin_scans_or_deletes_a_library() {
+        let temp = TempDatabase::open();
+        let member = logged_in(&temp, "bob", "member");
+        let admin = logged_in(&temp, "alice", "admin");
+        let library = temp
+            .db
+            .setup_new_transaction(|conn| {
+                conn.execute(
+                    "INSERT INTO library (library_name, library_type) VALUES ('books', 'books')",
+                    [],
+                )
+                .unwrap();
+                Ok(conn.last_insert_rowid())
+            })
+            .unwrap();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let delete = format!("/api/v1/libraries/{library}");
+        let libraries = |temp: &TempDatabase| -> i64 {
+            temp.db
+                .setup_new_transaction(|conn| {
+                    Ok(conn
+                        .query_row("SELECT COUNT(*) FROM library", [], |row| row.get(0))
+                        .unwrap())
+                })
+                .unwrap()
+        };
+
+        // Refused before the handler runs, so no scan of the real `BOOK_DIRS` starts.
+        for (method, uri) in [("POST", "/api/v1/scan"), ("DELETE", delete.as_str())] {
+            let (status, _, body) = call(&app, authorized(method, uri, &member, None)).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
+            assert_eq!(json(&body), serde_json::json!({ "error": "forbidden" }));
+        }
+        assert_eq!(libraries(&temp), 1, "a member deletes nothing");
+
+        let (status, _, _) = call(&app, authorized("DELETE", &delete, &admin, None)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(libraries(&temp), 0);
     }
 
     #[tokio::test]

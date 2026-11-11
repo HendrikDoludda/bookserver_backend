@@ -182,12 +182,11 @@ impl Database {
             db_type.get_table_name(),
             key
         );
-        conn.execute(&query, rusqlite::params![id])
-            .map_err(logged(
-                "deleting from",
-                db_type.get_table_name(),
-                DatabaseError::ConnectionExecutableFailure,
-            ))
+        conn.execute(&query, rusqlite::params![id]).map_err(logged(
+            "deleting from",
+            db_type.get_table_name(),
+            DatabaseError::ConnectionExecutableFailure,
+        ))
     }
 
     pub fn remove_entry_with_connection_based_on_columns<T>(
@@ -312,8 +311,11 @@ impl Database {
         let rows = stmt
             .query_map([], |row| row.get::<_, i64>("id"))
             .map_err(logged("reading", "library", DatabaseError::QueryFailure))?;
-        rows.collect::<Result<Vec<i64>, _>>()
-            .map_err(logged("reading", "library", DatabaseError::NextRowFailure))
+        rows.collect::<Result<Vec<i64>, _>>().map_err(logged(
+            "reading",
+            "library",
+            DatabaseError::NextRowFailure,
+        ))
     }
 
     pub fn get_books_in_series(&self, series_id: i64) -> Result<Vec<i64>, DatabaseError> {
@@ -331,8 +333,11 @@ impl Database {
         let rows = stmt
             .query_map(rusqlite::params![series_id], |row| row.get::<_, i64>("id"))
             .map_err(logged("reading", "books", DatabaseError::QueryFailure))?;
-        rows.collect::<Result<Vec<i64>, _>>()
-            .map_err(logged("reading", "books", DatabaseError::NextRowFailure))
+        rows.collect::<Result<Vec<i64>, _>>().map_err(logged(
+            "reading",
+            "books",
+            DatabaseError::NextRowFailure,
+        ))
     }
 
     pub fn remove_entry_from_library_elements(
@@ -429,9 +434,9 @@ impl Database {
             .query(rusqlite::params![value_to_search_for])
             .map_err(logged("reading", table_name, DatabaseError::QueryFailure))?;
 
-        if let Some(row) = rows
-            .next()
-            .map_err(logged("reading", table_name, DatabaseError::NextRowFailure))?
+        if let Some(row) =
+            rows.next()
+                .map_err(logged("reading", table_name, DatabaseError::NextRowFailure))?
         {
             let id: i64 = row.get(0).map_err(logged(
                 "reading",

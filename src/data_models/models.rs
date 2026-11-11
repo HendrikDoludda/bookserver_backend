@@ -288,9 +288,26 @@ pub struct UserMetadata {
     pub password_hash: String,
     pub email: String,
     pub email_verified: bool,
-    pub is_admin: bool,
+    pub role: Role,
     pub created_at: SystemTime,
     pub last_login: Option<SystemTime>,
+}
+
+/// What a user may do; stored as text in `users.role`, and sent as `"admin"` / `"member"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    Admin,
+    Member,
+}
+
+impl Role {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Role::Admin => "admin",
+            Role::Member => "member",
+        }
+    }
 }
 
 pub enum UserDatabaseColumns {
@@ -299,7 +316,7 @@ pub enum UserDatabaseColumns {
     PasswordHash,
     Email,
     EmailVerified,
-    IsAdmin,
+    Role,
     LastLogin,
 }
 impl AsRef<str> for UserDatabaseColumns {
@@ -310,7 +327,7 @@ impl AsRef<str> for UserDatabaseColumns {
             UserDatabaseColumns::PasswordHash => "password_hash",
             UserDatabaseColumns::Email => "email",
             UserDatabaseColumns::EmailVerified => "email_verified",
-            UserDatabaseColumns::IsAdmin => "is_admin",
+            UserDatabaseColumns::Role => "role",
             UserDatabaseColumns::LastLogin => "last_login",
         }
     }

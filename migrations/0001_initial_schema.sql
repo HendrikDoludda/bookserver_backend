@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE COLLATE NOCASE,
     email_verified BOOLEAN NOT NULL DEFAULT FALSE,
-    is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+    role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member')),
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     last_login INTEGER
 );

@@ -6,10 +6,10 @@ use std::{
 };
 
 use blake3::Hasher;
-use tracing::{error, warn};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use tokio::{fs, sync::Semaphore};
+use tracing::{error, warn};
 
 use crate::config;
 use crate::data_models::models::{

@@ -69,8 +69,11 @@ pub trait Extract: FromRow {
             })
             .map_err(logged("reading", Self::TABLE, DatabaseError::QueryFailure))?;
 
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(logged("reading", Self::TABLE, DatabaseError::NextRowFailure))
+        rows.collect::<Result<Vec<_>, _>>().map_err(logged(
+            "reading",
+            Self::TABLE,
+            DatabaseError::NextRowFailure,
+        ))
     }
 }
 
@@ -99,7 +102,7 @@ impl Extract for UserMetadata {
     const TABLE: &'static str = "users";
     const KEY: &'static str = "id";
     const COLUMNS: &'static str =
-        "id, username, password_hash, email, email_verified, is_admin, created_at, last_login";
+        "id, username, password_hash, email, email_verified, role, created_at, last_login";
 }
 
 impl Extract for TOTP {
@@ -148,7 +151,10 @@ mod tests {
         assert!(matches!(results[0], Err(DatabaseError::QueryFailure)));
         assert!(matches!(results[1], Err(DatabaseError::NextRowFailure)));
         assert_eq!(logs.matches("reading totp failed:").count(), 2, "{logs}");
-        assert!(logs.contains("created_at"), "the cause names the column: {logs}");
+        assert!(
+            logs.contains("created_at"),
+            "the cause names the column: {logs}"
+        );
     }
 
     fn insert_totp(conn: &Connection, user_id: i64, secret: &str) {

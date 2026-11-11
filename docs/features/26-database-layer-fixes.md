@@ -21,7 +21,7 @@ every read of a user, and the library and series lists. Each fix comes with a ro
 - [x] 1 h · `Update`, `Delete` and `remove_entry` discard the changed-row count — return it, so a conditional write can tell "nothing matched" from success [BE]
 - [x] 1 h · `DatabaseTypes::Session` gives the table name `"session"`; the table is `sessions` [BE]
 - [x] 1 h · Add `DatabaseTypes` variants for `totp` and `recovery_codes` [BE]
-- [x] 1 h · `UserMetadata::insert` writes only `username`, `password_hash` and `email` — also write `is_admin` and `email_verified` (today the first user never becomes admin) [BE]
+- [x] 1 h · `UserMetadata::insert` writes only `username`, `password_hash` and `email` — also write the admin flag and `email_verified` (today the first user never becomes admin) [BE]
 - [x] 2 h · Every read of a user fails: `UserMetadata::from_row` expects `created_at` and `last_login` as integer seconds, but `created_at` defaults to `CURRENT_TIMESTAMP` (text) and `last_login` starts out NULL. Store both as unix seconds (default `(strftime('%s', 'now'))`) and make `last_login` an `Option`; the time columns of the other auth tables become `INTEGER` too [DB] [BE]
 - [x] 2 h · Remove `SelectionMethod`: `PassedInColumns` selects only the searched columns, so `from_row` fails whenever a row matches — in `validate_new_user` a taken email comes back as `DatabaseSearchFailure` instead of `EmailTaken`, and the admin check errors as soon as an admin exists. Every search selects `*` [BE]
 - [x] 1 h · `search_for_row` turns every SQL and `FromRow` error into `EntryNotFound` — a 404 once errors reach clients, and never logged; log it and return `QueryFailure` [BE]

@@ -27,8 +27,11 @@ pub trait Update {
             Self::KEY
         );
 
-        conn.execute(&query, params![new_value, id])
-            .map_err(logged("updating", Self::TABLE, DatabaseError::UpdatingFailure))
+        conn.execute(&query, params![new_value, id]).map_err(logged(
+            "updating",
+            Self::TABLE,
+            DatabaseError::UpdatingFailure,
+        ))
     }
 
     fn update_multiple(
@@ -58,7 +61,11 @@ pub trait Update {
         let mut bound: Vec<&dyn ToSql> = values.to_vec();
         bound.push(&id);
         conn.execute(&query, params_from_iter(bound))
-            .map_err(logged("updating", Self::TABLE, DatabaseError::UpdatingFailure))
+            .map_err(logged(
+                "updating",
+                Self::TABLE,
+                DatabaseError::UpdatingFailure,
+            ))
     }
 }
 
@@ -107,7 +114,10 @@ impl Update for TOTP {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{capture_logs, insert_user, memory_connection};
+    use crate::{
+        models::Role,
+        test_support::{capture_logs, insert_user, memory_connection},
+    };
 
     #[test]
     fn a_failed_update_is_logged_with_its_table_and_cause() {
@@ -183,22 +193,22 @@ mod tests {
 
         let changed = UserMetadata::update_multiple(
             &conn,
-            &[UserDatabaseColumns::Username, UserDatabaseColumns::IsAdmin],
-            &[&"bob", &true],
+            &[UserDatabaseColumns::Username, UserDatabaseColumns::Role],
+            &[&"bob", &Role::Admin],
             user_id,
         )
         .unwrap();
         assert_eq!(changed, 1);
 
-        let (username, is_admin): (String, bool) = conn
+        let (username, role): (String, String) = conn
             .query_row(
-                "SELECT username, is_admin FROM users WHERE id = ?1",
+                "SELECT username, role FROM users WHERE id = ?1",
                 [user_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
         assert_eq!(username, "bob");
-        assert!(is_admin);
+        assert_eq!(role, "admin");
     }
 
     #[test]
@@ -206,7 +216,7 @@ mod tests {
         let conn = memory_connection();
         let result = UserMetadata::update_multiple(
             &conn,
-            &[UserDatabaseColumns::Username, UserDatabaseColumns::IsAdmin],
+            &[UserDatabaseColumns::Username, UserDatabaseColumns::Role],
             &[&"bob"],
             1,
         );

@@ -97,14 +97,14 @@ impl Insert for LibraryMetadata {
 impl Insert for UserMetadata {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
         let query = "INSERT INTO users (username, password_hash, email, email_verified, \
-            is_admin, created_at, last_login) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+            role, created_at, last_login) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
 
         let params = params![
             self.username,
             self.password_hash,
             self.email,
             self.email_verified,
-            self.is_admin,
+            self.role,
             convert_system_time_to_unix_time(self.created_at),
             self.last_login.map(convert_system_time_to_unix_time),
         ];
@@ -222,7 +222,7 @@ mod tests {
         database_related_scripts::db::Database,
         models::{
             BookFormat, BookLanguage, DatabaseTypes, LibraryType, QuerySeparator,
-            RecoveryCodesColumns, SessionsDatabaseColumns, TOTPDatabaseColumns,
+            RecoveryCodesColumns, Role, SessionsDatabaseColumns, TOTPDatabaseColumns,
             UserDatabaseColumns,
         },
         test_support::{capture_logs, insert_user, memory_connection},
@@ -299,7 +299,10 @@ mod tests {
         let stored = Database::get_entry_with_connection::<BookMetadata>(&conn, id).unwrap();
         assert_eq!(stored.title, "A Quiet Sea");
         assert_eq!(stored.author, "R. Writer");
-        assert_eq!(stored.cover_image.as_deref(), Some("./cover_images/abc.jpg"));
+        assert_eq!(
+            stored.cover_image.as_deref(),
+            Some("./cover_images/abc.jpg")
+        );
         assert_eq!(stored.format.as_str(), "epub");
         assert_eq!(stored.tags, ["sea", "quiet"]);
         assert_eq!(stored.description.as_deref(), Some("Twelve chapters"));
@@ -458,7 +461,10 @@ mod tests {
             .expect("the described series is listed")
             .data;
         assert_eq!(stored.description.as_deref(), Some("Twelve volumes"));
-        assert_eq!(stored.cover_image.as_deref(), Some("./cover_images/sea.jpg"));
+        assert_eq!(
+            stored.cover_image.as_deref(),
+            Some("./cover_images/sea.jpg")
+        );
         assert_eq!(stored.start_release_year, Some(1999));
         assert_eq!(stored.end_release_year, Some(2004));
     }
@@ -475,7 +481,7 @@ mod tests {
             password_hash: "hash".to_string(),
             email: email.to_string(),
             email_verified: true,
-            is_admin: true,
+            role: Role::Admin,
             created_at: at(1_700_000_000),
             last_login: None,
         }
@@ -495,7 +501,7 @@ mod tests {
             stored.email_verified,
             "the verified flag must reach the database"
         );
-        assert!(stored.is_admin, "the admin flag must reach the database");
+        assert_eq!(stored.role, Role::Admin, "the role must reach the database");
         assert_eq!(stored.created_at, at(1_700_000_000));
         assert_eq!(stored.last_login, None);
 
@@ -528,7 +534,7 @@ mod tests {
         let now = SystemTime::now();
         assert!(stored.created_at <= now && stored.created_at > now - Duration::from_secs(60));
         assert_eq!(stored.last_login, None);
-        assert!(!stored.is_admin);
+        assert_eq!(stored.role, Role::Member);
         assert!(!stored.email_verified);
     }
 
