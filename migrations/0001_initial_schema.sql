@@ -65,12 +65,15 @@ CREATE TABLE IF NOT EXISTS email_codes (
     user_id INTEGER NOT NULL,
     purpose TEXT NOT NULL,
     code_hash TEXT NOT NULL,
+    -- The address an email change waits to confirm; the code is mailed there.
+    new_email TEXT,
     expires_at INTEGER NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
     last_sent_at INTEGER NOT NULL,
     sent_in_window INTEGER NOT NULL,
     window_started_at INTEGER NOT NULL,
     PRIMARY KEY (user_id, purpose),
+    CHECK ((purpose = 'change_email') = (new_email IS NOT NULL)),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 

@@ -29,6 +29,7 @@ impl FromSql for CodePurpose {
         match value.as_str()? {
             "reset_password" => Ok(CodePurpose::ResetPassword),
             "verify_email" => Ok(CodePurpose::VerifyEmail),
+            "change_email" => Ok(CodePurpose::ChangeEmail),
             _ => Err(FromSqlError::InvalidType),
         }
     }
@@ -55,11 +56,12 @@ pub fn find(
 /// Writes the row for this user and purpose, replacing an earlier one.
 pub fn save(conn: &Connection, code: &EmailCode) -> Result<(), DatabaseError> {
     conn.execute(
-        "INSERT INTO email_codes (user_id, purpose, code_hash, expires_at, attempts, \
+        "INSERT INTO email_codes (user_id, purpose, code_hash, new_email, expires_at, attempts, \
              last_sent_at, sent_in_window, window_started_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
          ON CONFLICT (user_id, purpose) DO UPDATE SET \
              code_hash = excluded.code_hash, \
+             new_email = excluded.new_email, \
              expires_at = excluded.expires_at, \
              attempts = excluded.attempts, \
              last_sent_at = excluded.last_sent_at, \
@@ -69,6 +71,7 @@ pub fn save(conn: &Connection, code: &EmailCode) -> Result<(), DatabaseError> {
             code.user_id,
             code.purpose,
             code.code_hash,
+            code.new_email,
             convert_system_time_to_unix_time(code.expires_at),
             code.attempts,
             convert_system_time_to_unix_time(code.last_sent_at),
@@ -133,6 +136,16 @@ pub fn consume(
     Ok(changed == 1)
 }
 
+/// Deletes every code of the user, whatever its purpose.
+pub fn delete_for_user(conn: &Connection, user_id: i64) -> Result<usize, DatabaseError> {
+    conn.execute("DELETE FROM email_codes WHERE user_id = ?1", [user_id])
+        .map_err(logged(
+            "deleting from",
+            "email_codes",
+            DatabaseError::QueryFailure,
+        ))
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, UNIX_EPOCH};
@@ -149,6 +162,7 @@ mod tests {
             user_id,
             purpose,
             code_hash: hash.to_string(),
+            new_email: None,
             expires_at: at(1_700_000_900),
             attempts: 0,
             last_sent_at: at(1_700_000_000),
@@ -258,6 +272,63 @@ mod tests {
         assert!(consume(&conn, user_id, CodePurpose::ResetPassword, "hash").unwrap());
         assert_eq!(rows(&conn), 0);
         assert!(!consume(&conn, user_id, CodePurpose::ResetPassword, "hash").unwrap());
+    }
+
+    fn change_code(user_id: i64, new_email: &str) -> EmailCode {
+        EmailCode {
+            new_email: Some(new_email.to_string()),
+            ..code(user_id, CodePurpose::ChangeEmail, "change")
+        }
+    }
+
+    #[test]
+    fn an_email_change_code_keeps_its_address_and_a_newer_one_replaces_it() {
+        let conn = memory_connection();
+        let user_id = insert_user(&conn, "alice");
+        save(&conn, &change_code(user_id, "first@example.com")).unwrap();
+        save(&conn, &change_code(user_id, "second@example.com")).unwrap();
+
+        let stored = find(&conn, user_id, CodePurpose::ChangeEmail)
+            .unwrap()
+            .expect("the code exists");
+        assert_eq!(stored.purpose, CodePurpose::ChangeEmail);
+        assert_eq!(stored.new_email.as_deref(), Some("second@example.com"));
+        assert_eq!(rows(&conn), 1);
+    }
+
+    #[test]
+    fn only_an_email_change_code_has_an_address() {
+        let conn = memory_connection();
+        let user_id = insert_user(&conn, "alice");
+        let reset_with_an_address = EmailCode {
+            new_email: Some("someone@example.com".to_string()),
+            ..code(user_id, CodePurpose::ResetPassword, "reset")
+        };
+        let change_without_one = code(user_id, CodePurpose::ChangeEmail, "change");
+
+        assert!(save(&conn, &reset_with_an_address).is_err());
+        assert!(save(&conn, &change_without_one).is_err());
+        assert_eq!(rows(&conn), 0);
+    }
+
+    #[test]
+    fn deleting_a_users_codes_leaves_other_users_alone() {
+        let conn = memory_connection();
+        let alice = insert_user(&conn, "alice");
+        let bob = insert_user(&conn, "bob");
+        save(
+            &conn,
+            &code(alice, CodePurpose::ResetPassword, "alice-reset"),
+        )
+        .unwrap();
+        save(&conn, &change_code(alice, "alice.new@example.com")).unwrap();
+        save(&conn, &code(bob, CodePurpose::ResetPassword, "bob-reset")).unwrap();
+
+        assert_eq!(delete_for_user(&conn, alice).unwrap(), 2);
+        assert_eq!(rows(&conn), 1);
+        assert!(find(&conn, bob, CodePurpose::ResetPassword)
+            .unwrap()
+            .is_some());
     }
 
     #[test]

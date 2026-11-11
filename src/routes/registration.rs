@@ -145,10 +145,18 @@ pub async fn create_account(
                     now,
                 )?));
             };
-            save_fresh_code(conn, user.user_id, PURPOSE, code_hash, first_mail(now), now)?;
+            let stored = save_fresh_code(
+                conn,
+                user.user_id,
+                PURPOSE,
+                None,
+                code_hash,
+                first_mail(now),
+                now,
+            )?;
             Ok(Created::AwaitsCode {
                 user_id: user.user_id,
-                mail: code_mail(PURPOSE, &user, &code),
+                mail: code_mail(&stored, &user, &code),
             })
         })
         .await?;

@@ -62,9 +62,17 @@ pub struct DeviceInformation<'a> {
     pub platform: &'a str,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+/// `PUT /api/v1/account/email`
+#[derive(Deserialize)]
 pub struct ChangeEmailRequest {
     pub new_email: String,
+    pub password: String,
+}
+
+/// `POST /api/v1/account/email/confirm`: the code mailed to the new address.
+#[derive(Deserialize)]
+pub struct ConfirmEmailChangeRequest {
+    pub code: String,
 }
 
 /// `PUT /api/v1/account/username`

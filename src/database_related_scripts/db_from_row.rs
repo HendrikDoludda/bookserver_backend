@@ -168,6 +168,7 @@ impl FromRow for EmailCode {
             user_id: row.get("user_id")?,
             purpose: row.get("purpose")?,
             code_hash: row.get("code_hash")?,
+            new_email: row.get("new_email")?,
             expires_at: read_time(row, "expires_at")?,
             attempts: row.get("attempts")?,
             last_sent_at: read_time(row, "last_sent_at")?,

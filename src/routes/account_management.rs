@@ -5,15 +5,25 @@ use std::{sync::Arc, time::SystemTime};
 use rusqlite::Connection;
 
 use crate::{
-    data_models::authentication_model::{ChangePasswordRequest, ChangeUserNameRequest},
+    data_models::authentication_model::{
+        ChangeEmailRequest, ChangePasswordRequest, ChangeUserNameRequest, ConfirmEmailChangeRequest,
+    },
+    database_related_scripts::db_email_codes,
     db::Database,
-    error_types::{AppErrors, AuthenticationError},
-    models::{QuerySeparator, UserDatabaseColumns, UserMetadata},
+    error_types::{AppErrors, AuthenticationError, DatabaseError},
+    models::{CodePurpose, QuerySeparator, UserDatabaseColumns, UserMetadata},
     routes::{
-        auth::{check_new_password, check_username, end_other_sessions, hash_secret},
+        auth::{check_email, check_new_password, check_username, end_other_sessions, hash_secret},
+        email_codes::{
+            check_code, code_mail, counters_for_next_mail, generate_code, save_fresh_code,
+            MailCounters,
+        },
+        email_helper::{EmailInformation, Mailer},
         login::check_current_password,
     },
 };
+
+const CHANGE_EMAIL: CodePurpose = CodePurpose::ChangeEmail;
 
 /// Sets a new password once the current one is re-checked, and ends the user's other sessions
 /// and pending logins; the session that asked stays.
@@ -105,16 +115,210 @@ pub async fn change_username(
     .await
 }
 
+/// What a requested email change leads to.
+pub enum EmailChangeRequested {
+    /// Email is off, so the address changed at once — as a sign-up is verified on the spot then.
+    Applied,
+    /// The new address still has to prove itself: `send_email_change_code` mails it a code.
+    AwaitsCode { new_email: String },
+}
+
+/// Checks a requested email change: the address, that it is new, the password, and that no
+/// other account has it. With email on, the address then waits for its code; with email off, it
+/// is written at once.
+pub async fn request_email_change(
+    db: Arc<Database>,
+    mailer: &Mailer,
+    user_id: i64,
+    request: ChangeEmailRequest,
+    now: SystemTime,
+) -> Result<EmailChangeRequested, AppErrors> {
+    let ChangeEmailRequest {
+        new_email,
+        password,
+    } = request;
+    check_email(&new_email)?;
+    let current = Arc::clone(&db)
+        .read(move |conn| {
+            Ok(Database::get_entry_with_connection::<UserMetadata>(conn, user_id)?.email)
+        })
+        .await?;
+    // ASCII-only, like the email column's NOCASE: the database holds the two as one address.
+    if current.eq_ignore_ascii_case(&new_email) {
+        return Err(AuthenticationError::EmailUnchanged.into());
+    }
+    check_current_password(Arc::clone(&db), user_id, password, now).await?;
+    let lookup = new_email.clone();
+    let taken = Arc::clone(&db)
+        .read(move |conn| Ok(address_taken(conn, user_id, &lookup)?))
+        .await?;
+    if taken {
+        return Err(AuthenticationError::EmailTaken.into());
+    }
+    if mailer.is_enabled() {
+        return Ok(EmailChangeRequested::AwaitsCode { new_email });
+    }
+
+    db.transact(move |conn| {
+        // Checked again inside the write lock, where no other account can take it meanwhile.
+        if address_taken(conn, user_id, &new_email)? {
+            return Err(AuthenticationError::EmailTaken.into());
+        }
+        write_new_email(conn, user_id, &new_email)?;
+        Ok(EmailChangeRequested::Applied)
+    })
+    .await
+}
+
+/// Stores a code for the new address and mails it there, within `email_codes`' limits. The
+/// request was answered already, so every outcome ends here: over the limits, nothing is sent.
+pub async fn send_email_change_code(
+    db: Arc<Database>,
+    mailer: Mailer,
+    user_id: i64,
+    new_email: String,
+    now: SystemTime,
+) {
+    match issue_email_change_code(db, user_id, new_email, now).await {
+        Ok(Some(mail)) => {
+            if let Err(err) = mailer.send(mail).await {
+                tracing::error!("sending a {} email failed: {err}", CHANGE_EMAIL.as_str());
+            }
+        }
+        Ok(None) => {}
+        Err(err) => tracing::error!("issuing a {} code failed: {err}", CHANGE_EMAIL.as_str()),
+    }
+}
+
+/// Stores a fresh code with the new address and returns the mail carrying it, or `None` while
+/// the limits forbid one.
+async fn issue_email_change_code(
+    db: Arc<Database>,
+    user_id: i64,
+    new_email: String,
+    now: SystemTime,
+) -> Result<Option<EmailInformation>, AppErrors> {
+    // Checked before hashing, so a request over the limits costs no Argon2 work.
+    let may_send = Arc::clone(&db)
+        .transact(move |conn| Ok(counters_for_change_mail(conn, user_id, now)?.is_some()))
+        .await?;
+    if !may_send {
+        return Ok(None);
+    }
+    let code = generate_code();
+    let code_hash = hash_secret(code.clone()).await?;
+
+    // Checked again inside the write: a parallel request may have sent a mail meanwhile.
+    db.transact(move |conn| {
+        let Some(counters) = counters_for_change_mail(conn, user_id, now)? else {
+            return Ok(None);
+        };
+        let user = Database::get_entry_with_connection::<UserMetadata>(conn, user_id)?;
+        let stored = save_fresh_code(
+            conn,
+            user_id,
+            CHANGE_EMAIL,
+            Some(new_email),
+            code_hash,
+            counters,
+            now,
+        )?;
+        Ok(Some(code_mail(&stored, &user, &code)))
+    })
+    .await
+}
+
+fn counters_for_change_mail(
+    conn: &Connection,
+    user_id: i64,
+    now: SystemTime,
+) -> Result<Option<MailCounters>, DatabaseError> {
+    let existing = db_email_codes::find(conn, user_id, CHANGE_EMAIL)?;
+    Ok(counters_for_next_mail(existing.as_ref(), now))
+}
+
+/// Confirms an email change with the code mailed to the new address. The try is counted first,
+/// against the code's limit of tries.
+pub async fn confirm_email_change(
+    db: Arc<Database>,
+    user_id: i64,
+    request: ConfirmEmailChangeRequest,
+    now: SystemTime,
+) -> Result<(), AppErrors> {
+    let user = Arc::clone(&db)
+        .read(move |conn| {
+            Ok(Database::get_entry_with_connection::<UserMetadata>(
+                conn, user_id,
+            )?)
+        })
+        .await?;
+    let Some((_, code_hash)) =
+        check_code(Arc::clone(&db), CHANGE_EMAIL, Some(user), request.code, now).await?
+    else {
+        return Err(AuthenticationError::InvalidValidationCode.into());
+    };
+
+    db.transact(move |conn| {
+        // Read again inside the write lock: a parallel confirm may have used the code, or a newer
+        // request replaced it.
+        let new_email = db_email_codes::find(conn, user_id, CHANGE_EMAIL)?
+            .filter(|code| code.code_hash == code_hash)
+            .and_then(|code| code.new_email)
+            .ok_or(AuthenticationError::InvalidValidationCode)?;
+        if address_taken(conn, user_id, &new_email)? {
+            return Err(AuthenticationError::EmailTaken.into());
+        }
+        write_new_email(conn, user_id, &new_email)
+    })
+    .await
+}
+
+/// Whether an account other than this one has the address, in any case.
+fn address_taken(conn: &Connection, user_id: i64, email: &str) -> Result<bool, DatabaseError> {
+    let holder = Database::search_for_single_row_with_connection::<UserMetadata>(
+        conn,
+        &[UserDatabaseColumns::Email],
+        &[&email],
+        QuerySeparator::And,
+    )?;
+    Ok(holder.is_some_and(|holder| holder.user_id != user_id))
+}
+
+/// Writes the new address as verified and deletes the account's emailed codes, the change's own
+/// among them: the others went to the old address, and a reset code is stored per account, so it
+/// would still work through the new one.
+fn write_new_email(conn: &Connection, user_id: i64, new_email: &str) -> Result<(), AppErrors> {
+    Database::update_multiple_values_with_connection::<UserMetadata>(
+        conn,
+        &[
+            UserDatabaseColumns::Email,
+            UserDatabaseColumns::EmailVerified,
+        ],
+        &[&new_email, &true],
+        user_id,
+    )?;
+    db_email_codes::delete_for_user(conn, user_id)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use rusqlite::params;
 
+    use std::{sync::Mutex, time::Duration};
+
     use super::*;
     use crate::{
-        data_models::authentication_model::{LoginRequest, LoginResponse},
+        data_models::authentication_model::{
+            ConfirmPasswordResetRequest, LoginRequest, LoginResponse,
+        },
         db::convert_system_time_to_unix_time,
-        routes::login::log_in,
-        test_support::{insert_user, memory_connection, TempDatabase},
+        routes::{
+            email_codes::CODE_LIFETIME,
+            login::log_in,
+            password_reset::{confirm_reset, send_reset_code},
+        },
+        test_support::{code_in, insert_user, memory_connection, TempDatabase},
     };
 
     const OLD: &str = "correct horse battery";
@@ -238,9 +442,9 @@ mod tests {
         }
     }
 
-    fn outcome(result: &Result<(), AppErrors>) -> &'static str {
+    fn outcome<T>(result: &Result<T, AppErrors>) -> &'static str {
         match result {
-            Ok(()) => "accepted",
+            Ok(_) => "accepted",
             Err(AppErrors::Authentication(err)) => match err {
                 AuthenticationError::IncorrectPassword => "incorrect password",
                 AuthenticationError::PasswordUnchanged => "unchanged",
@@ -248,6 +452,10 @@ mod tests {
                 AuthenticationError::PasswordTooShort => "too short",
                 AuthenticationError::UsernameTaken => "username taken",
                 AuthenticationError::InvalidUsername => "invalid username",
+                AuthenticationError::EmailTaken => "email taken",
+                AuthenticationError::EmailUnchanged => "unchanged email",
+                AuthenticationError::InvalidEmail => "invalid email",
+                AuthenticationError::InvalidValidationCode => "invalid code",
                 _ => "other auth error",
             },
             Err(_) => "other error",
@@ -447,5 +655,281 @@ mod tests {
         assert_eq!(outcomes, ["accepted", "username taken"], "never a 500");
         let winner = if a.is_ok() { alice } else { bob };
         assert_eq!(username_of(&temp, winner), "carol");
+    }
+
+    const NEW_ADDRESS: &str = "alice.new@example.com";
+
+    async fn request_change(
+        temp: &TempDatabase,
+        mailer: &Mailer,
+        user_id: i64,
+        new_email: &str,
+        password: &str,
+        now: SystemTime,
+    ) -> Result<EmailChangeRequested, AppErrors> {
+        let request = ChangeEmailRequest {
+            new_email: new_email.to_string(),
+            password: password.to_string(),
+        };
+        request_email_change(Arc::clone(&temp.db), mailer, user_id, request, now).await
+    }
+
+    fn requested(result: &Result<EmailChangeRequested, AppErrors>) -> &'static str {
+        match result {
+            Ok(EmailChangeRequested::Applied) => "applied",
+            Ok(EmailChangeRequested::AwaitsCode { .. }) => "awaits code",
+            Err(_) => outcome(result),
+        }
+    }
+
+    /// Asks for an email change the way the handler does, and mails its code before returning.
+    async fn change_email(
+        temp: &TempDatabase,
+        mailer: &Mailer,
+        user_id: i64,
+        new_email: &str,
+        now: SystemTime,
+    ) -> &'static str {
+        let result = request_change(temp, mailer, user_id, new_email, OLD, now).await;
+        if let Ok(EmailChangeRequested::AwaitsCode { new_email }) = &result {
+            let db = Arc::clone(&temp.db);
+            send_email_change_code(db, mailer.clone(), user_id, new_email.clone(), now).await;
+        }
+        requested(&result)
+    }
+
+    async fn confirm(
+        temp: &TempDatabase,
+        user_id: i64,
+        code: &str,
+        now: SystemTime,
+    ) -> Result<(), AppErrors> {
+        let request = ConfirmEmailChangeRequest {
+            code: code.to_string(),
+        };
+        confirm_email_change(Arc::clone(&temp.db), user_id, request, now).await
+    }
+
+    /// The `(address, code)` of every mail sent so far.
+    fn mails(sent: &Mutex<Vec<EmailInformation>>) -> Vec<(String, String)> {
+        sent.lock()
+            .unwrap()
+            .iter()
+            .map(|mail| (mail.email.clone(), code_in(mail)))
+            .collect()
+    }
+
+    /// The stored address and whether it is verified.
+    fn email_of(temp: &TempDatabase, user_id: i64) -> (String, bool) {
+        temp.db
+            .setup_new_transaction(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT email, email_verified FROM users WHERE id = ?1",
+                        [user_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .unwrap())
+            })
+            .unwrap()
+    }
+
+    fn code_rows(temp: &TempDatabase) -> i64 {
+        count(temp, "SELECT COUNT(*) FROM email_codes")
+    }
+
+    #[tokio::test]
+    async fn the_code_goes_to_the_new_address_and_its_confirm_moves_the_login_there() {
+        let temp = TempDatabase::open();
+        let now = SystemTime::now();
+        let alice = add_user(&temp, "alice").await;
+        let (mailer, sent) = Mailer::capture();
+
+        let result = change_email(&temp, &mailer, alice, NEW_ADDRESS, now).await;
+
+        assert_eq!(result, "awaits code");
+        let mail = mails(&sent);
+        assert_eq!(mail.len(), 1);
+        let (to, code) = &mail[0];
+        assert_eq!(to, NEW_ADDRESS, "only the new address gets the code");
+        assert_eq!(
+            login_as(&temp, "alice@example.com", OLD, now).await,
+            "accepted"
+        );
+        assert_eq!(login_as(&temp, NEW_ADDRESS, OLD, now).await, "incorrect");
+
+        confirm(&temp, alice, code, now).await.unwrap();
+
+        assert_eq!(email_of(&temp, alice), (NEW_ADDRESS.to_string(), true));
+        assert_eq!(login_as(&temp, NEW_ADDRESS, OLD, now).await, "accepted");
+        assert_eq!(
+            login_as(&temp, "alice@example.com", OLD, now).await,
+            "incorrect"
+        );
+        let again = confirm(&temp, alice, code, now).await;
+        assert_eq!(outcome(&again), "invalid code", "a code works once");
+    }
+
+    #[tokio::test]
+    async fn five_wrong_codes_end_the_code() {
+        let temp = TempDatabase::open();
+        let now = SystemTime::now();
+        let alice = add_user(&temp, "alice").await;
+        let (mailer, sent) = Mailer::capture();
+        change_email(&temp, &mailer, alice, NEW_ADDRESS, now).await;
+        let (_, code) = mails(&sent).remove(0);
+
+        // `0` is not in the code alphabet, so this can never be the real code.
+        for _ in 0..5 {
+            assert_eq!(
+                outcome(&confirm(&temp, alice, "00000000", now).await),
+                "invalid code"
+            );
+        }
+        let right_but_too_late = confirm(&temp, alice, &code, now).await;
+
+        assert_eq!(outcome(&right_but_too_late), "invalid code");
+        assert_eq!(email_of(&temp, alice).0, "alice@example.com");
+    }
+
+    #[tokio::test]
+    async fn an_expired_code_is_refused() {
+        let temp = TempDatabase::open();
+        let now = SystemTime::now();
+        let alice = add_user(&temp, "alice").await;
+        let (mailer, sent) = Mailer::capture();
+        change_email(&temp, &mailer, alice, NEW_ADDRESS, now).await;
+        let (_, code) = mails(&sent).remove(0);
+
+        let late = now + CODE_LIFETIME + Duration::from_secs(1);
+        let result = confirm(&temp, alice, &code, late).await;
+
+        assert_eq!(outcome(&result), "invalid code");
+        assert_eq!(email_of(&temp, alice).0, "alice@example.com");
+    }
+
+    #[tokio::test]
+    async fn a_reset_code_mailed_to_the_old_address_is_refused_after_the_change() {
+        let temp = TempDatabase::open();
+        let now = SystemTime::now();
+        let alice = add_user(&temp, "alice").await;
+        let (mailer, sent) = Mailer::capture();
+        let db = Arc::clone(&temp.db);
+        send_reset_code(db, mailer.clone(), "alice@example.com".to_string(), now).await;
+        change_email(&temp, &mailer, alice, NEW_ADDRESS, now).await;
+        let mail = mails(&sent);
+        let (reset_to, reset_code) = mail[0].clone();
+        assert_eq!(reset_to, "alice@example.com");
+        confirm(&temp, alice, &mail[1].1, now).await.unwrap();
+
+        let through_the_new_address = ConfirmPasswordResetRequest {
+            email: NEW_ADDRESS.to_string(),
+            code: reset_code,
+            new_password: NEW.to_string(),
+            new_password_repeat: NEW.to_string(),
+        };
+        let result = confirm_reset(Arc::clone(&temp.db), through_the_new_address, now).await;
+
+        assert_eq!(outcome(&result), "invalid code");
+        assert_eq!(login_as(&temp, NEW_ADDRESS, OLD, now).await, "accepted");
+    }
+
+    #[tokio::test]
+    async fn a_wrong_password_or_a_taken_unchanged_or_invalid_address_stores_no_code() {
+        let temp = TempDatabase::open();
+        let now = SystemTime::now();
+        let alice = add_user(&temp, "alice").await;
+        add_user(&temp, "bob").await;
+        let (mailer, sent) = Mailer::capture();
+
+        for (new_email, password, expected) in [
+            (NEW_ADDRESS, "wrong horse battery", "incorrect password"),
+            ("BOB@example.com", OLD, "email taken"),
+            ("ALICE@example.com", OLD, "unchanged email"),
+            ("not an address", OLD, "invalid email"),
+        ] {
+            let result = request_change(&temp, &mailer, alice, new_email, password, now).await;
+            assert_eq!(requested(&result), expected, "{new_email}");
+        }
+        assert_eq!(code_rows(&temp), 0);
+        assert!(sent.lock().unwrap().is_empty());
+        assert_eq!(email_of(&temp, alice).0, "alice@example.com");
+    }
+
+    #[tokio::test]
+    async fn an_address_taken_between_request_and_confirm_answers_409_and_changes_nothing() {
+        let temp = TempDatabase::open();
+        let now = SystemTime::now();
+        let alice = add_user(&temp, "alice").await;
+        let (mailer, sent) = Mailer::capture();
+        change_email(&temp, &mailer, alice, "carol@example.com", now).await;
+        let (_, code) = mails(&sent).remove(0);
+        add_user(&temp, "carol").await;
+
+        let result = confirm(&temp, alice, &code, now).await;
+
+        assert_eq!(outcome(&result), "email taken");
+        assert_eq!(email_of(&temp, alice).0, "alice@example.com");
+        assert_eq!(code_rows(&temp), 1, "the code stays");
+    }
+
+    #[tokio::test]
+    async fn without_email_the_change_applies_at_once() {
+        let temp = TempDatabase::open();
+        let now = SystemTime::now();
+        let alice = add_user(&temp, "alice").await;
+
+        let result = request_change(&temp, &Mailer::Disabled, alice, NEW_ADDRESS, OLD, now).await;
+
+        assert_eq!(requested(&result), "applied");
+        assert_eq!(email_of(&temp, alice), (NEW_ADDRESS.to_string(), true));
+        assert_eq!(login_as(&temp, NEW_ADDRESS, OLD, now).await, "accepted");
+    }
+
+    #[tokio::test]
+    async fn a_second_request_within_a_minute_sends_nothing_and_a_later_one_replaces_the_first() {
+        let temp = TempDatabase::open();
+        let start = SystemTime::now();
+        let after = |secs: u64| start + Duration::from_secs(secs);
+        let alice = add_user(&temp, "alice").await;
+        let (mailer, sent) = Mailer::capture();
+        let other = "alice.other@example.com";
+
+        change_email(&temp, &mailer, alice, NEW_ADDRESS, start).await;
+        change_email(&temp, &mailer, alice, other, after(30)).await;
+        assert_eq!(mails(&sent).len(), 1, "within a minute of the first mail");
+
+        change_email(&temp, &mailer, alice, other, after(61)).await;
+        let mail = mails(&sent);
+        assert_eq!(mail.len(), 2);
+        assert_eq!(mail[1].0, other);
+        let first = confirm(&temp, alice, &mail[0].1, after(62)).await;
+        assert_eq!(
+            outcome(&first),
+            "invalid code",
+            "the newer request replaced it"
+        );
+        confirm(&temp, alice, &mail[1].1, after(62)).await.unwrap();
+        assert_eq!(email_of(&temp, alice).0, other);
+    }
+
+    #[tokio::test]
+    async fn of_two_parallel_confirms_with_one_code_one_wins() {
+        let temp = TempDatabase::open();
+        let now = SystemTime::now();
+        let alice = add_user(&temp, "alice").await;
+        let (mailer, sent) = Mailer::capture();
+        change_email(&temp, &mailer, alice, NEW_ADDRESS, now).await;
+        let (_, code) = mails(&sent).remove(0);
+
+        let (a, b) = tokio::join!(
+            confirm(&temp, alice, &code, now),
+            confirm(&temp, alice, &code, now),
+        );
+
+        let mut outcomes = [outcome(&a), outcome(&b)];
+        outcomes.sort_unstable();
+        assert_eq!(outcomes, ["accepted", "invalid code"]);
+        assert_eq!(email_of(&temp, alice), (NEW_ADDRESS.to_string(), true));
     }
 }

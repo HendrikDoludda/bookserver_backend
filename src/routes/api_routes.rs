@@ -10,7 +10,7 @@ use crate::{
     config::get_port,
     error_types::RoutingErrors,
     routes::api_caller::{
-        account::{change_password, change_username},
+        account::{change_email, change_password, change_username, confirm_email_change},
         authentication::{
             confirm_password_reset, log_out, refresh_session, request_password_reset,
             resend_verification_code, sign_in, sign_up, verify_email,
@@ -85,6 +85,8 @@ pub fn set_up_routes() -> Router<AppState> {
         .route("/auth/password_reset/confirm", post(confirm_password_reset))
         .route("/account/password", put(change_password))
         .route("/account/username", put(change_username))
+        .route("/account/email", put(change_email))
+        .route("/account/email/confirm", post(confirm_email_change))
         .route("/account/totp", get(totp_status).post(totp_start_set_up))
         .route("/account/totp/confirm", post(finalize_totp_set_up))
         .route("/account/totp/disable", post(disable_totp))
@@ -1075,6 +1077,8 @@ mod tests {
         ("GET", "/api/v1/search"),
         ("PUT", "/api/v1/account/password"),
         ("PUT", "/api/v1/account/username"),
+        ("PUT", "/api/v1/account/email"),
+        ("POST", "/api/v1/account/email/confirm"),
         ("GET", "/api/v1/account/totp"),
         ("POST", "/api/v1/account/totp"),
         ("POST", "/api/v1/account/totp/confirm"),
@@ -1584,6 +1588,109 @@ mod tests {
         );
         let (status, _, _) = call(&app, as_alicia).await;
         assert_eq!(status, StatusCode::OK, "the new name logs in");
+    }
+
+    fn log_in_as(email: &str) -> Request<Body> {
+        post_json(
+            "/api/v1/auth/login",
+            serde_json::json!({
+                "username_or_email": email,
+                "password": "correct horse battery",
+                "device_name": "phone",
+                "platform": "ios",
+            }),
+        )
+    }
+
+    #[tokio::test]
+    async fn changing_the_email_over_http() {
+        let temp = TempDatabase::open();
+        add_alice_with_password(&temp).await;
+        let (mailer, sent) = Mailer::capture();
+        let app = set_up_routes().with_state(temp.state(mailer));
+        let (_, _, body) = call(&app, log_in_as_alice()).await;
+        let session = json(&body)["session_token"].as_str().unwrap().to_string();
+
+        let change = serde_json::json!({
+            "new_email": "alice.new@example.com",
+            "password": "correct horse battery",
+        });
+        let (status, _, body) = call(
+            &app,
+            authorized("PUT", "/api/v1/account/email", &session, Some(change)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert!(body.is_empty());
+
+        // The mail goes out in a background task; give it up to two seconds.
+        for _ in 0..200 {
+            if !sent.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let code = {
+            let sent = sent.lock().unwrap();
+            assert_eq!(sent.len(), 1);
+            assert_eq!(sent[0].email, "alice.new@example.com");
+            code_in(&sent[0])
+        };
+        let (status, _, body) = call(
+            &app,
+            authorized(
+                "POST",
+                "/api/v1/account/email/confirm",
+                &session,
+                Some(serde_json::json!({ "code": code })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert!(body.is_empty());
+
+        let (status, _, _) = call(&app, log_in_as("alice.new@example.com")).await;
+        assert_eq!(status, StatusCode::OK, "the new address logs in");
+        let (status, _, _) = call(&app, log_in_as("alice@example.com")).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "the old one doesn't");
+    }
+
+    #[tokio::test]
+    async fn changing_the_email_without_mail_over_http() {
+        let temp = TempDatabase::open();
+        add_alice_with_password(&temp).await;
+        temp.db
+            .setup_new_transaction(|conn| Ok(insert_user(conn, "bob")))
+            .unwrap();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let (_, _, body) = call(&app, log_in_as_alice()).await;
+        let session = json(&body)["session_token"].as_str().unwrap().to_string();
+        let change_to = |email: &str| {
+            authorized(
+                "PUT",
+                "/api/v1/account/email",
+                &session,
+                Some(serde_json::json!({
+                    "new_email": email,
+                    "password": "correct horse battery",
+                })),
+            )
+        };
+
+        let (status, _, body) = call(&app, change_to("bob@example.com")).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(json(&body), serde_json::json!({ "error": "email_taken" }));
+        let (status, _, body) = call(&app, change_to("ALICE@example.com")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            json(&body),
+            serde_json::json!({ "error": "email_unchanged" })
+        );
+        let (status, _, _) = call(&app, change_to("alice.new@example.com")).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "applied at once");
+
+        let (status, _, _) = call(&app, log_in_as("alice.new@example.com")).await;
+        assert_eq!(status, StatusCode::OK);
     }
 
     #[tokio::test]

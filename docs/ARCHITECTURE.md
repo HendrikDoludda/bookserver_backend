@@ -7,7 +7,7 @@
 - `src/app_state.rs` — `AppState`, the router state (database, mailer, setup code, TOTP cipher); handlers take their part through `FromRef` (`State<Arc<Database>>`, `State<Mailer>`, `State<SetupCode>`, `State<TotpCipher>`).
 - `src/routes/api_routes.rs` — the route table (`set_up_routes`) and `start_server`.
 - `src/routes/api_caller/` — the handlers, one file per area (`authentication.rs`, `account.rs`, `totp.rs`, `library.rs`, `users.rs`); `extractors.rs` holds the request extractors — the session ones (`AuthSession`, `AdminSession`, `AuthTOTPLoginSession`, `AuthRefreshSession`) and `JsonBody` / `PathParams`, and `helpers.rs` the shared response builders: `ping_server` (the liveness check), `not_implemented` (every route without a handler yet) and the router's fallbacks `not_found` / `method_not_allowed`.
-- `src/routes/auth.rs` — account, password and session building blocks, including the checks a new username, email or password passes; `login.rs` — login, refresh and logout; `registration.rs` — sign-up and email verification; `password_reset.rs` — the reset flow; `account_management.rs` — changes users make to their own account; `email_codes.rs` — the emailed codes of both: making them, mailing them within the limits, checking them; `totp_management.rs` — TOTP two-factor and recovery codes; `totp_cipher.rs` — `TotpCipher`, which encrypts TOTP secrets at rest; `email_helper.rs` — `Mailer`, the one sender every email goes through; `user_management.rs` — an admin's view of the accounts: listing them, changing a role, marking an email verified.
+- `src/routes/auth.rs` — account, password and session building blocks, including the checks a new username, email or password passes; `login.rs` — login, refresh and logout; `registration.rs` — sign-up and email verification; `password_reset.rs` — the reset flow; `account_management.rs` — changes users make to their own account; `email_codes.rs` — the emailed codes of sign-up, reset and the email change: making them, mailing them within the limits, checking them; `totp_management.rs` — TOTP two-factor and recovery codes; `totp_cipher.rs` — `TotpCipher`, which encrypts TOTP secrets at rest; `email_helper.rs` — `Mailer`, the one sender every email goes through; `user_management.rs` — an admin's view of the accounts: listing them, changing a role, marking an email verified.
 - `src/database_related_scripts/` — `db.rs` (`Database`: the r2d2 pool and every DB operation), one file per operation trait, `db_email_codes.rs` / `db_login_challenges.rs` / `db_login_throttle.rs` (one table each), `db_users.rs` (the user queries the traits can't express, and how a `Role` is stored), `migrations.rs`.
 - `src/data_models/` — `models.rs` (domain structs, `*DatabaseColumns` enums, `WithId<T>`) and the request/response bodies.
 - `src/error_types.rs` — the typed error enums, one per domain.
@@ -29,7 +29,7 @@
 - TOTP secrets are stored encrypted with `TotpCipher` (the user id as associated data), not hashed — checking a code needs the secret itself.
 - An account endpoint re-checks the password with `check_current_password` (`login.rs`): login's throttle, and 400 `incorrect_password` for a wrong one — never login's 401, which the app reads as an ended session.
 - A permission check is an Axum extractor composed on `AuthSession` (as `AdminSession` is), not an `if` inside handlers.
-- Auth answers never reveal whether an account exists: an unknown user and a wrong password get the same response, and so do password-reset and verification-resend requests for an unknown address. The exceptions answer 409 for a taken one: sign-up for an email or username, and the username change for a username — sign-up reveals it anyway.
+- Auth answers never reveal whether an account exists: an unknown user and a wrong password get the same response, and so do password-reset and verification-resend requests for an unknown address. The exceptions answer 409 for a taken one: sign-up for an email or username, the username change for a username, and the email change for an email — sign-up reveals it anyway.
 - Every stored email address and username has passed `check_email` / `check_username` (`auth.rs`).
 - Never return or `Debug`-log a struct that carries secrets — `UserMetadata`, `Sessions`, `TOTP` and `RecoveryCodes` derive `Serialize` / `Debug` over the password hash, the token hashes or the TOTP secret; build a response struct. Request bodies that carry a password or a code, `EmailConfig` (the SMTP password) and `EmailInformation` (a body carries codes) don't derive `Debug` at all.
 - List endpoints return `WithId<T>`: the row id plus the metadata, flattened in JSON.
@@ -44,7 +44,7 @@
 
 ## Email
 - Mail is sent inline only at sign-up, whose caller just created the account and waits for its code; every other mail (reset and resent verification codes, upload notices) goes out from a background task after the commit, so an answer never shows whether a mail went out.
-- Mail goes to the address stored on the account, never to an address taken from the request.
+- Mail goes to the address stored on the account — for an email change, to the new address stored with its code — never straight to one from the request.
 
 ## Logging
 - Log with `tracing`; the `log` crate is not a dependency.

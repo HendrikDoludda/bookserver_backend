@@ -631,6 +631,7 @@ impl Comparison {
 pub enum CodePurpose {
     ResetPassword,
     VerifyEmail,
+    ChangeEmail,
 }
 
 impl CodePurpose {
@@ -638,6 +639,7 @@ impl CodePurpose {
         match self {
             CodePurpose::ResetPassword => "reset_password",
             CodePurpose::VerifyEmail => "verify_email",
+            CodePurpose::ChangeEmail => "change_email",
         }
     }
 }
@@ -649,6 +651,8 @@ pub struct EmailCode {
     pub purpose: CodePurpose,
     /// Argon2 hash of the code; the code itself only ever exists in the email.
     pub code_hash: String,
+    /// The address an email change waits to confirm; `None` for the other purposes.
+    pub new_email: Option<String>,
     pub expires_at: SystemTime,
     /// Tries on the current code, counted before each check.
     pub attempts: i64,

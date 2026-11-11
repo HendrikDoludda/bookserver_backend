@@ -267,6 +267,8 @@ pub enum AuthenticationError {
     IncorrectPassword,
     #[error("The new password is the current one")]
     PasswordUnchanged,
+    #[error("The new email address is the current one")]
+    EmailUnchanged,
     #[error("Two-factor authentication is already on")]
     TotpAlreadyEnabled,
     #[error("There is no two-factor setup waiting to be confirmed")]
@@ -313,6 +315,7 @@ impl AuthenticationError {
             AuthenticationError::PasswordUnchanged => {
                 (StatusCode::BAD_REQUEST, "password_unchanged")
             }
+            AuthenticationError::EmailUnchanged => (StatusCode::BAD_REQUEST, "email_unchanged"),
             AuthenticationError::TotpAlreadyEnabled => {
                 (StatusCode::CONFLICT, "totp_already_enabled")
             }
@@ -501,6 +504,11 @@ mod tests {
                 Auth::PasswordUnchanged.into(),
                 StatusCode::BAD_REQUEST,
                 "password_unchanged",
+            ),
+            (
+                Auth::EmailUnchanged.into(),
+                StatusCode::BAD_REQUEST,
+                "email_unchanged",
             ),
             (
                 Auth::TotpAlreadyEnabled.into(),

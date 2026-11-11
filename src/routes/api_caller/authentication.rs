@@ -10,12 +10,11 @@ use axum::{
 
 use crate::{
     data_models::authentication_model::{
-        ChangeEmailRequest, ConfirmPasswordResetRequest, LoginRequest, PasswordResetRequest,
-        ResendVerificationRequest, UserCreationRequest, VerificationRequired, VerifyEmailRequest,
+        ConfirmPasswordResetRequest, LoginRequest, PasswordResetRequest, ResendVerificationRequest,
+        UserCreationRequest, VerificationRequired, VerifyEmailRequest,
     },
     db::Database,
     error_types::{AppErrors, EmailErrors},
-    models::{UserDatabaseColumns, UserMetadata},
     routes::{
         email_helper::Mailer,
         login::{end_session, log_in, refresh},
@@ -27,7 +26,7 @@ use crate::{
 };
 
 use super::{
-    extractors::{bearer_token, AuthRefreshSession, AuthSession, JsonBody},
+    extractors::{bearer_token, AuthRefreshSession, JsonBody},
     helpers::no_store,
 };
 
@@ -107,23 +106,6 @@ pub async fn refresh_session(
 ) -> Result<Response<Body>, AppErrors> {
     let tokens = refresh(db, session.0, SystemTime::now()).await?;
     Ok(no_store(Json(tokens)))
-}
-
-pub async fn change_email(
-    session: AuthSession,
-    State(db): State<Arc<Database>>,
-    request: ChangeEmailRequest,
-) -> Result<Response<Body>, AppErrors> {
-    db.setup_new_transaction(|conn| {
-        Database::update_value_with_connection::<UserMetadata>(
-            conn,
-            UserDatabaseColumns::Email,
-            &request.new_email,
-            session.0.user_id,
-        )?;
-        Ok(())
-    })?;
-    Ok((StatusCode::ACCEPTED, "Email has been changed").into_response())
 }
 
 /// `POST /api/v1/auth/password_reset`: answers 202 before the address is even looked up,

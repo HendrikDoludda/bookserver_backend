@@ -1,9 +1,9 @@
 # Email & notifications
 
-State: completed
+State: in progress
 
-One sender that every email goes through: today the verification code and the password-reset
-code, later the [upload notices](05-uploads-and-ingestion.md). Plain-text bodies; the `SMTP_*`
+One sender that every email goes through: today the verification, password-reset and
+email-change codes, later the [upload notices](05-uploads-and-ingestion.md). Plain-text bodies; the `SMTP_*`
 environment variables configure it, and without them email is off.
 
 ## Build
@@ -13,3 +13,4 @@ environment variables configure it, and without them email is off.
 - [x] 2 h · `SMTP_TLS = starttls (default) | implicit | none` — `implicit_tls(false)` is hard-coded, and `connect()` then refuses a server without STARTTLS, such as a local Mailpit; `none` uses `connect_plain()` and is refused at startup while a password is set. `SMTP_USERNAME` and `SMTP_PASSWORD` become optional [BE]
 - [x] 1 h · Send mail nobody waits for from a background task after the commit — the reset code ([30](30-password-reset.md)) first; the sign-up's verification code stays inline, because the user is waiting for it [BE]
 - [x] 0.5 h · Mailpit and `SMTP_TLS` steps in `run-deploy/local.md`
+- [ ] 2 h · After a password change or a confirmed email change ([29](29-account-management.md)), mail a notice from a background task to the account's address — for an email change, the old one — so the owner learns of a change they didn't make [BE]

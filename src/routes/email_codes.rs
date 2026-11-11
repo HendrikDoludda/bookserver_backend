@@ -1,5 +1,5 @@
-//! Codes sent by email, for password reset and email verification: making them, mailing them
-//! within the limits on how often one may go out, and checking a typed code.
+//! Codes sent by email, for password reset, email verification and email changes: making them,
+//! mailing them within the limits on how often one may go out, and checking a typed code.
 
 use std::{
     sync::Arc,
@@ -92,17 +92,17 @@ pub(crate) fn elapsed(since: SystemTime, now: SystemTime) -> Duration {
     now.duration_since(since).unwrap_or(Duration::ZERO)
 }
 
-/// Who a code of this purpose is for: any account can reset its password, but only an
-/// unverified one can verify its email.
+/// Who a code of this purpose is for: any account can reset its password or change its email,
+/// but only an unverified one can verify its email.
 fn is_for(purpose: CodePurpose, user: &UserMetadata) -> bool {
     match purpose {
-        CodePurpose::ResetPassword => true,
+        CodePurpose::ResetPassword | CodePurpose::ChangeEmail => true,
         CodePurpose::VerifyEmail => !user.email_verified,
     }
 }
 
 /// The account a code request names: a reset request takes only the email, a verification
-/// takes what login takes.
+/// takes what login takes. An email change comes from a session, never from a name.
 pub fn find_account(
     conn: &Connection,
     purpose: CodePurpose,
@@ -111,6 +111,7 @@ pub fn find_account(
     match purpose {
         CodePurpose::ResetPassword => find_user_by_email(conn, name),
         CodePurpose::VerifyEmail => find_user_for_login(conn, name.trim()),
+        CodePurpose::ChangeEmail => Ok(None),
     }
 }
 
@@ -173,8 +174,8 @@ async fn issue_code(
         let Some((user, counters)) = next_mail(conn, purpose, &name, now)? else {
             return Ok(None);
         };
-        save_fresh_code(conn, user.user_id, purpose, code_hash, counters, now)?;
-        Ok(Some(code_mail(purpose, &user, &code)))
+        let stored = save_fresh_code(conn, user.user_id, purpose, None, code_hash, counters, now)?;
+        Ok(Some(code_mail(&stored, &user, &code)))
     })
     .await
 }
@@ -195,34 +196,37 @@ fn next_mail(
 }
 
 /// Stores the hash of a code that is mailed now, replacing the user's earlier code for
-/// this purpose; it starts with no tries used.
+/// this purpose; it starts with no tries used. `new_email` is the address an email change waits
+/// to confirm. Answers the stored code, for `code_mail` to address.
 pub fn save_fresh_code(
     conn: &Connection,
     user_id: i64,
     purpose: CodePurpose,
+    new_email: Option<String>,
     code_hash: String,
     counters: MailCounters,
     now: SystemTime,
-) -> Result<(), DatabaseError> {
-    db_email_codes::save(
-        conn,
-        &EmailCode {
-            user_id,
-            purpose,
-            code_hash,
-            expires_at: now + CODE_LIFETIME,
-            attempts: 0,
-            last_sent_at: now,
-            sent_in_window: counters.sent_in_window,
-            window_started_at: counters.window_started_at,
-        },
-    )
+) -> Result<EmailCode, DatabaseError> {
+    let code = EmailCode {
+        user_id,
+        purpose,
+        code_hash,
+        new_email,
+        expires_at: now + CODE_LIFETIME,
+        attempts: 0,
+        last_sent_at: now,
+        sent_in_window: counters.sent_in_window,
+        window_started_at: counters.window_started_at,
+    };
+    db_email_codes::save(conn, &code)?;
+    Ok(code)
 }
 
-/// The mail that carries a code, to the account's stored address.
-pub fn code_mail(purpose: CodePurpose, user: &UserMetadata, code: &str) -> EmailInformation {
+/// The mail that carries a stored code: to the address stored with it for an email change, to
+/// the account's stored address otherwise — never to one straight from a request.
+pub fn code_mail(stored: &EmailCode, user: &UserMetadata, code: &str) -> EmailInformation {
     let minutes = CODE_LIFETIME.as_secs() / 60;
-    let (subject, body) = match purpose {
+    let (subject, body) = match stored.purpose {
         CodePurpose::ResetPassword => (
             "Your password reset code",
             format!(
@@ -243,10 +247,23 @@ pub fn code_mail(purpose: CodePurpose, user: &UserMetadata, code: &str) -> Email
                 user.username, code, minutes
             ),
         ),
+        CodePurpose::ChangeEmail => (
+            "Confirm your new email address",
+            format!(
+                "Hello {},\n\n\
+                 your code to make this your account's email address is:\n\n    {}\n\n\
+                 It is valid for {} minutes. If you didn't ask for this change, ignore this \
+                 email; nothing changes.\n",
+                user.username, code, minutes
+            ),
+        ),
     };
     EmailInformation {
         username: user.username.clone(),
-        email: user.email.clone(),
+        email: stored
+            .new_email
+            .clone()
+            .unwrap_or_else(|| user.email.clone()),
         subject: subject.to_string(),
         body,
     }
@@ -298,6 +315,7 @@ mod tests {
             user_id: 1,
             purpose: CodePurpose::ResetPassword,
             code_hash: "hash".to_string(),
+            new_email: None,
             expires_at: at(last_sent_at + 900),
             attempts: 0,
             last_sent_at: at(last_sent_at),
