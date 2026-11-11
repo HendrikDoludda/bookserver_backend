@@ -65,6 +65,7 @@
 - A transaction holds only SQL: it starts `IMMEDIATE`, an async handler runs it through `Database::transact` (on Tokio's blocking pool), Argon2 runs in `spawn_blocking` outside it, and mail goes out after the commit.
 - Inside a transaction closure, use the `conn` it was given — a pooled `db.*` call opens a second connection that waits on the first one's write lock.
 - Use the generic functions, also for a write that depends on what is stored: inside an `IMMEDIATE` transaction no other writer can step between a read, a compare in Rust and the write. Hand-written SQL only for what they can't express.
+- A condition other than equality is a `Comparison` in the generic functions (`Delete::delete_where`), not hand-written SQL.
 - A try at a secret (an emailed, TOTP or recovery code) is counted and committed before the secret is checked — counted in the same transaction as a failed check, it is rolled back with it; the final transaction re-checks what it uses up and changes exactly one row.
 - Every connection is set up by `db::configure` — SQLite applies `foreign_keys` per connection, not per file.
 - Values are always bound parameters; table and column names are interpolated only from trusted enums and consts, never from request input.

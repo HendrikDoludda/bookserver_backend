@@ -7,7 +7,9 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Connection, Result, ToSql, TransactionBehavior};
 use serde::Serialize;
 
-use crate::data_models::models::{ColumnSelector, DatabaseTypes, QuerySeparator, WithId};
+use crate::data_models::models::{
+    ColumnSelector, Comparison, DatabaseTypes, QuerySeparator, WithId,
+};
 use crate::database_related_scripts::{
     db_delete::Delete, db_search::Search, db_update::Update, extract::Extract, insert::Insert,
     migrations,
@@ -49,6 +51,31 @@ pub(crate) fn logged(
         tracing::error!("{action} {what} failed: {cause}");
         error
     }
+}
+
+/// The conditions after `WHERE` for the generic `Search` and `Delete`: one `column <op> ?` per
+/// condition, joined by `separator`. An empty list is refused rather than matching every row.
+pub(crate) fn where_conditions<C: AsRef<str>>(
+    conditions: &[(C, Comparison)],
+    values: &[&dyn ToSql],
+    separator: QuerySeparator,
+) -> Result<String, DatabaseError> {
+    if conditions.is_empty() || conditions.len() != values.len() {
+        return Err(DatabaseError::InvalidParameters);
+    }
+    Ok(conditions
+        .iter()
+        .map(|(column, comparison)| format!("{} {} ?", column.as_ref(), comparison.as_str()))
+        .collect::<Vec<String>>()
+        .join(separator.as_str()))
+}
+
+/// Each column compared with `=`.
+pub(crate) fn each_equal<C>(columns: &[C]) -> Vec<(&C, Comparison)> {
+    columns
+        .iter()
+        .map(|column| (column, Comparison::Equal))
+        .collect()
 }
 
 impl Database {
@@ -199,6 +226,20 @@ impl Database {
         T: Delete,
     {
         T::delete(conn, columns, values, query_separator)
+    }
+
+    /// Deletes the rows matching `conditions`, each column compared with its value by its
+    /// `Comparison`; returns the number of rows deleted.
+    pub fn remove_entries_where_with_connection<T>(
+        conn: &Connection,
+        conditions: &[(T::Column, Comparison)],
+        values: &[&dyn ToSql],
+        query_separator: QuerySeparator,
+    ) -> Result<usize, DatabaseError>
+    where
+        T: Delete,
+    {
+        T::delete_where(conn, conditions, values, query_separator)
     }
 
     pub fn get_entry<T>(&self, id: i64) -> Result<T, DatabaseError>

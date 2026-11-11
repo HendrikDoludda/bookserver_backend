@@ -7,11 +7,14 @@ use argon2::Argon2;
 use rusqlite::Connection;
 
 use crate::data_models::authentication_model::{ChangePasswordRequest, DeviceInformation};
-use crate::database_related_scripts::{db::Database, db_login_challenges};
+use crate::database_related_scripts::{
+    db::{convert_system_time_to_unix_time, Database},
+    db_login_challenges,
+};
 use crate::error_types::{AuthenticationError, DatabaseError};
 use crate::models::{
-    DatabaseTypes, QuerySeparator, Sessions, SessionsDatabaseColumns, UserDatabaseColumns,
-    UserMetadata,
+    Comparison, DatabaseTypes, QuerySeparator, Sessions, SessionsDatabaseColumns,
+    UserDatabaseColumns, UserMetadata,
 };
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
@@ -219,7 +222,9 @@ pub fn end_other_sessions(
 
 // === Sessions ================================================================
 
-/// Starts a session on this device, replacing the session the user had there.
+/// Starts a session on this device, replacing the session the user had there, and ends the
+/// user's sessions whose refresh token has run out — nothing else removes the session of a
+/// device that is never used again.
 pub fn create_new_session(
     conn: &Connection,
     user_id: i64,
@@ -247,6 +252,19 @@ pub fn create_new_session(
             SessionsDatabaseColumns::DeviceId,
         ],
         &[&user_id, &device_information.device_id],
+        QuerySeparator::And,
+    )
+    .map_err(|_| AuthenticationError::FailedDataStoring)?;
+    Database::remove_entries_where_with_connection::<Sessions>(
+        conn,
+        &[
+            (SessionsDatabaseColumns::UserId, Comparison::Equal),
+            (
+                SessionsDatabaseColumns::RefreshTokenExpirationDate,
+                Comparison::AtMost,
+            ),
+        ],
+        &[&user_id, &convert_system_time_to_unix_time(now)],
         QuerySeparator::And,
     )
     .map_err(|_| AuthenticationError::FailedDataStoring)?;

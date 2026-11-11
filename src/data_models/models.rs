@@ -608,6 +608,21 @@ impl QuerySeparator {
     }
 }
 
+/// How a column is compared with its bound value in a `WHERE` condition.
+pub enum Comparison {
+    Equal,
+    AtMost,
+}
+
+impl Comparison {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Comparison::Equal => "=",
+            Comparison::AtMost => "<=",
+        }
+    }
+}
+
 // === Emailed codes ===========================================================
 /// What an emailed code is for; stored as text in `email_codes.purpose`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

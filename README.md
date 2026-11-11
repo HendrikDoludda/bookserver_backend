@@ -6,8 +6,8 @@ an HTTP API for a reader frontend.
 
 > **Status: work in progress.** Scanning, cataloging, cover extraction and file streaming
 > work. Accounts work end to end — sign-up with email verification, login with optional TOTP
-> two-factor auth and recovery codes, refresh, logout and password reset — but the library
-> routes don't require a session yet. See [docs/project-state.md](docs/project-state.md) for
+> two-factor auth and recovery codes, refresh, logout and password reset — and the library
+> routes need a login. See [docs/project-state.md](docs/project-state.md) for
 > what works today and the [build checklist](docs/build-checklist.md) for what comes next.
 
 ## Highlights
@@ -158,8 +158,8 @@ Errors answer with JSON `{"error": "<key>"}` and a matching status code.
 
 The other registered routes answer 501 `not_implemented` until their features are built.
 
-> **Security note:** the library routes don't require a session yet, and the server listens
-> on all interfaces over plain HTTP. Run it on a trusted network only.
+> **Security note:** the server listens on all interfaces over plain HTTP. Run it on a trusted
+> network only.
 
 ## Project docs
 

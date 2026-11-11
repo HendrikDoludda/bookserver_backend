@@ -1,6 +1,6 @@
 # Login, logout & sessions
 
-State: in progress
+State: completed
 
 A user logs in with username or email plus password and gets a session: a 15-minute session
 token and a 30-day refresh token, sent as `Authorization: Bearer` and stored only as BLAKE3
@@ -25,4 +25,4 @@ Every per-user feature needs to know who is asking, so this is the core of Tier 
 - [x] 1 h · Route `log_out` at `POST /api/v1/auth/logout`: it takes the session or the refresh token, ignores expiry and always answers 204, so an app idle for 15 minutes can still log out [BE]
 - [x] 2 h · Route `refresh_session` at `POST /api/v1/auth/refresh` with the refresh token as Bearer; the rotation is conditional on the old refresh-token hash and must change exactly one row, so a replayed or raced refresh token gets 401 [BE]
 - [x] 0.5 h · Log the insert error in `create_new_session` instead of discarding it [BE]
-- [ ] 2 h · Each login also deletes the user's sessions whose refresh token has expired, through a new `AtMost` comparison in the generic `Delete` — today only a new login on the same device or a logout removes a session, so abandoned devices stay forever and [active sessions](51-active-sessions.md) would list them [BE]
+- [x] 2 h · Each login also deletes the user's sessions whose refresh token has expired, through a new `AtMost` comparison in the generic `Delete` — otherwise only a new login on the same device or a logout removes a session, so abandoned devices would stay forever and [active sessions](51-active-sessions.md) would list them [BE]

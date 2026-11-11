@@ -642,13 +642,21 @@ mod tests {
                 )
                 .unwrap();
                 let user_id = conn.last_insert_rowid();
+                // Opened at `NOW` like a real login's, so a later login in a test keeps them:
+                // it ends only the sessions whose refresh token ran out.
+                let refresh_valid_until = (NOW + 30 * 24 * 60 * 60) as i64;
                 for device in ["laptop", "phone"] {
                     conn.execute(
                         "INSERT INTO sessions (user_id, device_id, device_name, platform, \
                          refresh_token_hashed, refresh_token_valid_until, session_token_hashed, \
                          session_token_valid_until, last_used_at) \
-                         VALUES (?1, ?2, ?2, 'ios', ?3, 0, ?3, 0, 0)",
-                        params![user_id, device, format!("{name}-{device}")],
+                         VALUES (?1, ?2, ?2, 'ios', ?3, ?4, ?3, 0, 0)",
+                        params![
+                            user_id,
+                            device,
+                            format!("{name}-{device}"),
+                            refresh_valid_until
+                        ],
                     )
                     .unwrap();
                 }

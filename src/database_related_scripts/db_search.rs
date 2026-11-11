@@ -3,7 +3,10 @@ use crate::data_models::models::{
     QuerySeparator, RecoveryCodes, RecoveryCodesColumns, SeriesDatabaseColumns, Sessions,
     SessionsDatabaseColumns, TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, TOTP,
 };
-use crate::database_related_scripts::{db::logged, db_from_row::FromRow};
+use crate::database_related_scripts::{
+    db::{each_equal, logged, where_conditions},
+    db_from_row::FromRow,
+};
 use crate::error_types::DatabaseError;
 use rusqlite::{Connection, OptionalExtension, Result, ToSql};
 
@@ -20,19 +23,8 @@ pub trait Search: FromRow {
         values: &[&dyn ToSql],
         query_separator: QuerySeparator,
     ) -> Result<Option<Self>, DatabaseError> {
-        if columns.len() != values.len() {
-            return Err(DatabaseError::InvalidParameters);
-        }
-        let values_to_check = columns
-            .iter()
-            .map(|column| format!("{} = ?", column.as_ref()))
-            .collect::<Vec<String>>()
-            .join(query_separator.as_str());
-        let query = format!(
-            "SELECT * FROM {} WHERE {} LIMIT 1",
-            Self::TABLE,
-            values_to_check
-        );
+        let filter = where_conditions(&each_equal(columns), values, query_separator)?;
+        let query = format!("SELECT * FROM {} WHERE {} LIMIT 1", Self::TABLE, filter);
         conn.query_row(&query, values, Self::from_row)
             .optional()
             .map_err(logged("reading", Self::TABLE, DatabaseError::QueryFailure))
@@ -44,16 +36,8 @@ pub trait Search: FromRow {
         values: &[&dyn ToSql],
         query_separator: QuerySeparator,
     ) -> Result<Vec<Self>, DatabaseError> {
-        if columns.len() != values.len() {
-            return Err(DatabaseError::InvalidParameters);
-        }
-
-        let values_to_check = columns
-            .iter()
-            .map(|column| format!("{} = ?", column.as_ref()))
-            .collect::<Vec<String>>()
-            .join(query_separator.as_str());
-        let query = format!("SELECT * FROM {} WHERE {}", Self::TABLE, values_to_check);
+        let filter = where_conditions(&each_equal(columns), values, query_separator)?;
+        let query = format!("SELECT * FROM {} WHERE {}", Self::TABLE, filter);
 
         let mut stmt = conn.prepare(&query).map_err(logged(
             "reading",
@@ -188,6 +172,39 @@ mod tests {
         )
         .unwrap();
         assert!(found.is_none());
+    }
+
+    #[test]
+    fn a_search_without_columns_or_with_a_value_per_column_missing_is_refused() {
+        let conn = memory_connection();
+        let user_id = insert_user(&conn, "alice");
+        insert_totp(&conn, user_id, &1_700_000_000_i64);
+        let one_column = [TOTPDatabaseColumns::UserId];
+
+        let row_without_columns = TOTP::search_for_row(&conn, &[], &[], QuerySeparator::And);
+        let rows_without_columns =
+            TOTP::search_for_multiple_rows(&conn, &[], &[], QuerySeparator::And);
+        let row_without_value =
+            TOTP::search_for_row(&conn, &one_column, &[], QuerySeparator::And);
+        let rows_without_value =
+            TOTP::search_for_multiple_rows(&conn, &one_column, &[], QuerySeparator::And);
+
+        assert!(matches!(
+            row_without_columns,
+            Err(DatabaseError::InvalidParameters)
+        ));
+        assert!(matches!(
+            rows_without_columns,
+            Err(DatabaseError::InvalidParameters)
+        ));
+        assert!(matches!(
+            row_without_value,
+            Err(DatabaseError::InvalidParameters)
+        ));
+        assert!(matches!(
+            rows_without_value,
+            Err(DatabaseError::InvalidParameters)
+        ));
     }
 
     #[test]

@@ -690,6 +690,66 @@ mod tests {
         assert_eq!(sessions_of(&temp, alice), 3);
     }
 
+    /// A session whose 15-minute token ran out long ago: only its refresh token can keep it.
+    fn insert_session(
+        temp: &TempDatabase,
+        user_id: i64,
+        device_id: &str,
+        refresh_valid_until: i64,
+    ) {
+        temp.db
+            .setup_new_transaction(|conn| {
+                conn.execute(
+                    "INSERT INTO sessions (user_id, device_id, device_name, platform, \
+                     refresh_token_hashed, refresh_token_valid_until, session_token_hashed, \
+                     session_token_valid_until, last_used_at) \
+                     VALUES (?1, ?2, 'tablet', 'ios', ?2, ?3, ?2, 0, 0)",
+                    params![user_id, device_id, refresh_valid_until],
+                )
+                .unwrap();
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    fn device_ids(temp: &TempDatabase) -> Vec<String> {
+        temp.db
+            .setup_new_transaction(|conn| {
+                let ids = conn
+                    .prepare("SELECT device_id FROM sessions ORDER BY device_id")
+                    .unwrap()
+                    .query_map([], |row| row.get(0))
+                    .unwrap()
+                    .collect::<Result<Vec<String>, _>>()
+                    .unwrap();
+                Ok(ids)
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_login_ends_the_users_sessions_whose_refresh_token_ran_out() {
+        let temp = TempDatabase::open();
+        let alice = alice(&temp).await;
+        let bob = add_user(&temp, "bob", "bob@example.com", PASSWORD, true).await;
+        let now = SystemTime::now();
+        let unix_now = convert_system_time_to_unix_time(now);
+        insert_session(&temp, alice, "alice-ran-out", unix_now - 1);
+        insert_session(&temp, alice, "alice-runs-out-now", unix_now);
+        insert_session(&temp, alice, "alice-refreshable", unix_now + 1);
+        insert_session(&temp, bob, "bob-ran-out", unix_now - 1);
+
+        let fresh = tokens(login(&temp, "alice", PASSWORD, None, now).await);
+
+        let mut expected = vec![
+            "alice-refreshable".to_string(),
+            "bob-ran-out".to_string(),
+            fresh.device_id,
+        ];
+        expected.sort();
+        assert_eq!(device_ids(&temp), expected);
+    }
+
     #[tokio::test]
     async fn a_refresh_gives_new_tokens_and_the_old_ones_stop_working() {
         let temp = TempDatabase::open();
