@@ -20,6 +20,7 @@ use crate::{
             delete_library, get_libraries, get_series_children, get_series_in_library,
             request_file, retrieve_metadata, scan_all_directories,
         },
+        settings::{get_settings, replace_settings},
         totp::{
             disable_totp, finalize_totp_set_up, renew_totp_recovery_codes, sign_in_totp,
             sign_in_totp_with_recovery_code, totp_start_set_up, totp_status,
@@ -87,6 +88,7 @@ pub fn set_up_routes() -> Router<AppState> {
         .route("/account/username", put(change_username))
         .route("/account/email", put(change_email))
         .route("/account/email/confirm", post(confirm_email_change))
+        .route("/account/settings", get(get_settings).put(replace_settings))
         .route("/account/totp", get(totp_status).post(totp_start_set_up))
         .route("/account/totp/confirm", post(finalize_totp_set_up))
         .route("/account/totp/disable", post(disable_totp))
@@ -1079,6 +1081,8 @@ mod tests {
         ("PUT", "/api/v1/account/username"),
         ("PUT", "/api/v1/account/email"),
         ("POST", "/api/v1/account/email/confirm"),
+        ("GET", "/api/v1/account/settings"),
+        ("PUT", "/api/v1/account/settings"),
         ("GET", "/api/v1/account/totp"),
         ("POST", "/api/v1/account/totp"),
         ("POST", "/api/v1/account/totp/confirm"),
@@ -1691,6 +1695,64 @@ mod tests {
 
         let (status, _, _) = call(&app, log_in_as("alice.new@example.com")).await;
         assert_eq!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn reading_and_replacing_the_settings_over_http() {
+        let temp = TempDatabase::open();
+        let alice = logged_in(&temp, "alice", "member");
+        let bob = logged_in(&temp, "bob", "member");
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let read_as = |token: &str| authorized("GET", "/api/v1/account/settings", token, None);
+        let replace = |settings: serde_json::Value| {
+            authorized("PUT", "/api/v1/account/settings", &alice, Some(settings))
+        };
+
+        let (status, _, body) = call(&app, read_as(&alice)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json(&body),
+            serde_json::json!({ "locale": null }),
+            "the defaults"
+        );
+
+        let (status, _, body) = call(&app, replace(serde_json::json!({ "locale": "pt-BR" }))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json(&body), serde_json::json!({ "locale": "pt-BR" }));
+        let (_, _, body) = call(&app, read_as(&alice)).await;
+        assert_eq!(json(&body), serde_json::json!({ "locale": "pt-BR" }));
+        let (_, _, body) = call(&app, read_as(&bob)).await;
+        assert_eq!(
+            json(&body),
+            serde_json::json!({ "locale": null }),
+            "bob's own"
+        );
+
+        for (settings, key) in [
+            (serde_json::json!({ "locale": "german" }), "invalid_locale"),
+            (serde_json::json!({ "locale": "" }), "invalid_locale"),
+            (serde_json::json!({ "locale": 49 }), "invalid_request"),
+        ] {
+            let (status, _, body) = call(&app, replace(settings.clone())).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{settings}");
+            assert_eq!(
+                json(&body),
+                serde_json::json!({ "error": key }),
+                "{settings}"
+            );
+        }
+        let (_, _, body) = call(&app, read_as(&alice)).await;
+        assert_eq!(
+            json(&body),
+            serde_json::json!({ "locale": "pt-BR" }),
+            "unchanged"
+        );
+
+        let (status, _, body) = call(&app, replace(serde_json::json!({ "locale": null }))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json(&body), serde_json::json!({ "locale": null }));
+        let (_, _, body) = call(&app, read_as(&alice)).await;
+        assert_eq!(json(&body), serde_json::json!({ "locale": null }), "reset");
     }
 
     #[tokio::test]

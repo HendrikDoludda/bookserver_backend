@@ -1,7 +1,7 @@
 use crate::{
     data_models::models::{
         BookMetadata, BookSeriesMetadata, LibraryMetadata, RecoveryCodes, Sessions, UserMetadata,
-        WithId, TOTP,
+        UserSettings, WithId, TOTP,
     },
     database_related_scripts::{db::logged, db_from_row::FromRow},
     error_types::DatabaseError,
@@ -144,6 +144,12 @@ impl Extract for TOTP {
     const KEY: &'static str = "user_id";
     const COLUMNS: &'static str = "user_id, authentication_secret, confirmed, last_used_step, \
         failed_attempts, lockouts, last_failed_at, created_at";
+}
+
+impl Extract for UserSettings {
+    const TABLE: &'static str = "user_settings";
+    const KEY: &'static str = "user_id";
+    const COLUMNS: &'static str = "user_id, locale";
 }
 
 impl Extract for RecoveryCodes {

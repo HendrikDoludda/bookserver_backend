@@ -1,0 +1,213 @@
+//! A user's own settings: reading them, and replacing them once each value passes its check.
+
+use std::sync::Arc;
+
+use rusqlite::Connection;
+
+use crate::{
+    data_models::settings_model::Settings,
+    database_related_scripts::extract::Extract,
+    db::Database,
+    error_types::{AppErrors, DatabaseError, SettingsError},
+    models::{UserSettings, UserSettingsDatabaseColumns},
+};
+
+/// The user's settings, or the defaults while they have changed none.
+pub async fn read_settings(db: Arc<Database>, user_id: i64) -> Result<Settings, AppErrors> {
+    let stored = db.read(move |conn| Ok(find(conn, user_id)?)).await?;
+    Ok(stored.map(Settings::from).unwrap_or_default())
+}
+
+/// Replaces the user's settings and answers them as stored; the first change creates the row.
+pub async fn replace_settings(
+    db: Arc<Database>,
+    user_id: i64,
+    settings: Settings,
+) -> Result<Settings, AppErrors> {
+    if let Some(locale) = &settings.locale {
+        check_locale(locale)?;
+    }
+    let row = UserSettings {
+        user_id,
+        locale: settings.locale,
+    };
+    db.transact(move |conn| {
+        // Inside the write lock, so of two first changes at once the second sees the first one's
+        // row: an update, never the duplicate key's 500.
+        if find(conn, user_id)?.is_some() {
+            Database::update_value_with_connection::<UserSettings>(
+                conn,
+                UserSettingsDatabaseColumns::Locale,
+                &row.locale,
+                user_id,
+            )?;
+        } else {
+            Database::insert_with_connection(conn, &row)?;
+        }
+        Ok(Settings::from(row))
+    })
+    .await
+}
+
+/// The user's row; `None` while they have changed nothing.
+fn find(conn: &Connection, user_id: i64) -> Result<Option<UserSettings>, DatabaseError> {
+    // Not `Database::get_entry`, which makes a missing row an error: here it is the usual case.
+    UserSettings::extract(conn, user_id)
+}
+
+/// The shape of a language tag: `ll` or `lll`, optionally followed by `-RR` — `de`, `fil`,
+/// `pt-BR`.
+fn check_locale(locale: &str) -> Result<(), SettingsError> {
+    let (language, region) = match locale.split_once('-') {
+        Some((language, region)) => (language, Some(region)),
+        None => (locale, None),
+    };
+    let language_fits =
+        (2..=3).contains(&language.len()) && language.bytes().all(|b| b.is_ascii_lowercase());
+    let region_fits = region
+        .is_none_or(|region| region.len() == 2 && region.bytes().all(|b| b.is_ascii_uppercase()));
+    if language_fits && region_fits {
+        Ok(())
+    } else {
+        Err(SettingsError::InvalidLocale)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{insert_user, TempDatabase};
+
+    fn add_user(temp: &TempDatabase, username: &str) -> i64 {
+        temp.db
+            .setup_new_transaction(|conn| Ok(insert_user(conn, username)))
+            .unwrap()
+    }
+
+    async fn change(
+        temp: &TempDatabase,
+        user_id: i64,
+        locale: Option<&str>,
+    ) -> Result<Settings, AppErrors> {
+        let settings = Settings {
+            locale: locale.map(str::to_string),
+        };
+        replace_settings(Arc::clone(&temp.db), user_id, settings).await
+    }
+
+    async fn locale_of(temp: &TempDatabase, user_id: i64) -> Option<String> {
+        read_settings(Arc::clone(&temp.db), user_id)
+            .await
+            .unwrap()
+            .locale
+    }
+
+    fn rows(temp: &TempDatabase) -> i64 {
+        temp.db
+            .setup_new_transaction(|conn| {
+                Ok(conn
+                    .query_row("SELECT COUNT(*) FROM user_settings", [], |row| row.get(0))
+                    .unwrap())
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn without_a_row_the_answer_is_the_defaults_and_reading_writes_nothing() {
+        let temp = TempDatabase::open();
+        let alice = add_user(&temp, "alice");
+
+        let settings = read_settings(Arc::clone(&temp.db), alice).await.unwrap();
+
+        assert_eq!(settings, Settings { locale: None });
+        assert_eq!(rows(&temp), 0);
+    }
+
+    #[tokio::test]
+    async fn a_change_reads_back_and_later_changes_and_a_reset_update_the_same_row() {
+        let temp = TempDatabase::open();
+        let alice = add_user(&temp, "alice");
+
+        let answer = change(&temp, alice, Some("de")).await.unwrap();
+        assert_eq!(
+            answer.locale.as_deref(),
+            Some("de"),
+            "the answer is what was stored"
+        );
+        assert_eq!(locale_of(&temp, alice).await.as_deref(), Some("de"));
+
+        change(&temp, alice, Some("pt-BR")).await.unwrap();
+        assert_eq!(locale_of(&temp, alice).await.as_deref(), Some("pt-BR"));
+
+        let reset = change(&temp, alice, None).await.unwrap();
+        assert_eq!(reset.locale, None);
+        assert_eq!(locale_of(&temp, alice).await, None);
+        assert_eq!(
+            rows(&temp),
+            1,
+            "every change after the first updates its row"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_bad_locale_is_refused_and_changes_nothing() {
+        let temp = TempDatabase::open();
+        let alice = add_user(&temp, "alice");
+        change(&temp, alice, Some("de")).await.unwrap();
+
+        for bad in ["german", "", "DE", "de_AT"] {
+            let result = change(&temp, alice, Some(bad)).await;
+            assert!(
+                matches!(
+                    result,
+                    Err(AppErrors::Settings(SettingsError::InvalidLocale))
+                ),
+                "{bad:?}"
+            );
+        }
+        assert_eq!(locale_of(&temp, alice).await.as_deref(), Some("de"));
+    }
+
+    #[test]
+    fn a_locale_is_two_or_three_lowercase_letters_and_maybe_a_region_in_capitals() {
+        for good in ["de", "en", "fil", "pt-BR", "yue-HK"] {
+            assert!(check_locale(good).is_ok(), "{good:?}");
+        }
+        for bad in [
+            "", "d", "deut", "DE", "De", "de-at", "de-A", "de-AUT", "de_AT", "de-", "-AT",
+            "de-AT-x", "zh-Hant", "es-419", " de", "de ", "dé",
+        ] {
+            assert!(check_locale(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn users_do_not_see_each_others_settings() {
+        let temp = TempDatabase::open();
+        let alice = add_user(&temp, "alice");
+        let bob = add_user(&temp, "bob");
+
+        change(&temp, alice, Some("de")).await.unwrap();
+        assert_eq!(locale_of(&temp, bob).await, None);
+
+        change(&temp, bob, Some("fr")).await.unwrap();
+        assert_eq!(locale_of(&temp, alice).await.as_deref(), Some("de"));
+        assert_eq!(locale_of(&temp, bob).await.as_deref(), Some("fr"));
+    }
+
+    #[tokio::test]
+    async fn two_first_changes_at_once_both_succeed_on_one_row() {
+        let temp = TempDatabase::open();
+        let alice = add_user(&temp, "alice");
+
+        let (a, b) = tokio::join!(
+            change(&temp, alice, Some("de")),
+            change(&temp, alice, Some("fr")),
+        );
+
+        assert!(a.is_ok() && b.is_ok(), "never the duplicate key's 500");
+        assert_eq!(rows(&temp), 1);
+        let stored = locale_of(&temp, alice).await;
+        assert!(matches!(stored.as_deref(), Some("de" | "fr")), "{stored:?}");
+    }
+}

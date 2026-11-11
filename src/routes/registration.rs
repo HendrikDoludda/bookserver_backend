@@ -441,6 +441,7 @@ mod tests {
                 _ => "other auth error",
             },
             Err(AppErrors::Email(_)) => "email error",
+            Err(AppErrors::Settings(_)) => "settings error",
             Err(AppErrors::Database(_)) => "database error",
             Err(AppErrors::InvalidRequest) => "invalid request",
         }

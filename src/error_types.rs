@@ -361,6 +361,20 @@ impl EmailErrors {
     }
 }
 
+#[derive(Error, Debug)]
+pub enum SettingsError {
+    #[error("The locale is not a language tag such as de or pt-BR")]
+    InvalidLocale,
+}
+
+impl SettingsError {
+    fn status_and_key(&self) -> (StatusCode, &'static str) {
+        match self {
+            SettingsError::InvalidLocale => (StatusCode::BAD_REQUEST, "invalid_locale"),
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum AppErrors {
     #[error(transparent)]
@@ -369,6 +383,8 @@ pub enum AppErrors {
     Authentication(#[from] AuthenticationError),
     #[error(transparent)]
     Email(#[from] EmailErrors),
+    #[error(transparent)]
+    Settings(#[from] SettingsError),
     #[error("The request's body or path could not be read")]
     InvalidRequest,
 }
@@ -379,6 +395,7 @@ impl AppErrors {
             AppErrors::Database(err) => err.status_and_key(),
             AppErrors::Authentication(err) => err.status_and_key(),
             AppErrors::Email(err) => err.status_and_key(),
+            AppErrors::Settings(err) => err.status_and_key(),
             AppErrors::InvalidRequest => (StatusCode::BAD_REQUEST, "invalid_request"),
         }
     }
@@ -558,6 +575,11 @@ mod tests {
                 EmailErrors::EmailSetUpNotFound.into(),
                 StatusCode::SERVICE_UNAVAILABLE,
                 "email_not_configured",
+            ),
+            (
+                SettingsError::InvalidLocale.into(),
+                StatusCode::BAD_REQUEST,
+                "invalid_locale",
             ),
             (
                 DatabaseError::EntryNotFound.into(),

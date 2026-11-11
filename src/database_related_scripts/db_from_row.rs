@@ -8,7 +8,7 @@ use rusqlite::{
 
 use crate::models::{
     BookFormat, BookLanguage, BookMetadata, BookSeriesMetadata, EmailCode, LibraryMetadata,
-    LibraryType, LoginChallenge, RecoveryCodes, Sessions, UserMetadata, TOTP,
+    LibraryType, LoginChallenge, RecoveryCodes, Sessions, UserMetadata, UserSettings, TOTP,
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -110,6 +110,15 @@ impl FromRow for TOTP {
             lockouts: row.get("lockouts")?,
             last_failed_at: read_optional_time(row, "last_failed_at")?,
             created_at: read_time(row, "created_at")?,
+        })
+    }
+}
+
+impl FromRow for UserSettings {
+    fn from_row(row: &Row) -> rusqlite::Result<Self> {
+        Ok(Self {
+            user_id: row.get("user_id")?,
+            locale: row.get("locale")?,
         })
     }
 }

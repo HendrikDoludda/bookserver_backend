@@ -1,6 +1,6 @@
 use crate::data_models::models::{
     BookMetadata, BookSeriesMetadata, LibraryMetadata, RecoveryCodes, SeriesLibraryConnection,
-    Sessions, UserMetadata, TOTP,
+    Sessions, UserMetadata, UserSettings, TOTP,
 };
 use crate::database_related_scripts::db::{
     checked_unix_time, convert_system_time_to_unix_time, logged,
@@ -196,6 +196,21 @@ impl Insert for TOTP {
     }
 }
 
+impl Insert for UserSettings {
+    fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
+        let query = "INSERT INTO user_settings (user_id, locale) VALUES (?1, ?2)";
+
+        conn.execute(query, params![self.user_id, self.locale])
+            .map_err(logged(
+                "inserting into",
+                "user_settings",
+                DatabaseError::InsertionFailure,
+            ))?;
+        let id = conn.last_insert_rowid();
+        Ok(id)
+    }
+}
+
 impl Insert for RecoveryCodes {
     fn insert(&self, conn: &Connection) -> Result<i64, DatabaseError> {
         let query = "INSERT INTO recovery_codes (user_id, code_hash, used) VALUES (?1, ?2, ?3)";
@@ -223,7 +238,7 @@ mod tests {
         models::{
             BookFormat, BookLanguage, DatabaseTypes, LibraryType, QuerySeparator,
             RecoveryCodesColumns, Role, SessionsDatabaseColumns, TOTPDatabaseColumns,
-            UserDatabaseColumns,
+            UserDatabaseColumns, UserSettingsDatabaseColumns,
         },
         test_support::{capture_logs, insert_user, memory_connection},
     };
@@ -712,5 +727,47 @@ mod tests {
             Database::remove_entry_with_connection(&conn, DatabaseTypes::RecoveryCodes, id)
                 .unwrap();
         assert_eq!(removed, 1);
+    }
+
+    #[test]
+    fn user_settings_round_trip() {
+        let conn = memory_connection();
+        let alice = insert_user(&conn, "alice");
+        let bob = insert_user(&conn, "bob");
+        let chosen = UserSettings {
+            user_id: alice,
+            locale: Some("pt-BR".to_string()),
+        };
+        let not_chosen = UserSettings {
+            user_id: bob,
+            locale: None,
+        };
+        Database::insert_with_connection(&conn, &chosen).unwrap();
+        Database::insert_with_connection(&conn, &not_chosen).unwrap();
+
+        let stored = |user_id| Database::get_entry_with_connection::<UserSettings>(&conn, user_id);
+        assert_eq!(stored(alice).unwrap(), chosen);
+        assert_eq!(
+            stored(bob).unwrap(),
+            not_chosen,
+            "no locale must not come back as an empty one"
+        );
+
+        let changed = Database::update_value_with_connection::<UserSettings>(
+            &conn,
+            UserSettingsDatabaseColumns::Locale,
+            &"de",
+            alice,
+        )
+        .unwrap();
+        assert_eq!(changed, 1);
+        assert_eq!(stored(alice).unwrap().locale.as_deref(), Some("de"));
+
+        let removed =
+            Database::remove_entry_with_connection(&conn, DatabaseTypes::UserSettings, alice)
+                .unwrap();
+        assert_eq!(removed, 1);
+        assert!(matches!(stored(alice), Err(DatabaseError::EntryNotFound)));
+        assert!(stored(bob).is_ok(), "only alice's row goes");
     }
 }

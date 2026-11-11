@@ -173,6 +173,32 @@ mod tests {
         }
     }
 
+    #[test]
+    fn deleting_a_user_deletes_only_their_settings() {
+        let conn = memory_connection();
+        let alice = insert_user(&conn, "alice");
+        let bob = insert_user(&conn, "bob");
+        for user_id in [alice, bob] {
+            conn.execute(
+                "INSERT INTO user_settings (user_id, locale) VALUES (?1, 'de')",
+                [user_id],
+            )
+            .unwrap();
+        }
+
+        conn.execute("DELETE FROM users WHERE id = ?1", [alice])
+            .unwrap();
+
+        let owners: Vec<i64> = conn
+            .prepare("SELECT user_id FROM user_settings")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(owners, [bob]);
+    }
+
     fn add_session(
         conn: &Connection,
         user_id: i64,

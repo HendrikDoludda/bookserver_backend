@@ -11,7 +11,7 @@
 | Roles & access control | 1 | completed | [28-roles-and-access-control](features/28-roles-and-access-control.md) |
 | Account management | 1 | completed | [29-account-management](features/29-account-management.md) |
 | Password reset | 1 | completed | [30-password-reset](features/30-password-reset.md) |
-| Per-user settings | 1 | not started | [31-per-user-settings](features/31-per-user-settings.md) |
+| Per-user settings | 1 | completed | [31-per-user-settings](features/31-per-user-settings.md) |
 | HTTPS (TLS) | 1 | not started | [32-https-tls](features/32-https-tls.md) |
 | Recovery codes | 1 | completed | [50-recovery-codes](features/50-recovery-codes.md) |
 | Translation catalog (i18n) | F0 | not started | [13-internationalization](features/13-internationalization.md) |

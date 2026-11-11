@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, time::SystemTime};
-use strum_macros::EnumIter;
+use std::time::SystemTime;
 
 // === Row id + metadata wrapper ===============================================
 // Metadata structs don't store their own row id, but list endpoints need it so
@@ -14,7 +13,7 @@ pub struct WithId<T: Serialize> {
 }
 
 // === Database models =========================================================
-#[derive(Debug, Clone, Serialize, EnumIter, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Deserialize)]
 pub enum DatabaseTypes {
     Books,
     Library,
@@ -25,6 +24,7 @@ pub enum DatabaseTypes {
     Totp,
     RecoveryCodes,
     LoginChallenge,
+    UserSettings,
 }
 
 impl DatabaseTypes {
@@ -39,6 +39,7 @@ impl DatabaseTypes {
             DatabaseTypes::Totp => "totp",
             DatabaseTypes::RecoveryCodes => "recovery_codes",
             DatabaseTypes::LoginChallenge => "login_challenges",
+            DatabaseTypes::UserSettings => "user_settings",
         }
     }
 
@@ -51,19 +52,11 @@ impl DatabaseTypes {
             | DatabaseTypes::Series
             | DatabaseTypes::Users => Some("id"),
             DatabaseTypes::LibraryElements => None,
-            DatabaseTypes::Totp => Some("user_id"),
+            DatabaseTypes::Totp | DatabaseTypes::UserSettings => Some("user_id"),
             DatabaseTypes::Session => Some("session_id"),
             DatabaseTypes::RecoveryCodes => Some("recovery_id"),
             DatabaseTypes::LoginChallenge => Some("challenge_id"),
         }
-    }
-
-    pub fn get_file_path(&self) -> PathBuf {
-        let base_path = std::path::Path::new("./data/databases/");
-        if !base_path.exists() {
-            std::fs::create_dir_all(base_path).unwrap();
-        }
-        base_path.join("app_data.sqlite")
     }
 }
 
@@ -568,6 +561,29 @@ impl AsRef<str> for TOTPDatabaseColumns {
             TOTPDatabaseColumns::Lockouts => "lockouts",
             TOTPDatabaseColumns::LastFailedAt => "last_failed_at",
             TOTPDatabaseColumns::CreatedAt => "created_at",
+        }
+    }
+}
+
+// === User settings ===========================================================
+/// One row of `user_settings`. `None` is a setting the user hasn't chosen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserSettings {
+    pub user_id: i64,
+    /// A language tag such as `de` or `pt-BR`.
+    pub locale: Option<String>,
+}
+
+pub enum UserSettingsDatabaseColumns {
+    UserId,
+    Locale,
+}
+
+impl AsRef<str> for UserSettingsDatabaseColumns {
+    fn as_ref(&self) -> &str {
+        match self {
+            UserSettingsDatabaseColumns::UserId => "user_id",
+            UserSettingsDatabaseColumns::Locale => "locale",
         }
     }
 }

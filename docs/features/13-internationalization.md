@@ -16,6 +16,7 @@ series names are user data. Built right after Tier 1, so the frontend's first sc
 - [ ] 3 h · The catalog version as an ETag, per the version decision: answer `304 Not Modified` when `If-None-Match` matches, and bump the version in the same transaction as every catalog write [BE]
 - [ ] 1 h · Interpolation for text the backend renders, such as emails — a small `{name}` replace helper; no ICU needed [BE]
 - [ ] 3 h · Every code mail — email verification, password reset, email change — takes its subject and body from the catalog, in the language per the email-language decision, else the default [BE]
+- [ ] 1 h · `PUT /api/v1/account/settings` accepts only an enabled locale, in place of [31](31-per-user-settings.md)'s shape check [BE]
 
 ## Open decisions
 - [ ] Is the catalog readable without a session? — blocks: the GET endpoint. Suggested: yes — the login screen needs strings before anyone signs in, and it is only UI text; writes stay admin-only ([56](56-translation-editor.md)).

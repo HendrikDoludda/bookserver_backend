@@ -1,7 +1,8 @@
 use crate::data_models::models::{
     BookDatabaseColumns, BookMetadata, BookSeriesMetadata, LibraryDatabaseColumns, LibraryMetadata,
     RecoveryCodes, RecoveryCodesColumns, SeriesDatabaseColumns, Sessions, SessionsDatabaseColumns,
-    TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, TOTP,
+    TOTPDatabaseColumns, UserDatabaseColumns, UserMetadata, UserSettings,
+    UserSettingsDatabaseColumns, TOTP,
 };
 use crate::database_related_scripts::db::logged;
 use crate::error_types::DatabaseError;
@@ -108,6 +109,12 @@ impl Update for RecoveryCodes {
 impl Update for TOTP {
     type Column = TOTPDatabaseColumns;
     const TABLE: &'static str = "totp";
+    const KEY: &'static str = "user_id";
+}
+
+impl Update for UserSettings {
+    type Column = UserSettingsDatabaseColumns;
+    const TABLE: &'static str = "user_settings";
     const KEY: &'static str = "user_id";
 }
 
