@@ -111,13 +111,13 @@ pub(crate) async fn check_password(
 
 /// The current password, re-checked by an account endpoint: login's check, so it shares login's
 /// throttle, but a wrong password answers 400 `incorrect_password` — the app reads a 401 as an
-/// ended session.
+/// ended session. Answers the account as it was when the password was checked.
 pub(crate) async fn check_current_password(
     db: Arc<Database>,
     user_id: i64,
     password: String,
     now: SystemTime,
-) -> Result<(), AppErrors> {
+) -> Result<UserMetadata, AppErrors> {
     let username = Arc::clone(&db)
         .read(move |conn| {
             Ok(Database::get_entry_with_connection::<UserMetadata>(conn, user_id)?.username)
@@ -137,7 +137,8 @@ pub(crate) async fn check_current_password(
     // The right password was counted as a try too; left in the count, repeated attempts with a
     // wrong code would lock the user's login.
     db.transact(move |conn| Ok(db_login_throttle::clear(conn, &throttle_key)?))
-        .await
+        .await?;
+    Ok(user)
 }
 
 /// What a proven identity leads to — a correct password, or a redeemed verification code:

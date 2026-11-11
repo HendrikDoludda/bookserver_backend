@@ -1,5 +1,5 @@
 use axum::{
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
     Router,
 };
 use tokio::net::TcpListener;
@@ -10,6 +10,7 @@ use crate::{
     config::get_port,
     error_types::RoutingErrors,
     routes::api_caller::{
+        account::change_password,
         authentication::{
             confirm_password_reset, log_out, refresh_session, request_password_reset,
             resend_verification_code, sign_in, sign_up, verify_email,
@@ -82,6 +83,7 @@ pub fn set_up_routes() -> Router<AppState> {
         .route("/auth/refresh", post(refresh_session))
         .route("/auth/password_reset", post(request_password_reset))
         .route("/auth/password_reset/confirm", post(confirm_password_reset))
+        .route("/account/password", put(change_password))
         .route("/account/totp", get(totp_status).post(totp_start_set_up))
         .route("/account/totp/confirm", post(finalize_totp_set_up))
         .route("/account/totp/disable", post(disable_totp))
@@ -1070,6 +1072,7 @@ mod tests {
         ("POST", "/api/v1/directories/1/scan"),
         ("POST", "/api/v1/metadata/scan"),
         ("GET", "/api/v1/search"),
+        ("PUT", "/api/v1/account/password"),
         ("GET", "/api/v1/account/totp"),
         ("POST", "/api/v1/account/totp"),
         ("POST", "/api/v1/account/totp/confirm"),
@@ -1484,6 +1487,53 @@ mod tests {
         let (status, _, body) = call(&app, with_code(&new_codes[0])).await;
         assert_eq!(status, StatusCode::OK, "a new code");
         assert_eq!(json(&body)["status"], "ok");
+    }
+
+    #[tokio::test]
+    async fn changing_the_password_over_http() {
+        let temp = TempDatabase::open();
+        add_alice_with_password(&temp).await;
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let (_, _, body) = call(&app, log_in_as_alice()).await;
+        let this_device = json(&body)["session_token"].as_str().unwrap().to_string();
+        let (_, _, body) = call(&app, log_in_as_alice()).await;
+        let other_device = json(&body)["session_token"].as_str().unwrap().to_string();
+
+        let change = serde_json::json!({
+            "current_password": "correct horse battery",
+            "new_password": "battery staple horse",
+            "new_password_repeat": "battery staple horse",
+        });
+        let (status, _, body) = call(
+            &app,
+            authorized(
+                "PUT",
+                "/api/v1/account/password",
+                &this_device,
+                Some(change),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert!(body.is_empty());
+
+        let (status, _, _) = call(&app, guarded(Some(&format!("Bearer {this_device}")))).await;
+        assert_eq!(status, StatusCode::OK, "this session stays");
+        let (status, _, _) = call(&app, guarded(Some(&format!("Bearer {other_device}")))).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "the other device's ended");
+        let (status, _, _) = call(&app, log_in_as_alice()).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "the old password");
+        let with_the_new_password = post_json(
+            "/api/v1/auth/login",
+            serde_json::json!({
+                "username_or_email": "alice",
+                "password": "battery staple horse",
+                "device_name": "phone",
+                "platform": "ios",
+            }),
+        );
+        let (status, _, _) = call(&app, with_the_new_password).await;
+        assert_eq!(status, StatusCode::OK, "the new password");
     }
 
     #[tokio::test]

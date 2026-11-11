@@ -1,5 +1,6 @@
 //! HTTP handlers and the authentication extractors that guard them.
 
+pub mod account;
 pub mod authentication;
 pub mod extractors;
 pub mod helpers;

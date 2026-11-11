@@ -247,8 +247,6 @@ pub enum AuthenticationError {
     TokenLifetimeCalculationFailed,
     #[error("Failed to convert string into PasswordHash type")]
     StringToPasswordHashConversionFailed,
-    #[error("Failed to update a database entry")]
-    DatabaseUpdateFailed,
     #[error("You do not have permission to perform this action")]
     Forbidden,
     #[error("The new password is too short")]
@@ -267,6 +265,8 @@ pub enum AuthenticationError {
     InvalidSetupCode,
     #[error("The current password is wrong")]
     IncorrectPassword,
+    #[error("The new password is the current one")]
+    PasswordUnchanged,
     #[error("Two-factor authentication is already on")]
     TotpAlreadyEnabled,
     #[error("There is no two-factor setup waiting to be confirmed")]
@@ -310,6 +310,9 @@ impl AuthenticationError {
             AuthenticationError::IncorrectPassword => {
                 (StatusCode::BAD_REQUEST, "incorrect_password")
             }
+            AuthenticationError::PasswordUnchanged => {
+                (StatusCode::BAD_REQUEST, "password_unchanged")
+            }
             AuthenticationError::TotpAlreadyEnabled => {
                 (StatusCode::CONFLICT, "totp_already_enabled")
             }
@@ -325,7 +328,6 @@ impl AuthenticationError {
             | AuthenticationError::ErrorHashingData
             | AuthenticationError::TokenLifetimeCalculationFailed
             | AuthenticationError::StringToPasswordHashConversionFailed
-            | AuthenticationError::DatabaseUpdateFailed
             | AuthenticationError::TotpFailure => INTERNAL,
         }
     }
@@ -496,6 +498,11 @@ mod tests {
                 "incorrect_password",
             ),
             (
+                Auth::PasswordUnchanged.into(),
+                StatusCode::BAD_REQUEST,
+                "password_unchanged",
+            ),
+            (
                 Auth::TotpAlreadyEnabled.into(),
                 StatusCode::CONFLICT,
                 "totp_already_enabled",
@@ -574,7 +581,6 @@ mod tests {
             Auth::ErrorHashingData.into(),
             Auth::TokenLifetimeCalculationFailed.into(),
             Auth::StringToPasswordHashConversionFailed.into(),
-            Auth::DatabaseUpdateFailed.into(),
             Auth::TotpFailure.into(),
             EmailErrors::SMTPConnectionFailed.into(),
             EmailErrors::ClientBuilderFailed.into(),

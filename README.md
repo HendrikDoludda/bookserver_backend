@@ -147,6 +147,7 @@ Every endpoint except `/health` and `/api/v1/auth/…` needs `Authorization: Bea
 | `POST` | `/api/v1/auth/logout` | End the session behind either token; always `204` |
 | `POST` | `/api/v1/auth/password_reset` | Mail a password-reset code; always `202`, so it never reveals whether an address has an account |
 | `POST` | `/api/v1/auth/password_reset/confirm` | Set a new password with the emailed code; confirms the email and ends every session |
+| `PUT` | `/api/v1/account/password` | Change the password with the current one; `204`, and every other session ends |
 | `GET` | `/api/v1/account/totp` | Whether two-factor auth is on, and how many recovery codes are left |
 | `POST` | `/api/v1/account/totp` | Start setting up two-factor auth; answers the authenticator secret and its `otpauth://` URL |
 | `POST` | `/api/v1/account/totp/confirm` | Confirm the setup with a code and the password; answers 10 recovery codes, shown once, and ends the other sessions |

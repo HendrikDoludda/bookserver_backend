@@ -6,16 +6,13 @@ use argon2::password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier}
 use argon2::Argon2;
 use rusqlite::Connection;
 
-use crate::data_models::authentication_model::{ChangePasswordRequest, DeviceInformation};
+use crate::data_models::authentication_model::DeviceInformation;
 use crate::database_related_scripts::{
     db::{convert_system_time_to_unix_time, Database},
     db_login_challenges,
 };
 use crate::error_types::{AuthenticationError, DatabaseError};
-use crate::models::{
-    Comparison, DatabaseTypes, QuerySeparator, Sessions, SessionsDatabaseColumns,
-    UserDatabaseColumns, UserMetadata,
-};
+use crate::models::{Comparison, DatabaseTypes, QuerySeparator, Sessions, SessionsDatabaseColumns};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 
@@ -77,25 +74,6 @@ pub fn check_email(email: &str) -> Result<(), AuthenticationError> {
     } else {
         Err(AuthenticationError::InvalidEmail)
     }
-}
-
-// === Login ===================================================================
-
-pub fn validate_submitted_password(
-    user: &UserMetadata,
-    password: &String,
-) -> Result<(), AuthenticationError> {
-    let password_hash = PasswordHash::new(&user.password_hash).map_err(|err| {
-        tracing::error!("Failed to hash password: {err}");
-        AuthenticationError::StringToPasswordHashConversionFailed
-    })?;
-    if Argon2::default()
-        .verify_password(password.as_bytes(), &password_hash)
-        .is_err()
-    {
-        return Err(AuthenticationError::IncorrectCredentials);
-    }
-    Ok(())
 }
 
 // === Password changes & resets ===============================================
@@ -161,26 +139,6 @@ fn dummy_hash() -> Result<&'static str, AuthenticationError> {
     }
     let hash = hash_string_securely(&create_new_token()?.normal_string)?.hashed_string;
     Ok(DUMMY_HASH.get_or_init(|| hash))
-}
-
-pub fn update_password_to_new_password(
-    conn: &Connection,
-    request: ChangePasswordRequest,
-    user_id: i64,
-) -> Result<(), AuthenticationError> {
-    //requires the old password and the same new password twice
-    //if old password passes the argon verification continue
-    //verify new password
-    //hash and store the new password for the user
-    let password_hash = hash_string_securely(&request.new_password)?;
-    Database::update_value_with_connection::<UserMetadata>(
-        conn,
-        UserDatabaseColumns::PasswordHash,
-        &password_hash.hashed_string,
-        user_id,
-    )
-    .map_err(|_| AuthenticationError::DatabaseUpdateFailed)?;
-    Ok(())
 }
 
 /// Ends every session of the user, and every login still waiting for its TOTP code —

@@ -10,14 +10,13 @@ use axum::{
 
 use crate::{
     data_models::authentication_model::{
-        ChangeEmailRequest, ChangePasswordRequest, ChangeUserNameRequest,
-        ConfirmPasswordResetRequest, LoginRequest, PasswordResetRequest, ResendVerificationRequest,
-        UserCreationRequest, VerificationRequired, VerifyEmailRequest,
+        ChangeEmailRequest, ChangeUserNameRequest, ConfirmPasswordResetRequest, LoginRequest,
+        PasswordResetRequest, ResendVerificationRequest, UserCreationRequest, VerificationRequired,
+        VerifyEmailRequest,
     },
     db::Database,
-    error_types::{AppErrors, AuthenticationError, EmailErrors},
+    error_types::{AppErrors, EmailErrors},
     models::{UserDatabaseColumns, UserMetadata},
-    routes::auth::{update_password_to_new_password, validate_submitted_password},
     routes::{
         email_helper::Mailer,
         login::{end_session, log_in, refresh},
@@ -109,23 +108,6 @@ pub async fn refresh_session(
 ) -> Result<Response<Body>, AppErrors> {
     let tokens = refresh(db, session.0, SystemTime::now()).await?;
     Ok(no_store(Json(tokens)))
-}
-
-pub async fn change_password(
-    session: AuthSession,
-    State(db): State<Arc<Database>>,
-    request: ChangePasswordRequest,
-) -> Result<Response<Body>, AppErrors> {
-    if request.new_password != request.new_password_repeat {
-        return Err(AuthenticationError::MismatchingPasswords.into());
-    }
-    db.setup_new_transaction(|conn| {
-        let user = Database::get_entry_with_connection::<UserMetadata>(conn, session.0.user_id)?;
-        validate_submitted_password(&user, &request.current_password)?;
-        update_password_to_new_password(conn, request, user.user_id)?;
-        Ok(())
-    })?;
-    Ok((StatusCode::ACCEPTED, "Password has been changed").into_response())
 }
 
 pub async fn change_username(
