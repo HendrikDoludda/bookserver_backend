@@ -1,11 +1,13 @@
-//! The translation catalog as the apps read it: the languages on offer, and a language's texts,
-//! each falling back to English.
+//! The translation catalog as the apps read it — the languages on offer, and a language's texts,
+//! each falling back to English — and `interpolate`, which fills a text's placeholders.
 
 use std::{collections::BTreeSet, sync::Arc};
 
+use regex::Captures;
+
 use crate::{
     data_models::translations_model::{Locale, Translations},
-    database_related_scripts::db_translations,
+    database_related_scripts::{db_translations, translation_seed::PLACEHOLDER},
     db::Database,
     error_types::{AppErrors, TranslationError},
 };
@@ -48,6 +50,20 @@ pub async fn translations(
     Ok(translations)
 }
 
+/// `template` with each `{name}` that `values` names replaced by its value, in one pass: an
+/// inserted value is never searched for placeholders itself. Any other `{…}` stays as written.
+pub fn interpolate(template: &str, values: &[(&str, &str)]) -> String {
+    PLACEHOLDER
+        .replace_all(template, |captures: &Captures| {
+            let name = &captures[1];
+            match values.iter().find(|(key, _)| *key == name) {
+                Some((_, value)) => value.to_string(),
+                None => captures[0].to_string(),
+            }
+        })
+        .into_owned()
+}
+
 /// The namespaces `?sections=` names; `None`, meaning all of them, while it names none.
 fn requested_sections(sections: Option<&str>) -> Option<BTreeSet<String>> {
     let wanted: BTreeSet<String> = sections?
@@ -87,6 +103,41 @@ mod tests {
 
     fn namespaces(translations: Translations) -> Vec<String> {
         translations.into_keys().collect()
+    }
+
+    #[test]
+    fn interpolate_fills_each_named_placeholder() {
+        let values = [("username", "alice"), ("code", "ABCD2345")];
+        assert_eq!(
+            interpolate("Hello {username}, your code: {code}", &values),
+            "Hello alice, your code: ABCD2345"
+        );
+        assert_eq!(interpolate("{code}{code}", &values), "ABCD2345ABCD2345");
+    }
+
+    #[test]
+    fn an_inserted_value_is_never_filled_in_again() {
+        let values = [("username", "{code}"), ("code", "ABCD2345")];
+        assert_eq!(
+            interpolate("Hello {username}, {code}", &values),
+            "Hello {code}, ABCD2345"
+        );
+    }
+
+    #[test]
+    fn anything_else_in_braces_stays_as_written() {
+        let values = [("code", "ABCD2345")];
+        for kept in ["{unknown}", "{", "}", "{}", "{ code }", "{Code}", "{code"] {
+            assert_eq!(interpolate(kept, &values), kept, "{kept:?}");
+        }
+    }
+
+    #[test]
+    fn the_text_around_a_placeholder_stays_intact() {
+        assert_eq!(
+            interpolate("Grüße, {username} – ✓", &[("username", "Jörg")]),
+            "Grüße, Jörg – ✓"
+        );
     }
 
     #[tokio::test]

@@ -223,7 +223,7 @@ async fn issue_email_change_code(
             counters,
             now,
         )?;
-        Ok(Some(code_mail(&stored, &user, &code)))
+        Ok(Some(code_mail(conn, &stored, &user, &code)?))
     })
     .await
 }

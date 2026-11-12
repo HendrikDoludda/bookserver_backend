@@ -49,6 +49,7 @@
 ## Email
 - Mail is sent inline only at sign-up, whose caller just created the account and waits for its code; every other mail (reset and resent verification codes, upload notices) goes out from a background task after the commit, so an answer never shows whether a mail went out.
 - Mail goes to the address stored on the account — for an email change, to the new address stored with its code — never straight to one from the request.
+- A mail's subject and body come from the catalog's `email` namespace, in the recipient's language (`db_translations::recipient_locale`: their setting while the server offers it, else the default), with its `{placeholders}` filled by `interpolate`.
 
 ## Logging
 - Log with `tracing`; the `log` crate is not a dependency.

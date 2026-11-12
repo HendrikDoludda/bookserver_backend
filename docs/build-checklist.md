@@ -14,7 +14,7 @@
 | Per-user settings | 1 | completed | [31-per-user-settings](features/31-per-user-settings.md) |
 | HTTPS (TLS) | 1 | completed | [32-https-tls](features/32-https-tls.md) |
 | Recovery codes | 1 | completed | [50-recovery-codes](features/50-recovery-codes.md) |
-| Translation catalog (i18n) | F0 | in progress | [13-internationalization](features/13-internationalization.md) |
+| Translation catalog (i18n) | F0 | completed | [13-internationalization](features/13-internationalization.md) |
 | Reading files | F1 | in progress | [38-reading-files](features/38-reading-files.md) |
 | Frontend localization | F1 | not started | [57-frontend-localization](features/57-frontend-localization.md) |
 | Account screens | F1 | not started | [58-account-screens](features/58-account-screens.md) |

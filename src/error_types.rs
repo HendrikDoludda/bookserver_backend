@@ -417,12 +417,15 @@ pub enum ShippedTranslationError {
 pub enum TranslationError {
     #[error("The server doesn't offer this language")]
     UnknownLocale,
+    #[error("The catalog has no text for {key}")]
+    MissingText { key: String },
 }
 
 impl TranslationError {
     fn status_and_key(&self) -> (StatusCode, &'static str) {
         match self {
             TranslationError::UnknownLocale => (StatusCode::NOT_FOUND, "not_found"),
+            TranslationError::MissingText { .. } => INTERNAL,
         }
     }
 }
@@ -722,6 +725,10 @@ mod tests {
             DatabaseError::OperationFailure.into(),
             DatabaseError::OperationCommitFailure.into(),
             DatabaseError::InvalidParameters.into(),
+            TranslationError::MissingText {
+                key: "email.verify_email.body".to_string(),
+            }
+            .into(),
         ];
 
         for error in cases {

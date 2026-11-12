@@ -10,16 +10,20 @@ use rand::RngExt;
 use rusqlite::Connection;
 
 use crate::{
-    database_related_scripts::db_email_codes,
+    database_related_scripts::{db_email_codes, db_translations},
     db::Database,
-    error_types::{AppErrors, DatabaseError},
+    error_types::{AppErrors, DatabaseError, TranslationError},
     models::{CodePurpose, EmailCode, QuerySeparator, UserDatabaseColumns, UserMetadata},
     routes::{
         auth::{hash_secret, secret_matches},
         email_helper::{EmailInformation, Mailer},
         login::find_user_for_login,
+        translations::interpolate,
     },
 };
+
+/// The namespace of the code mails' texts: `translations/<language>/backend/email.json`.
+const MAIL_TEXTS: &str = "email";
 
 // No 0/O or 1/I/L: the code is read from an email and typed on a phone.
 const CODE_ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -175,7 +179,7 @@ async fn issue_code(
             return Ok(None);
         };
         let stored = save_fresh_code(conn, user.user_id, purpose, None, code_hash, counters, now)?;
-        Ok(Some(code_mail(&stored, &user, &code)))
+        Ok(Some(code_mail(conn, &stored, &user, &code)?))
     })
     .await
 }
@@ -222,51 +226,41 @@ pub fn save_fresh_code(
     Ok(code)
 }
 
-/// The mail that carries a stored code: to the address stored with it for an email change, to
-/// the account's stored address otherwise — never to one straight from a request.
-pub fn code_mail(stored: &EmailCode, user: &UserMetadata, code: &str) -> EmailInformation {
-    let minutes = CODE_LIFETIME.as_secs() / 60;
-    let (subject, body) = match stored.purpose {
-        CodePurpose::ResetPassword => (
-            "Your password reset code",
-            format!(
-                "Hello {},\n\n\
-                 your code to reset your password is:\n\n    {}\n\n\
-                 It is valid for {} minutes. If you didn't ask for a new password, ignore this \
-                 email; your password stays as it is.\n",
-                user.username, code, minutes
-            ),
-        ),
-        CodePurpose::VerifyEmail => (
-            "Confirm your email address",
-            format!(
-                "Hello {},\n\n\
-                 your code to confirm your email address is:\n\n    {}\n\n\
-                 It is valid for {} minutes. If you didn't create an account, ignore this \
-                 email.\n",
-                user.username, code, minutes
-            ),
-        ),
-        CodePurpose::ChangeEmail => (
-            "Confirm your new email address",
-            format!(
-                "Hello {},\n\n\
-                 your code to make this your account's email address is:\n\n    {}\n\n\
-                 It is valid for {} minutes. If you didn't ask for this change, ignore this \
-                 email; nothing changes.\n",
-                user.username, code, minutes
-            ),
-        ),
+/// The mail that carries a stored code, in the recipient's language: to the address stored with
+/// it for an email change, to the account's stored address otherwise — never to one straight
+/// from a request.
+pub fn code_mail(
+    conn: &Connection,
+    stored: &EmailCode,
+    user: &UserMetadata,
+    code: &str,
+) -> Result<EmailInformation, AppErrors> {
+    let locale = db_translations::recipient_locale(conn, user.user_id)?;
+    let minutes = (CODE_LIFETIME.as_secs() / 60).to_string();
+    let values = [
+        ("username", user.username.as_str()),
+        ("code", code),
+        ("minutes", minutes.as_str()),
+    ];
+    let text = |part: &str| -> Result<String, AppErrors> {
+        let name = format!("{}.{part}", stored.purpose.as_str());
+        let template =
+            db_translations::text(conn, &locale, MAIL_TEXTS, &name)?.ok_or_else(|| {
+                TranslationError::MissingText {
+                    key: format!("{MAIL_TEXTS}.{name}"),
+                }
+            })?;
+        Ok(interpolate(&template, &values))
     };
-    EmailInformation {
+    Ok(EmailInformation {
         username: user.username.clone(),
         email: stored
             .new_email
             .clone()
             .unwrap_or_else(|| user.email.clone()),
-        subject: subject.to_string(),
-        body,
-    }
+        subject: text("subject")?,
+        body: text("body")?,
+    })
 }
 
 /// Counts a try at the user's live code, then checks `code` against it. On success returns
@@ -304,10 +298,128 @@ mod tests {
     use std::time::UNIX_EPOCH;
 
     use super::*;
-    use crate::models::CodePurpose;
+    use crate::{
+        models::{CodePurpose, Role},
+        test_support::{code_in, insert_user, memory_connection, stored_text},
+    };
 
     fn at(secs: u64) -> SystemTime {
         UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    const PURPOSES: [CodePurpose; 3] = [
+        CodePurpose::ResetPassword,
+        CodePurpose::VerifyEmail,
+        CodePurpose::ChangeEmail,
+    ];
+
+    /// An account with this language setting, or none.
+    fn account(conn: &Connection, username: &str, locale: Option<&str>) -> UserMetadata {
+        let user_id = insert_user(conn, username);
+        if let Some(locale) = locale {
+            conn.execute(
+                "INSERT INTO user_settings (user_id, locale) VALUES (?1, ?2)",
+                rusqlite::params![user_id, locale],
+            )
+            .unwrap();
+        }
+        UserMetadata {
+            user_id,
+            username: username.to_string(),
+            password_hash: "not-a-hash".to_string(),
+            email: format!("{username}@example.com"),
+            email_verified: false,
+            role: Role::Member,
+            created_at: UNIX_EPOCH,
+            last_login: None,
+        }
+    }
+
+    fn stored_code(user_id: i64, purpose: CodePurpose, new_email: Option<&str>) -> EmailCode {
+        EmailCode {
+            user_id,
+            purpose,
+            code_hash: "hash".to_string(),
+            new_email: new_email.map(str::to_string),
+            expires_at: at(900),
+            attempts: 0,
+            last_sent_at: at(0),
+            sent_in_window: 1,
+            window_started_at: at(0),
+        }
+    }
+
+    #[test]
+    fn every_code_mail_in_every_shipped_language_carries_the_code_on_its_own_line() {
+        let conn = memory_connection();
+        for locale in ["en", "de"] {
+            let user = account(&conn, &format!("user_{locale}"), Some(locale));
+            for purpose in PURPOSES {
+                let code = stored_code(user.user_id, purpose, None);
+                let mail = code_mail(&conn, &code, &user, "ABCD2345").unwrap();
+
+                let label = format!("{locale} {purpose:?}");
+                let subject = format!("{}.subject", purpose.as_str());
+                assert_eq!(
+                    mail.subject,
+                    stored_text(&conn, locale, "email", &subject),
+                    "{label}"
+                );
+                assert_eq!(code_in(&mail), "ABCD2345", "{label}");
+                assert!(mail.body.contains(&user.username), "{label}");
+                assert!(mail.body.contains("15"), "{label}: the minutes");
+                assert!(
+                    !mail.body.contains('{'),
+                    "{label}: every placeholder is filled"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_code_mail_goes_to_the_stored_address_in_the_default_language_without_a_setting() {
+        let conn = memory_connection();
+        let bob = account(&conn, "bob", None);
+
+        let change = stored_code(
+            bob.user_id,
+            CodePurpose::ChangeEmail,
+            Some("new@example.com"),
+        );
+        let mail = code_mail(&conn, &change, &bob, "ABCD2345").unwrap();
+        assert_eq!(
+            mail.email, "new@example.com",
+            "an email change: the new address"
+        );
+        assert_eq!(mail.username, "bob");
+        assert_eq!(
+            mail.subject,
+            stored_text(&conn, "en", "email", "change_email.subject")
+        );
+
+        let reset = stored_code(bob.user_id, CodePurpose::ResetPassword, None);
+        let mail = code_mail(&conn, &reset, &bob, "ABCD2345").unwrap();
+        assert_eq!(mail.email, "bob@example.com");
+    }
+
+    #[test]
+    fn a_missing_mail_text_is_an_error_not_an_empty_mail() {
+        let conn = memory_connection();
+        let bob = account(&conn, "bob", None);
+        conn.execute(
+            "DELETE FROM translation_keys WHERE namespace = 'email' AND name = 'verify_email.body'",
+            [],
+        )
+        .unwrap();
+
+        let code = stored_code(bob.user_id, CodePurpose::VerifyEmail, None);
+        let result = code_mail(&conn, &code, &bob, "ABCD2345");
+
+        assert!(matches!(
+            &result,
+            Err(AppErrors::Translation(TranslationError::MissingText { key }))
+                if key == "email.verify_email.body"
+        ));
     }
 
     fn sent(last_sent_at: u64, sent_in_window: i64, window_started_at: u64) -> EmailCode {

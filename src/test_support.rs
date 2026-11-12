@@ -93,6 +93,17 @@ pub fn insert_texts(
     }
 }
 
+/// A text as the catalog stores it, read with plain SQL.
+pub fn stored_text(conn: &Connection, code: &str, namespace: &str, name: &str) -> String {
+    conn.query_row(
+        "SELECT t.value FROM translations t JOIN translation_keys k ON k.id = t.key_id \
+         WHERE t.locale_code = ?1 AND k.namespace = ?2 AND k.name = ?3",
+        params![code, namespace, name],
+        |row| row.get(0),
+    )
+    .expect("the text is stored")
+}
+
 /// The code in a mail from `email_codes::code_mail`: the line indented by four spaces.
 pub fn code_in(mail: &EmailInformation) -> String {
     mail.body

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use rusqlite::{
     params,
     types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef},
-    Connection, ToSql,
+    Connection, OptionalExtension, ToSql,
 };
 
 use crate::{
@@ -288,10 +288,106 @@ pub fn frontend_texts(
     ))
 }
 
+/// The language the server writes to the user `user_id` in: their setting while the server
+/// offers it, else the default language, else the source language.
+pub fn recipient_locale(conn: &Connection, user_id: i64) -> Result<String, DatabaseError> {
+    conn.query_row(
+        "SELECT COALESCE( \
+             (SELECT s.locale FROM user_settings s JOIN locales l ON l.code = s.locale \
+              WHERE s.user_id = ?1 AND l.enabled), \
+             (SELECT code FROM locales WHERE is_default), \
+             ?2)",
+        params![user_id, SOURCE_LOCALE],
+        |row| row.get(0),
+    )
+    .map_err(logged("reading", "locales", DatabaseError::QueryFailure))
+}
+
+/// The text of `namespace`/`name` in the language `code`, else in the source language; `None`
+/// when the key has neither.
+pub fn text(
+    conn: &Connection,
+    code: &str,
+    namespace: &str,
+    name: &str,
+) -> Result<Option<String>, DatabaseError> {
+    conn.query_row(
+        "SELECT COALESCE(t.value, f.value) FROM translation_keys k \
+         LEFT JOIN translations t ON t.key_id = k.id AND t.locale_code = ?1 \
+         LEFT JOIN translations f ON f.key_id = k.id AND f.locale_code = ?2 \
+         WHERE k.namespace = ?3 AND k.name = ?4",
+        params![code, SOURCE_LOCALE, namespace, name],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .optional()
+    .map(Option::flatten)
+    .map_err(logged(
+        "reading",
+        "translations",
+        DatabaseError::QueryFailure,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::migrated_connection;
+    use crate::test_support::{
+        insert_language, insert_texts, insert_user, memory_connection, migrated_connection,
+    };
+
+    #[test]
+    fn the_recipients_language_is_their_offered_setting_else_the_default() {
+        let conn = memory_connection();
+        let alice = insert_user(&conn, "alice");
+        let language = || recipient_locale(&conn, alice).unwrap();
+
+        assert_eq!(language(), "en", "no setting: the default");
+        conn.execute(
+            "INSERT INTO user_settings (user_id, locale) VALUES (?1, 'de')",
+            [alice],
+        )
+        .unwrap();
+        assert_eq!(language(), "de");
+
+        conn.execute("UPDATE locales SET enabled = FALSE WHERE code = 'de'", [])
+            .unwrap();
+        assert_eq!(language(), "en", "a setting the server no longer offers");
+
+        conn.execute_batch(
+            "UPDATE locales SET enabled = TRUE WHERE code = 'de';
+             UPDATE user_settings SET locale = NULL;
+             UPDATE locales SET is_default = FALSE WHERE code = 'en';
+             UPDATE locales SET is_default = TRUE WHERE code = 'de';",
+        )
+        .unwrap();
+        assert_eq!(language(), "de", "no setting: the default, now German");
+
+        conn.execute("UPDATE locales SET is_default = FALSE", [])
+            .unwrap();
+        assert_eq!(language(), "en", "no default at all: the source language");
+    }
+
+    #[test]
+    fn a_text_falls_back_to_the_source_language_and_an_unknown_key_has_none() {
+        let conn = migrated_connection();
+        for (code, order) in [("en", 1), ("qaa", 2)] {
+            insert_language(&conn, code, order);
+        }
+        insert_texts(
+            &conn,
+            "backend",
+            "mail",
+            "subject",
+            &[("en", "Code"), ("qaa", "Kode")],
+        );
+        insert_texts(&conn, "backend", "mail", "body", &[("en", "Only English")]);
+
+        let text_in = |code: &str, name: &str| text(&conn, code, "mail", name).unwrap();
+        assert_eq!(text_in("qaa", "subject").as_deref(), Some("Kode"));
+        assert_eq!(text_in("qaa", "body").as_deref(), Some("Only English"));
+        assert_eq!(text_in("en", "subject").as_deref(), Some("Code"));
+        assert_eq!(text_in("qaa", "footer"), None);
+    }
 
     #[test]
     fn an_audience_is_stored_as_its_name_and_read_back() {

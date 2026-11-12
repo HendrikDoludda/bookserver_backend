@@ -36,7 +36,9 @@ const SHIPPED: &[(&str, &str)] = &[
     shipped!("de/backend/email.json"),
 ];
 
-static PLACEHOLDER: Lazy<Regex> = Lazy::new(|| Regex::new(r"\{([a-z0-9_]+)\}").unwrap());
+/// A `{name}` placeholder: what the checks compare between languages, and what
+/// `translations::interpolate` fills in.
+pub(crate) static PLACEHOLDER: Lazy<Regex> = Lazy::new(|| Regex::new(r"\{([a-z0-9_]+)\}").unwrap());
 
 /// A language as its `language.json` describes it.
 #[derive(Debug, PartialEq, Deserialize)]

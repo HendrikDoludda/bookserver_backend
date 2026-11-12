@@ -1,6 +1,6 @@
 # Translation catalog (i18n)
 
-State: in progress
+State: completed
 
 The backend owns one translation catalog and serves it over the API, so both UIs and the
 emails read the same strings, and adding a language is data entry instead of a code change.
@@ -21,5 +21,5 @@ series names are user data.
 - [x] 2 h · The ETag is the BLAKE3 hash of the answer, sent with `Cache-Control: no-cache`; a matching `If-None-Match` answers `304 Not Modified` [BE]
 - [x] 1 h · `PUT /api/v1/account/settings` and sign-up accept only an enabled locale (400 `invalid_locale`), in place of [31](31-per-user-settings.md)'s shape check; `user_settings.locale` becomes a foreign key to `locales`, `ON DELETE SET NULL` [DB] [BE]
 - [x] 1 h · Sign-up takes an optional `locale` and stores it with the new account, so its first mail is already in that language [BE]
-- [ ] 1 h · Interpolation for text the backend renders, such as emails — a `{name}` replace in one pass, so an inserted value is never replaced again; no ICU needed [BE]
-- [ ] 3 h · Every code mail — email verification, password reset, email change — takes its subject and body from the catalog, in the recipient's language setting if that language is enabled, else the default [BE]
+- [x] 1 h · Interpolation for text the backend renders, such as emails — a `{name}` replace in one pass, so an inserted value is never replaced again; no ICU needed [BE]
+- [x] 3 h · Every code mail — email verification, password reset, email change — takes its subject and body from the catalog, in the recipient's language setting if that language is enabled, else the default [BE]

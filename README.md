@@ -141,7 +141,7 @@ Every endpoint except `/health`, `/api/v1/auth/…` and the two `/api/v1/locales
 | `GET` | `/api/v1/books/{id}/file` | Stream the book file (supports `Range`) |
 | `POST` | `/api/v1/scan` | Scan `BOOK_DIRS` and catalog new files |
 | `DELETE` | `/api/v1/libraries/{id}` | Delete a library |
-| `POST` | `/api/v1/auth/register` | Sign up; the first account sends the setup code from the server log and becomes admin. An optional `locale` from `GET /api/v1/locales` becomes the account's language setting (`400 invalid_locale` for one the server doesn't offer). Answers the login tokens, or `202` when the account must first confirm its email — within 48 hours, or a later sign-up deletes it |
+| `POST` | `/api/v1/auth/register` | Sign up; the first account sends the setup code from the server log and becomes admin. An optional `locale` from `GET /api/v1/locales` becomes the account's language setting, which its mails are written in (`400 invalid_locale` for one the server doesn't offer). Answers the login tokens, or `202` when the account must first confirm its email — within 48 hours, or a later sign-up deletes it |
 | `POST` | `/api/v1/auth/verify_email` | Confirm the email with the mailed code and the password; answers like login |
 | `POST` | `/api/v1/auth/verify_email/resend` | Mail a new verification code; always `202` |
 | `POST` | `/api/v1/auth/login` | Log in; answers the session and refresh tokens, or a challenge when two-factor auth is on |

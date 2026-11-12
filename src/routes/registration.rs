@@ -171,7 +171,7 @@ pub async fn create_account(
             )?;
             Ok(Created::AwaitsCode {
                 user_id: user.user_id,
-                mail: code_mail(&stored, &user, &code),
+                mail: code_mail(conn, &stored, &user, &code)?,
             })
         })
         .await?;
@@ -330,7 +330,7 @@ mod tests {
             password_reset::{confirm_reset, send_reset_code},
         },
         test_support::{
-            code_in, insert_user, memory_connection, unreachable_mailer, TempDatabase,
+            code_in, insert_user, memory_connection, stored_text, unreachable_mailer, TempDatabase,
             TEST_SETUP_CODE,
         },
     };
@@ -746,6 +746,33 @@ mod tests {
         }
         assert_eq!(count(&temp, "SELECT COUNT(*) FROM users"), 0);
         assert!(settings_rows(&temp).is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_verification_mail_is_in_the_language_named_at_sign_up() {
+        let temp = TempDatabase::open();
+        let (mailer, sent) = Mailer::capture();
+        let now = SystemTime::now();
+        signed_in(sign_up(&temp, &mailer, "alice", now).await);
+
+        let mut german = request("bob", "bob@example.com");
+        german.locale = Some("de".to_string());
+        assert!(awaits_code(&create(&temp, &mailer, german, now).await));
+
+        let expected = temp
+            .db
+            .setup_new_transaction(|conn| {
+                Ok(stored_text(conn, "de", "email", "verify_email.subject"))
+            })
+            .unwrap();
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].subject, expected);
+        assert_eq!(
+            code_in(&sent[0]).len(),
+            8,
+            "the German mail carries the code"
+        );
     }
 
     #[tokio::test]
