@@ -25,6 +25,9 @@ pub enum DatabaseTypes {
     RecoveryCodes,
     LoginChallenge,
     UserSettings,
+    Locales,
+    TranslationKeys,
+    Translations,
 }
 
 impl DatabaseTypes {
@@ -40,18 +43,23 @@ impl DatabaseTypes {
             DatabaseTypes::RecoveryCodes => "recovery_codes",
             DatabaseTypes::LoginChallenge => "login_challenges",
             DatabaseTypes::UserSettings => "user_settings",
+            DatabaseTypes::Locales => "locales",
+            DatabaseTypes::TranslationKeys => "translation_keys",
+            DatabaseTypes::Translations => "translations",
         }
     }
 
-    /// The column a row is identified by; `None` for the `library_elements` junction,
-    /// whose rows are identified by two columns.
+    /// The column a row is identified by; `None` for the junctions `library_elements` and
+    /// `translations`, whose rows are identified by two columns.
     pub fn get_key_column(&self) -> Option<&str> {
         match self {
             DatabaseTypes::Books
             | DatabaseTypes::Library
             | DatabaseTypes::Series
-            | DatabaseTypes::Users => Some("id"),
-            DatabaseTypes::LibraryElements => None,
+            | DatabaseTypes::Users
+            | DatabaseTypes::TranslationKeys => Some("id"),
+            DatabaseTypes::LibraryElements | DatabaseTypes::Translations => None,
+            DatabaseTypes::Locales => Some("code"),
             DatabaseTypes::Totp | DatabaseTypes::UserSettings => Some("user_id"),
             DatabaseTypes::Session => Some("session_id"),
             DatabaseTypes::RecoveryCodes => Some("recovery_id"),

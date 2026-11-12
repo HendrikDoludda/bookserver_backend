@@ -135,6 +135,37 @@ CREATE TABLE IF NOT EXISTS totp (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS locales (
+    code TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    icon TEXT,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order INTEGER NOT NULL,
+    CHECK (enabled OR NOT is_default)
+);
+
+-- A CHECK sees one row at a time; a unique index over only the default rows allows at most one.
+CREATE UNIQUE INDEX IF NOT EXISTS one_default_locale ON locales (is_default) WHERE is_default;
+
+CREATE TABLE IF NOT EXISTS translation_keys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audience TEXT NOT NULL CHECK (audience IN ('frontend', 'backend')),
+    namespace TEXT NOT NULL,
+    name TEXT NOT NULL,
+    hint TEXT,
+    UNIQUE (namespace, name)
+);
+
+CREATE TABLE IF NOT EXISTS translations (
+    locale_code TEXT NOT NULL,
+    key_id INTEGER NOT NULL,
+    value TEXT NOT NULL,
+    PRIMARY KEY (locale_code, key_id),
+    FOREIGN KEY (locale_code) REFERENCES locales(code) ON DELETE CASCADE,
+    FOREIGN KEY (key_id) REFERENCES translation_keys(id) ON DELETE CASCADE
+);
+
 -- Created by the user's first change; until then, and for a NULL column, the defaults apply.
 CREATE TABLE IF NOT EXISTS user_settings (
     user_id INTEGER PRIMARY KEY,

@@ -59,8 +59,8 @@ pub enum DatabaseError {
     #[error("Failed updating an already existing entry in the database")]
     UpdatingFailure,
 
-    #[error("Tried to delete an item from the library-series table, which is not allowed")]
-    LibrarySeriesException,
+    #[error("Tried to delete by key from a table without a single key column")]
+    NoSingleKeyColumn,
 
     #[error("Entry in database is not found")]
     EntryNotFound,
@@ -104,7 +104,7 @@ impl DatabaseError {
             | DatabaseError::PoolConnectionRetrievalFailure
             | DatabaseError::InsertionFailure
             | DatabaseError::UpdatingFailure
-            | DatabaseError::LibrarySeriesException
+            | DatabaseError::NoSingleKeyColumn
             | DatabaseError::ConnectionExecutableFailure
             | DatabaseError::TaskPreparationFailure
             | DatabaseError::NextRowFailure
@@ -622,7 +622,7 @@ mod tests {
             DatabaseError::PoolConnectionRetrievalFailure.into(),
             DatabaseError::InsertionFailure.into(),
             DatabaseError::UpdatingFailure.into(),
-            DatabaseError::LibrarySeriesException.into(),
+            DatabaseError::NoSingleKeyColumn.into(),
             DatabaseError::ConnectionExecutableFailure.into(),
             DatabaseError::TaskPreparationFailure.into(),
             DatabaseError::NextRowFailure.into(),

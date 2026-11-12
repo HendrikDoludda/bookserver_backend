@@ -338,6 +338,153 @@ mod tests {
         assert_eq!(role(), "admin", "a refused update changes nothing");
     }
 
+    /// Tests use codes from `qaa`–`qtz`, which ISO 639-2 reserves for local use, so they never
+    /// clash with a real language.
+    fn add_language(
+        conn: &Connection,
+        code: &str,
+        is_default: bool,
+        enabled: bool,
+    ) -> rusqlite::Result<usize> {
+        conn.execute(
+            "INSERT INTO locales (code, display_name, is_default, enabled, sort_order) \
+             VALUES (?1, ?1, ?2, ?3, 1)",
+            params![code, is_default, enabled],
+        )
+    }
+
+    fn add_key(
+        conn: &Connection,
+        audience: &str,
+        namespace: &str,
+        name: &str,
+    ) -> rusqlite::Result<i64> {
+        conn.execute(
+            "INSERT INTO translation_keys (audience, namespace, name) VALUES (?1, ?2, ?3)",
+            params![audience, namespace, name],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    fn add_text(conn: &Connection, code: &str, key_id: i64) -> rusqlite::Result<usize> {
+        conn.execute(
+            "INSERT INTO translations (locale_code, key_id, value) VALUES (?1, ?2, 'text')",
+            params![code, key_id],
+        )
+    }
+
+    fn default_language(conn: &Connection) -> Option<String> {
+        conn.query_row("SELECT code FROM locales WHERE is_default", [], |row| {
+            row.get(0)
+        })
+        .optional()
+        .unwrap()
+    }
+
+    #[test]
+    fn at_most_one_language_is_the_default() {
+        let conn = memory_connection();
+        add_language(&conn, "qaa", true, true).unwrap();
+        add_language(&conn, "qab", false, true).unwrap();
+
+        assert!(
+            add_language(&conn, "qac", true, true).is_err(),
+            "a second default is refused"
+        );
+        let second = conn.execute("UPDATE locales SET is_default = TRUE WHERE code = 'qab'", []);
+        assert!(second.is_err(), "making a second language the default is refused");
+        assert_eq!(default_language(&conn).as_deref(), Some("qaa"));
+    }
+
+    #[test]
+    fn the_default_moves_once_the_old_one_is_cleared() {
+        let conn = memory_connection();
+        add_language(&conn, "qaa", true, true).unwrap();
+        add_language(&conn, "qab", false, true).unwrap();
+
+        conn.execute("UPDATE locales SET is_default = FALSE WHERE code = 'qaa'", [])
+            .unwrap();
+        conn.execute("UPDATE locales SET is_default = TRUE WHERE code = 'qab'", [])
+            .unwrap();
+
+        assert_eq!(default_language(&conn).as_deref(), Some("qab"));
+    }
+
+    #[test]
+    fn the_default_language_is_enabled() {
+        let conn = memory_connection();
+        assert!(
+            add_language(&conn, "qaa", true, false).is_err(),
+            "a disabled default is refused"
+        );
+
+        add_language(&conn, "qaa", true, true).unwrap();
+        let disabled = conn.execute("UPDATE locales SET enabled = FALSE WHERE code = 'qaa'", []);
+        assert!(disabled.is_err(), "disabling the default is refused");
+    }
+
+    #[test]
+    fn a_key_is_frontend_or_backend_and_its_name_is_unique_in_its_namespace() {
+        let conn = memory_connection();
+        assert!(add_key(&conn, "admin", "test", "title").is_err());
+
+        add_key(&conn, "frontend", "test", "title").unwrap();
+        assert!(add_key(&conn, "frontend", "test", "title").is_err());
+        assert!(
+            add_key(&conn, "backend", "test", "title").is_err(),
+            "the other side doesn't make it another key"
+        );
+        assert!(
+            add_key(&conn, "frontend", "other", "title").is_ok(),
+            "the same name in another namespace is another key"
+        );
+    }
+
+    #[test]
+    fn a_text_belongs_to_an_existing_language_and_key_and_exists_once() {
+        let conn = memory_connection();
+        add_language(&conn, "qaa", false, true).unwrap();
+        let key = add_key(&conn, "frontend", "test", "title").unwrap();
+
+        assert!(add_text(&conn, "qzz", key).is_err(), "an unknown language");
+        assert!(add_text(&conn, "qaa", key + 1).is_err(), "an unknown key");
+        add_text(&conn, "qaa", key).unwrap();
+        assert!(
+            add_text(&conn, "qaa", key).is_err(),
+            "one text per language and key"
+        );
+    }
+
+    #[test]
+    fn deleting_a_key_or_a_language_deletes_only_its_texts() {
+        let conn = memory_connection();
+        let languages = ["qaa", "qab"];
+        for code in languages {
+            add_language(&conn, code, false, true).unwrap();
+        }
+        let title = add_key(&conn, "frontend", "test", "title").unwrap();
+        let body = add_key(&conn, "frontend", "test", "body").unwrap();
+        for code in languages {
+            for key in [title, body] {
+                add_text(&conn, code, key).unwrap();
+            }
+        }
+
+        conn.execute("DELETE FROM translation_keys WHERE id = ?1", [title])
+            .unwrap();
+        conn.execute("DELETE FROM locales WHERE code = 'qab'", [])
+            .unwrap();
+
+        let left: Vec<(String, i64)> = conn
+            .prepare("SELECT locale_code, key_id FROM translations")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(left, [("qaa".to_string(), body)]);
+    }
+
     #[test]
     fn running_the_migrations_again_changes_nothing() {
         let mut conn = memory_connection();

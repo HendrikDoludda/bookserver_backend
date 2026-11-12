@@ -200,10 +200,9 @@ impl Database {
         db_type: DatabaseTypes,
         id: i64,
     ) -> Result<usize, DatabaseError> {
-        // The junction table has no single key; use `remove_entry_from_library_elements`.
         let key = db_type
             .get_key_column()
-            .ok_or(DatabaseError::LibrarySeriesException)?;
+            .ok_or(DatabaseError::NoSingleKeyColumn)?;
         let query = format!(
             "DELETE FROM {} WHERE {} = ?1",
             db_type.get_table_name(),
@@ -737,10 +736,14 @@ mod tests {
     }
 
     #[test]
-    fn remove_entry_refuses_the_junction_table() {
+    fn remove_entry_refuses_the_junction_tables() {
         let conn = memory_connection();
-        let result =
-            Database::remove_entry_with_connection(&conn, DatabaseTypes::LibraryElements, 1);
-        assert!(matches!(result, Err(DatabaseError::LibrarySeriesException)));
+        for junction in [DatabaseTypes::LibraryElements, DatabaseTypes::Translations] {
+            let result = Database::remove_entry_with_connection(&conn, junction.clone(), 1);
+            assert!(
+                matches!(result, Err(DatabaseError::NoSingleKeyColumn)),
+                "{junction:?}"
+            );
+        }
     }
 }
