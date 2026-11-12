@@ -1174,6 +1174,122 @@ mod tests {
         assert_eq!(body, serde_json::json!({ "error": "invalid_request" }));
     }
 
+    fn catalog_request(uri: &str, if_none_match: Option<&str>) -> Request<Body> {
+        let mut request = Request::get(uri);
+        if let Some(tags) = if_none_match {
+            request = request.header("if-none-match", tags);
+        }
+        request.body(Body::empty()).unwrap()
+    }
+
+    async fn etag_of_answer(app: &Router, uri: &str) -> String {
+        let (status, headers, _) = call(app, catalog_request(uri, None)).await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+        headers["etag"].to_str().unwrap().to_string()
+    }
+
+    /// Several keys in two namespaces, so a map that iterated in a random order would show up as
+    /// a changing ETag; `test.untranslated` has no German text.
+    fn add_catalog_fixture(temp: &TempDatabase) {
+        temp.db
+            .setup_new_transaction(|conn| {
+                for name in ["title", "subtitle", "body", "footer"] {
+                    let german = format!("{name} auf Deutsch");
+                    insert_texts(
+                        conn,
+                        "frontend",
+                        "test",
+                        name,
+                        &[("en", name), ("de", german.as_str())],
+                    );
+                }
+                insert_texts(
+                    conn,
+                    "frontend",
+                    "test",
+                    "untranslated",
+                    &[("en", "Only English")],
+                );
+                insert_texts(conn, "frontend", "other", "a", &[("en", "A")]);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_catalog_answers_304_to_an_app_that_has_its_etag() {
+        let temp = TempDatabase::open();
+        add_catalog_fixture(&temp);
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let uri = "/api/v1/locales/de/translations?sections=test,other";
+
+        let (status, headers, body) = call(&app, catalog_request(uri, None)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers["content-type"], "application/json");
+        assert_eq!(headers["cache-control"], "no-cache");
+        assert_eq!(json(&body)["test"]["title"], "title auf Deutsch");
+        let etag = headers["etag"].to_str().unwrap().to_string();
+        assert_eq!(
+            etag_of_answer(&app, uri).await,
+            etag,
+            "the same texts give the same ETag"
+        );
+
+        let weak = format!("W/{etag}");
+        let listed = format!("\"stale\", {etag}");
+        for tags in [etag.as_str(), weak.as_str(), listed.as_str(), "*"] {
+            let (status, headers, body) = call(&app, catalog_request(uri, Some(tags))).await;
+            assert_eq!(status, StatusCode::NOT_MODIFIED, "{tags}");
+            assert_eq!(headers["etag"], etag.as_str(), "{tags}");
+            assert_eq!(headers["cache-control"], "no-cache", "{tags}");
+            assert!(body.is_empty(), "{tags}");
+        }
+
+        let (status, _, body) = call(&app, catalog_request(uri, Some("\"stale\""))).await;
+        assert_eq!(status, StatusCode::OK, "another tag gets the texts");
+        assert_eq!(json(&body)["other"]["a"], "A");
+    }
+
+    #[tokio::test]
+    async fn the_etag_changes_exactly_when_the_answer_does() {
+        let temp = TempDatabase::open();
+        add_catalog_fixture(&temp);
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let change = |sql: &str| {
+            temp.db
+                .setup_new_transaction(|conn| {
+                    conn.execute(sql, []).unwrap();
+                    Ok(())
+                })
+                .unwrap();
+        };
+        let german = "/api/v1/locales/de/translations?sections=test";
+
+        let first = etag_of_answer(&app, german).await;
+        change("UPDATE translations SET value = 'Changed' WHERE value = 'Only English'");
+        let after_english_edit = etag_of_answer(&app, german).await;
+        assert_ne!(
+            after_english_edit, first,
+            "German shows this English text as its fallback"
+        );
+
+        change("UPDATE translations SET value = 'Neu' WHERE value = 'title auf Deutsch'");
+        assert_ne!(etag_of_answer(&app, german).await, after_english_edit);
+        change("UPDATE translations SET value = 'title auf Deutsch' WHERE value = 'Neu'");
+        assert_eq!(
+            etag_of_answer(&app, german).await,
+            after_english_edit,
+            "the same texts again give the same ETag again"
+        );
+
+        let both = "/api/v1/locales/de/translations?sections=test,other";
+        assert_ne!(
+            etag_of_answer(&app, both).await,
+            etag_of_answer(&app, german).await,
+            "another selection is another answer"
+        );
+    }
+
     #[tokio::test]
     async fn every_route_but_health_and_auth_needs_a_session() {
         let temp = TempDatabase::open();

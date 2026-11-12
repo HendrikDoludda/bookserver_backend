@@ -19,5 +19,6 @@ pub struct TranslationsQuery {
     pub sections: Option<String>,
 }
 
-/// `GET /api/v1/locales/{code}/translations`: by namespace, then by name, the text.
+/// `GET /api/v1/locales/{code}/translations`: by namespace, then by name, the text. `BTreeMap`s
+/// are sorted, so the same texts always serialize to the same bytes, and so to the same ETag.
 pub type Translations = BTreeMap<String, BTreeMap<String, String>>;

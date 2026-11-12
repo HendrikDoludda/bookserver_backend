@@ -18,7 +18,7 @@ series names are user data.
 - [x] 2 h · `GET /api/v1/locales/{code}/translations`: the `frontend` strings grouped by namespace, without a session; an unknown or disabled language answers 404 `not_found` [BE]
 - [x] 1 h · Missing values fall back to English in the same query (`translation_keys LEFT JOIN translations` + `COALESCE`), so no client ever gets an empty string [BE]
 - [x] 1 h · `?sections=settings,library` returns only those namespaces, filtered in Rust after the one fixed query — no names in the SQL [BE]
-- [ ] 2 h · The ETag is the BLAKE3 hash of the answer, sent with `Cache-Control: no-cache`; a matching `If-None-Match` answers `304 Not Modified` [BE]
+- [x] 2 h · The ETag is the BLAKE3 hash of the answer, sent with `Cache-Control: no-cache`; a matching `If-None-Match` answers `304 Not Modified` [BE]
 - [ ] 1 h · `PUT /api/v1/account/settings` and sign-up accept only an enabled locale (400 `invalid_locale`), in place of [31](31-per-user-settings.md)'s shape check; `user_settings.locale` becomes a foreign key to `locales`, `ON DELETE SET NULL` [DB] [BE]
 - [ ] 1 h · Sign-up takes an optional `locale` and stores it with the new account, so its first mail is already in that language [BE]
 - [ ] 1 h · Interpolation for text the backend renders, such as emails — a `{name}` replace in one pass, so an inserted value is never replaced again; no ICU needed [BE]

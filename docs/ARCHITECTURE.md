@@ -26,6 +26,7 @@
 - `user_id` always comes from the session (`AuthSession`), never from the request body or path.
 - Every route needs a session except `/health`, the public `/api/v1/auth/…` routes and the catalog's reads (`GET /api/v1/locales`, `GET /api/v1/locales/{code}/translations`); admin actions need `AdminSession`. The extractor is a handler argument, so the signature shows who may call it — `not_implemented` placeholders included.
 - Session, refresh and challenge tokens travel as `Authorization: Bearer <token>`; every failed token check answers the same 401, and a response that carries tokens sends `Cache-Control: no-store`.
+- A JSON answer that apps keep, like the translation catalog, carries an `ETag` — the BLAKE3 hash of its body — and `Cache-Control: no-cache`; an `If-None-Match` naming it answers 304 without the body.
 - Tokens are stored only as `hash_token` (BLAKE3) hashes and looked up by hash; passwords and emailed codes, which people choose or type, are Argon2-hashed; recovery codes, 80 random bits, are BLAKE3-hashed like tokens.
 - TOTP secrets are stored encrypted with `TotpCipher` (the user id as associated data), not hashed — checking a code needs the secret itself.
 - An account endpoint re-checks the password with `check_current_password` (`login.rs`): login's throttle, and 400 `incorrect_password` for a wrong one — never login's 401, which the app reads as an ended session.

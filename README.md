@@ -165,7 +165,7 @@ Every endpoint except `/health`, `/api/v1/auth/…` and the two `/api/v1/locales
 | `GET` | `/api/v1/users` | Admin only: every account — username, email, verified, role, created and last login |
 | `PATCH` | `/api/v1/users/{id}` | Admin only: `{"role": "admin" \| "member"}` and/or `{"email_verified": true}`; answers the changed account, `409 last_admin` for demoting the last admin |
 | `GET` | `/api/v1/locales` | No session needed: the languages the server offers, in their order — `code`, `display_name` (in the language itself), `icon`, `is_default` |
-| `GET` | `/api/v1/locales/{code}/translations` | No session needed: a language's texts for the apps, `{"<namespace>": {"<name>": "<text>"}}`; a text the language lacks comes in English; `?sections=errors,settings` limits the namespaces; `404 not_found` for a language the server doesn't offer |
+| `GET` | `/api/v1/locales/{code}/translations` | No session needed: a language's texts for the apps, `{"<namespace>": {"<name>": "<text>"}}`; a text the language lacks comes in English; `?sections=errors,settings` limits the namespaces; `404 not_found` for a language the server doesn't offer. Sent with an `ETag`; `If-None-Match` with it answers `304` without the texts |
 
 Errors answer with JSON `{"error": "<key>"}` and a matching status code.
 
