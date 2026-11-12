@@ -170,5 +170,6 @@ CREATE TABLE IF NOT EXISTS translations (
 CREATE TABLE IF NOT EXISTS user_settings (
     user_id INTEGER PRIMARY KEY,
     locale TEXT,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (locale) REFERENCES locales(code) ON DELETE SET NULL
 );

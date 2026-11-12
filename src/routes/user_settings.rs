@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::{
     data_models::settings_model::Settings,
-    database_related_scripts::{extract::Extract, translation_seed::is_language_code},
+    database_related_scripts::{db_translations, extract::Extract},
     db::Database,
     error_types::{AppErrors, DatabaseError, SettingsError},
     models::{UserSettings, UserSettingsDatabaseColumns},
@@ -24,16 +24,14 @@ pub async fn replace_settings(
     user_id: i64,
     settings: Settings,
 ) -> Result<Settings, AppErrors> {
-    if let Some(locale) = &settings.locale {
-        if !is_language_code(locale) {
-            return Err(SettingsError::InvalidLocale.into());
-        }
-    }
     let row = UserSettings {
         user_id,
         locale: settings.locale,
     };
     db.transact(move |conn| {
+        if let Some(locale) = &row.locale {
+            check_locale(conn, locale)?;
+        }
         // Inside the write lock, so of two first changes at once the second sees the first one's
         // row: an update, never the duplicate key's 500.
         if find(conn, user_id)?.is_some() {
@@ -49,6 +47,15 @@ pub async fn replace_settings(
         Ok(Settings::from(row))
     })
     .await
+}
+
+/// 400 `invalid_locale` unless the server offers the language `locale`.
+pub(crate) fn check_locale(conn: &Connection, locale: &str) -> Result<(), AppErrors> {
+    if db_translations::is_enabled(conn, locale)? {
+        Ok(())
+    } else {
+        Err(SettingsError::InvalidLocale.into())
+    }
 }
 
 /// The user's row; `None` while they have changed nothing.
@@ -120,8 +127,8 @@ mod tests {
         );
         assert_eq!(locale_of(&temp, alice).await.as_deref(), Some("de"));
 
-        change(&temp, alice, Some("pt-BR")).await.unwrap();
-        assert_eq!(locale_of(&temp, alice).await.as_deref(), Some("pt-BR"));
+        change(&temp, alice, Some("en")).await.unwrap();
+        assert_eq!(locale_of(&temp, alice).await.as_deref(), Some("en"));
 
         let reset = change(&temp, alice, None).await.unwrap();
         assert_eq!(reset.locale, None);
@@ -133,23 +140,39 @@ mod tests {
         );
     }
 
+    fn refused(result: Result<Settings, AppErrors>) -> bool {
+        matches!(
+            result,
+            Err(AppErrors::Settings(SettingsError::InvalidLocale))
+        )
+    }
+
     #[tokio::test]
-    async fn a_bad_locale_is_refused_and_changes_nothing() {
+    async fn a_language_the_server_doesnt_offer_is_refused_and_changes_nothing() {
         let temp = TempDatabase::open();
         let alice = add_user(&temp, "alice");
-        change(&temp, alice, Some("de")).await.unwrap();
+        change(&temp, alice, Some("en")).await.unwrap();
 
-        for bad in ["german", "", "DE", "de_AT"] {
-            let result = change(&temp, alice, Some(bad)).await;
-            assert!(
-                matches!(
-                    result,
-                    Err(AppErrors::Settings(SettingsError::InvalidLocale))
-                ),
-                "{bad:?}"
-            );
+        for bad in ["fr", "pt-BR", "german", "", "DE", "de_AT"] {
+            assert!(refused(change(&temp, alice, Some(bad)).await), "{bad:?}");
         }
-        assert_eq!(locale_of(&temp, alice).await.as_deref(), Some("de"));
+        assert_eq!(locale_of(&temp, alice).await.as_deref(), Some("en"));
+    }
+
+    #[tokio::test]
+    async fn a_disabled_language_is_refused() {
+        let temp = TempDatabase::open();
+        let alice = add_user(&temp, "alice");
+        temp.db
+            .setup_new_transaction(|conn| {
+                conn.execute("UPDATE locales SET enabled = FALSE WHERE code = 'de'", [])
+                    .unwrap();
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(refused(change(&temp, alice, Some("de")).await));
+        assert_eq!(locale_of(&temp, alice).await, None);
     }
 
     #[tokio::test]
@@ -161,9 +184,9 @@ mod tests {
         change(&temp, alice, Some("de")).await.unwrap();
         assert_eq!(locale_of(&temp, bob).await, None);
 
-        change(&temp, bob, Some("fr")).await.unwrap();
+        change(&temp, bob, Some("en")).await.unwrap();
         assert_eq!(locale_of(&temp, alice).await.as_deref(), Some("de"));
-        assert_eq!(locale_of(&temp, bob).await.as_deref(), Some("fr"));
+        assert_eq!(locale_of(&temp, bob).await.as_deref(), Some("en"));
     }
 
     #[tokio::test]
@@ -173,12 +196,12 @@ mod tests {
 
         let (a, b) = tokio::join!(
             change(&temp, alice, Some("de")),
-            change(&temp, alice, Some("fr")),
+            change(&temp, alice, Some("en")),
         );
 
         assert!(a.is_ok() && b.is_ok(), "never the duplicate key's 500");
         assert_eq!(rows(&temp), 1);
         let stored = locale_of(&temp, alice).await;
-        assert!(matches!(stored.as_deref(), Some("de" | "fr")), "{stored:?}");
+        assert!(matches!(stored.as_deref(), Some("de" | "en")), "{stored:?}");
     }
 }

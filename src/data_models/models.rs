@@ -578,7 +578,7 @@ impl AsRef<str> for TOTPDatabaseColumns {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserSettings {
     pub user_id: i64,
-    /// A language tag such as `de` or `pt-BR`.
+    /// The code of one of the languages in `locales`, such as `de`.
     pub locale: Option<String>,
 }
 

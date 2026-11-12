@@ -498,6 +498,41 @@ mod tests {
     }
 
     #[test]
+    fn a_setting_names_an_existing_language_and_loses_it_with_the_language() {
+        let conn = migrated_connection();
+        let alice = insert_user(&conn, "alice");
+        let bob = insert_user(&conn, "bob");
+        add_language(&conn, "qaa", false, true).unwrap();
+        add_language(&conn, "qab", false, true).unwrap();
+        let set = |user_id: i64, code: &str| {
+            conn.execute(
+                "INSERT INTO user_settings (user_id, locale) VALUES (?1, ?2)",
+                params![user_id, code],
+            )
+        };
+
+        assert!(set(alice, "qzz").is_err(), "a language that doesn't exist");
+        set(alice, "qaa").unwrap();
+        set(bob, "qab").unwrap();
+
+        conn.execute("DELETE FROM locales WHERE code = 'qaa'", [])
+            .unwrap();
+
+        let settings: Vec<(i64, Option<String>)> = conn
+            .prepare("SELECT user_id, locale FROM user_settings ORDER BY user_id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            settings,
+            [(alice, None), (bob, Some("qab".to_string()))],
+            "alice keeps her row, now on the default; bob keeps his language"
+        );
+    }
+
+    #[test]
     fn running_the_migrations_again_changes_nothing() {
         let mut conn = memory_connection();
         run(&mut conn).unwrap();

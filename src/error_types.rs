@@ -363,7 +363,7 @@ impl EmailErrors {
 
 #[derive(Error, Debug)]
 pub enum SettingsError {
-    #[error("The locale is not a language tag such as de or pt-BR")]
+    #[error("The locale is not a language the server offers")]
     InvalidLocale,
 }
 

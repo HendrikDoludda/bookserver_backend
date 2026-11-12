@@ -16,7 +16,10 @@ use crate::{
     },
     db::Database,
     error_types::{AppErrors, AuthenticationError, DatabaseError},
-    models::{CodePurpose, Comparison, QuerySeparator, Role, UserDatabaseColumns, UserMetadata},
+    models::{
+        CodePurpose, Comparison, QuerySeparator, Role, UserDatabaseColumns, UserMetadata,
+        UserSettings,
+    },
     routes::{
         auth::{check_email, check_new_password, check_username, hash_secret},
         email_codes::{
@@ -25,6 +28,7 @@ use crate::{
         },
         email_helper::{EmailInformation, Mailer},
         login::{check_password, device_id_or_new, start_login, CheckedPassword},
+        user_settings::check_locale,
     },
 };
 
@@ -91,6 +95,7 @@ pub async fn create_account(
         device_id,
         platform,
         setup_code: typed_setup_code,
+        locale,
     } = request;
     check_email(&email)?;
     check_username(&username)?;
@@ -110,6 +115,9 @@ pub async fn create_account(
 
     let created = Arc::clone(&db)
         .transact(move |conn| {
+            if let Some(locale) = &locale {
+                check_locale(conn, locale)?;
+            }
             // First, so an address or a name held by an account nobody verified is free again.
             delete_stale_unverified(conn, now)?;
             check_name_and_email_are_free(conn, &email, &username)?;
@@ -131,6 +139,13 @@ pub async fn create_account(
                 last_login: None,
             };
             user.user_id = Database::insert_with_connection(conn, &user)?;
+            if locale.is_some() {
+                let settings = UserSettings {
+                    user_id: user.user_id,
+                    locale,
+                };
+                Database::insert_with_connection(conn, &settings)?;
+            }
 
             let Some((code, code_hash)) = code else {
                 let device = DeviceInformation {
@@ -307,6 +322,7 @@ mod tests {
         data_models::authentication_model::{
             ConfirmPasswordResetRequest, LoginRequest, SessionTokens,
         },
+        error_types::SettingsError,
         routes::{
             auth::hash_token,
             email_codes::CODE_LIFETIME,
@@ -336,6 +352,7 @@ mod tests {
             device_id: None,
             platform: "ios".to_string(),
             setup_code: Some(TEST_SETUP_CODE.to_string()),
+            locale: None,
         }
     }
 
@@ -672,6 +689,72 @@ mod tests {
             assert_eq!(failure(&result), expected);
         }
         assert_eq!(count(&temp, "SELECT COUNT(*) FROM users"), 0);
+    }
+
+    fn settings_rows(temp: &TempDatabase) -> Vec<(String, Option<String>)> {
+        temp.db
+            .setup_new_transaction(|conn| {
+                Ok(conn
+                    .prepare(
+                        "SELECT users.username, user_settings.locale FROM user_settings \
+                         JOIN users ON users.id = user_settings.user_id ORDER BY users.username",
+                    )
+                    .unwrap()
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .unwrap()
+                    .collect::<Result<_, _>>()
+                    .unwrap())
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_sign_up_stores_the_language_it_names_from_the_first_account_on() {
+        let temp = TempDatabase::open();
+        let now = SystemTime::now();
+        for (name, locale) in [("alice", "de"), ("bob", "en")] {
+            let mut request = request(name, &format!("{name}@example.com"));
+            request.locale = Some(locale.to_string());
+            signed_in(create(&temp, &Mailer::Disabled, request, now).await);
+        }
+
+        assert_eq!(
+            settings_rows(&temp),
+            [
+                ("alice".to_string(), Some("de".to_string())),
+                ("bob".to_string(), Some("en".to_string())),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_sign_up_naming_a_language_the_server_doesnt_offer_creates_nothing() {
+        let temp = TempDatabase::open();
+        for locale in ["fr", "DE", ""] {
+            let mut request = request("alice", "alice@example.com");
+            request.locale = Some(locale.to_string());
+
+            let result = create(&temp, &Mailer::Disabled, request, SystemTime::now()).await;
+
+            assert!(
+                matches!(
+                    result,
+                    Err(AppErrors::Settings(SettingsError::InvalidLocale))
+                ),
+                "{locale:?}"
+            );
+        }
+        assert_eq!(count(&temp, "SELECT COUNT(*) FROM users"), 0);
+        assert!(settings_rows(&temp).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_sign_up_without_a_language_leaves_it_unchosen() {
+        let temp = TempDatabase::open();
+
+        signed_in(sign_up(&temp, &Mailer::Disabled, "alice", SystemTime::now()).await);
+
+        assert!(settings_rows(&temp).is_empty());
     }
 
     #[tokio::test]

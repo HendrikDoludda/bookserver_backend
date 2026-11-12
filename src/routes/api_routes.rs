@@ -887,6 +887,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_sign_up_over_http_stores_its_language_and_refuses_one_not_offered() {
+        let temp = TempDatabase::open();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+        let mut body = sign_up_body("alice", "alice@example.com");
+
+        body["locale"] = serde_json::json!("fr");
+        let (status, _, answer) =
+            call(&app, post_json("/api/v1/auth/register", body.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            json(&answer),
+            serde_json::json!({ "error": "invalid_locale" })
+        );
+
+        body["locale"] = serde_json::json!("de");
+        let (status, _, answer) = call(&app, post_json("/api/v1/auth/register", body)).await;
+        assert_eq!(status, StatusCode::OK);
+        let token = json(&answer)["session_token"].as_str().unwrap().to_string();
+        let (status, _, settings) = call(
+            &app,
+            authorized("GET", "/api/v1/account/settings", &token, None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json(&settings), serde_json::json!({ "locale": "de" }));
+    }
+
+    #[tokio::test]
     async fn signing_up_and_verifying_over_http() {
         let temp = TempDatabase::open();
         let (mailer, sent) = Mailer::capture();
@@ -1914,11 +1942,11 @@ mod tests {
             "the defaults"
         );
 
-        let (status, _, body) = call(&app, replace(serde_json::json!({ "locale": "pt-BR" }))).await;
+        let (status, _, body) = call(&app, replace(serde_json::json!({ "locale": "de" }))).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(json(&body), serde_json::json!({ "locale": "pt-BR" }));
+        assert_eq!(json(&body), serde_json::json!({ "locale": "de" }));
         let (_, _, body) = call(&app, read_as(&alice)).await;
-        assert_eq!(json(&body), serde_json::json!({ "locale": "pt-BR" }));
+        assert_eq!(json(&body), serde_json::json!({ "locale": "de" }));
         let (_, _, body) = call(&app, read_as(&bob)).await;
         assert_eq!(
             json(&body),
@@ -1927,6 +1955,7 @@ mod tests {
         );
 
         for (settings, key) in [
+            (serde_json::json!({ "locale": "pt-BR" }), "invalid_locale"),
             (serde_json::json!({ "locale": "german" }), "invalid_locale"),
             (serde_json::json!({ "locale": "" }), "invalid_locale"),
             (serde_json::json!({ "locale": 49 }), "invalid_request"),
@@ -1942,7 +1971,7 @@ mod tests {
         let (_, _, body) = call(&app, read_as(&alice)).await;
         assert_eq!(
             json(&body),
-            serde_json::json!({ "locale": "pt-BR" }),
+            serde_json::json!({ "locale": "de" }),
             "unchanged"
         );
 

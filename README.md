@@ -141,7 +141,7 @@ Every endpoint except `/health`, `/api/v1/auth/…` and the two `/api/v1/locales
 | `GET` | `/api/v1/books/{id}/file` | Stream the book file (supports `Range`) |
 | `POST` | `/api/v1/scan` | Scan `BOOK_DIRS` and catalog new files |
 | `DELETE` | `/api/v1/libraries/{id}` | Delete a library |
-| `POST` | `/api/v1/auth/register` | Sign up; the first account sends the setup code from the server log and becomes admin. Answers the login tokens, or `202` when the account must first confirm its email — within 48 hours, or a later sign-up deletes it |
+| `POST` | `/api/v1/auth/register` | Sign up; the first account sends the setup code from the server log and becomes admin. An optional `locale` from `GET /api/v1/locales` becomes the account's language setting (`400 invalid_locale` for one the server doesn't offer). Answers the login tokens, or `202` when the account must first confirm its email — within 48 hours, or a later sign-up deletes it |
 | `POST` | `/api/v1/auth/verify_email` | Confirm the email with the mailed code and the password; answers like login |
 | `POST` | `/api/v1/auth/verify_email/resend` | Mail a new verification code; always `202` |
 | `POST` | `/api/v1/auth/login` | Log in; answers the session and refresh tokens, or a challenge when two-factor auth is on |
@@ -156,7 +156,7 @@ Every endpoint except `/health`, `/api/v1/auth/…` and the two `/api/v1/locales
 | `PUT` | `/api/v1/account/email` | Change the email with `{"new_email", "password"}`: `202` and a code mailed to the new address, or `204` at once when email is off; `409 email_taken` for an address another account has |
 | `POST` | `/api/v1/account/email/confirm` | Confirm the change with the mailed code; `204`, and codes mailed to the old address stop working |
 | `GET` | `/api/v1/account/settings` | The user's settings, `{"locale": "de" \| null}`; `null` is not chosen |
-| `PUT` | `/api/v1/account/settings` | Replace them with the same shape and answer what is stored; a locale such as `de` or `pt-BR`, else `400 invalid_locale` |
+| `PUT` | `/api/v1/account/settings` | Replace them with the same shape and answer what is stored; a locale the server offers (`GET /api/v1/locales`), else `400 invalid_locale` |
 | `GET` | `/api/v1/account/totp` | Whether two-factor auth is on, and how many recovery codes are left |
 | `POST` | `/api/v1/account/totp` | Start setting up two-factor auth; answers the authenticator secret and its `otpauth://` URL |
 | `POST` | `/api/v1/account/totp/confirm` | Confirm the setup with a code and the password; answers 10 recovery codes, shown once, and ends the other sessions |

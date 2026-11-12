@@ -18,6 +18,9 @@ pub struct UserCreationRequest {
     /// The code the server logs at start while no account exists; only the first sign-up
     /// needs it.
     pub setup_code: Option<String>,
+    /// One of the languages from `GET /api/v1/locales`, stored as the account's language
+    /// setting; absent leaves it unchosen.
+    pub locale: Option<String>,
 }
 
 /// `POST /api/v1/auth/verify_email`: a login plus the emailed code.

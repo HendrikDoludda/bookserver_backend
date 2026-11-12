@@ -33,6 +33,7 @@
 - A permission check is an Axum extractor composed on `AuthSession` (as `AdminSession` is), not an `if` inside handlers.
 - Auth answers never reveal whether an account exists: an unknown user and a wrong password get the same response, and so do password-reset and verification-resend requests for an unknown address. The exceptions answer 409 for a taken one: sign-up for an email or username, the username change for a username, and the email change for an email — sign-up reveals it anyway.
 - Every stored email address and username has passed `check_email` / `check_username` (`auth.rs`).
+- Every stored language setting has passed `check_locale` (`user_settings.rs`) — a language the server offers — in the transaction that stores it.
 - Never return or `Debug`-log a struct that carries secrets — `UserMetadata`, `Sessions`, `TOTP` and `RecoveryCodes` derive `Serialize` / `Debug` over the password hash, the token hashes or the TOTP secret; build a response struct. Request bodies that carry a password or a code, `EmailConfig` (the SMTP password) and `EmailInformation` (a body carries codes) don't derive `Debug` at all.
 - List endpoints return `WithId<T>`: the row id plus the metadata, flattened in JSON.
 

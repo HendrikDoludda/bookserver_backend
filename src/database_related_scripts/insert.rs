@@ -736,7 +736,7 @@ mod tests {
         let bob = insert_user(&conn, "bob");
         let chosen = UserSettings {
             user_id: alice,
-            locale: Some("pt-BR".to_string()),
+            locale: Some("en".to_string()),
         };
         let not_chosen = UserSettings {
             user_id: bob,
