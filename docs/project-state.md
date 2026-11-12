@@ -7,6 +7,14 @@ and the auth routes needs a logged-in user:
 - **Streaming** a book file with HTTP range requests (`GET /api/v1/books/{id}/file`).
 - **Browsing**: the libraries (`GET /api/v1/libraries`), a library's series (`GET /api/v1/libraries/{id}/series`), a series' books (`GET /api/v1/series/{id}/books`) and one book's metadata (`GET /api/v1/books/{id}`).
 - **Deleting a library** (`DELETE /api/v1/libraries/{id}`, admin only) — its series and books stay.
+- **Sign-up** with email verification (`POST /api/v1/auth/register`, `/auth/verify_email`, `/auth/verify_email/resend`): the first account needs the setup code from the server's start log and becomes the admin; without email set up, an address counts as verified at once; an account left unverified for 48 hours frees its name and address for the next sign-up.
+- **Login and sessions** with username or email (`POST /api/v1/auth/login`, `/auth/refresh`, `/auth/logout`): a 15-minute session token and a rotating 30-day refresh token; repeated wrong passwords are throttled.
+- **Two-factor auth** with an authenticator app (`/api/v1/account/totp…`, `/auth/login/totp`, `/auth/login/recovery_code`): ten single-use recovery codes that can be renewed, and a lock on wrong codes.
+- **Password reset** by emailed code (`POST /api/v1/auth/password_reset`, `/auth/password_reset/confirm`): it also confirms the email address and ends every session.
+- **Account changes** (`/api/v1/account/password`, `/account/username`, `/account/email`, `/account/email/confirm`): the password (the other sessions end), the username, and the email — confirmed by a code sent to the new address, or at once without email.
+- **Language setting** per user (`GET` and `PUT /api/v1/account/settings`), stored for the translations that come next.
+- **User management** (`GET /api/v1/users`, `PATCH /api/v1/users/{id}`, admin only): every account, its role, and marking an email verified; the last admin stays an admin.
+- **HTTPS** through `tailscale serve` ([tailscale.md](run-deploy/tailscale.md)), with `BIND_ADDRESS` and `PORT` choosing where the server listens.
 - **Health check** (`GET /health`).
 
-Next milestone: Tier 1 — the accounts, sessions, permissions and HTTPS the app needs before it logs in ([checklist](build-checklist.md)).
+Next milestone: the translation catalog ([13](features/13-internationalization.md)), then the Flutter app — see the [checklist](build-checklist.md).
