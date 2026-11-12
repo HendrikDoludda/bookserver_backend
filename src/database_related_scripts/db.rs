@@ -12,7 +12,7 @@ use crate::data_models::models::{
 };
 use crate::database_related_scripts::{
     db_delete::Delete, db_search::Search, db_update::Update, extract::Extract, insert::Insert,
-    migrations,
+    migrations, translation_seed,
 };
 use crate::error_types::{AppErrors, DatabaseError};
 
@@ -87,7 +87,8 @@ impl Database {
         Self::open(Path::new("./data/databases/app_data.sqlite"))
     }
 
-    /// Opens (or creates) the database at `path` and applies any pending migrations.
+    /// Opens (or creates) the database at `path`, applies any pending migrations and syncs the
+    /// shipped translations.
     pub fn open(path: &Path) -> Result<Self, DatabaseError> {
         let manager = SqliteConnectionManager::file(path).with_init(|conn| configure(conn));
 
@@ -99,6 +100,7 @@ impl Database {
             ))?;
 
             migrations::run(&mut conn)?;
+            translation_seed::run(&mut conn)?;
         }
 
         let pool = Pool::builder()

@@ -8,13 +8,14 @@
 - `src/routes/api_routes.rs` — the route table (`set_up_routes`) and `start_server`.
 - `src/routes/api_caller/` — the handlers, one file per area (`authentication.rs`, `account.rs`, `settings.rs`, `totp.rs`, `library.rs`, `users.rs`); `extractors.rs` holds the request extractors — the session ones (`AuthSession`, `AdminSession`, `AuthTOTPLoginSession`, `AuthRefreshSession`) and `JsonBody` / `PathParams`, and `helpers.rs` the shared response builders: `ping_server` (the liveness check), `not_implemented` (every route without a handler yet) and the router's fallbacks `not_found` / `method_not_allowed`.
 - `src/routes/auth.rs` — account, password and session building blocks, including the checks a new username, email or password passes; `login.rs` — login, refresh and logout; `registration.rs` — sign-up and email verification; `password_reset.rs` — the reset flow; `account_management.rs` — changes users make to their own account; `email_codes.rs` — the emailed codes of sign-up, reset and the email change: making them, mailing them within the limits, checking them; `totp_management.rs` — TOTP two-factor and recovery codes; `totp_cipher.rs` — `TotpCipher`, which encrypts TOTP secrets at rest; `email_helper.rs` — `Mailer`, the one sender every email goes through; `user_management.rs` — an admin's view of the accounts: listing them, changing a role, marking an email verified; `user_settings.rs` — a user's own settings: reading them, and replacing them once each value passes its check.
-- `src/database_related_scripts/` — `db.rs` (`Database`: the r2d2 pool and every DB operation), one file per operation trait, `db_email_codes.rs` / `db_login_challenges.rs` / `db_login_throttle.rs` (one table each), `db_users.rs` (the user queries the traits can't express, and how a `Role` is stored), `migrations.rs`.
+- `src/database_related_scripts/` — `db.rs` (`Database`: the r2d2 pool and every DB operation), one file per operation trait, `db_email_codes.rs` / `db_login_challenges.rs` / `db_login_throttle.rs` (one table each), `db_users.rs` (the user queries the traits can't express, and how a `Role` is stored), `db_translations.rs` (the translation catalog's three tables, and how an `Audience` is stored), `migrations.rs`, `translation_seed.rs` (checks the shipped translations and syncs them into the catalog at every start).
 - `src/data_models/` — `models.rs` (domain structs, `*DatabaseColumns` enums, `WithId<T>`) and the request/response bodies.
 - `src/error_types.rs` — the typed error enums, one per domain.
 - `src/scanner/` — `folder_scanner.rs` (walks the book folders, parses filenames), `cover_image_retriever.rs` (one cover per format), `metadata_fetcher.rs` (placeholder).
 - `src/stream_reader.rs` — file serving with HTTP range support.
 - `src/test_support.rs` — shared test fixtures, compiled only for tests.
 - `migrations/` — numbered SQL files, embedded at compile time.
+- `translations/` — the shipped translations, embedded at compile time: `<language>/language.json`, and one JSON file per namespace under `frontend/` (sent to the apps) or `backend/` (rendered by the server).
 - Runtime data, git-ignored: `data/databases/app_data.sqlite`, `cover_images/` (except the `example-cover.png` fallback).
 
 ## API
@@ -72,6 +73,7 @@
 - Values are always bound parameters; table and column names are interpolated only from trusted enums and consts, never from request input.
 - Each table names its key column (`KEY` on `Extract` and `Update`, `DatabaseTypes::get_key_column`); nothing assumes it is `id`.
 - Tables without a single key column (the `library_elements` junction, `email_codes`) don't implement `Extract`; dedicated functions query them — `Database` methods for the junction, `db_email_codes.rs` for the codes.
+- The translation catalog's tables (`locales`, `translation_keys`, `translations`) are queried only through `db_translations.rs`.
 - A list reads its rows in one query — `extract_all` for a whole table, or the ids first and then one `IN (…)` query for a part of it — never one query per row.
 - Every reference to another table is a declared `FOREIGN KEY` — `PRAGMA foreign_keys = ON` enforces only declared ones.
 - Times are stored as `INTEGER` unix seconds and read with `read_time` (must have a value — NULL is an error naming the column) or `read_optional_time` (NULL is `None`).
@@ -81,7 +83,7 @@
 
 ## Tests
 - A test lives in a `#[cfg(test)] mod tests` at the bottom of the file it tests; shared fixtures live in `src/test_support.rs`.
-- A database test runs on `memory_connection()`: in-memory, configured and migrated, fresh for every test.
+- A database test runs on `memory_connection()`: in-memory, configured, migrated and synced with the shipped translations, fresh for every test. A test of the schema or of the sync itself uses `migrated_connection()`, whose tables are empty.
 - A test that needs the pool or the router uses `TempDatabase` — never a plain `:memory:` path, which gives every pooled connection its own empty database.
 - Router tests send requests with `tower::ServiceExt::oneshot` and read bodies with `axum::body::to_bytes`.
 - Fixtures insert rows with plain SQL, so they don't depend on the model code under test.

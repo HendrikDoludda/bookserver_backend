@@ -1,0 +1,17 @@
+{
+  "reset_password": {
+    "subject": "Your password reset code",
+    "body": "Hello {username},\n\nyour code to reset your password is:\n\n    {code}\n\nIt is valid for {minutes} minutes. If you didn't ask for a new password, ignore this email; your password stays as it is.\n",
+    "@body": "Keep {code} on its own line, indented by four spaces, so it stands out."
+  },
+  "verify_email": {
+    "subject": "Confirm your email address",
+    "body": "Hello {username},\n\nyour code to confirm your email address is:\n\n    {code}\n\nIt is valid for {minutes} minutes. If you didn't create an account, ignore this email.\n",
+    "@body": "Keep {code} on its own line, indented by four spaces, so it stands out."
+  },
+  "change_email": {
+    "subject": "Confirm your new email address",
+    "body": "Hello {username},\n\nyour code to make this your account's email address is:\n\n    {code}\n\nIt is valid for {minutes} minutes. If you didn't ask for this change, ignore this email; nothing changes.\n",
+    "@body": "Keep {code} on its own line, indented by four spaces, so it stands out. The mail goes to the new address."
+  }
+}

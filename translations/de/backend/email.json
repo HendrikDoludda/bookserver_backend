@@ -1,0 +1,14 @@
+{
+  "reset_password": {
+    "subject": "Dein Code zum Zurücksetzen des Passworts",
+    "body": "Hallo {username},\n\ndein Code zum Zurücksetzen deines Passworts lautet:\n\n    {code}\n\nEr ist {minutes} Minuten lang gültig. Wenn du kein neues Passwort angefordert hast, ignoriere diese E-Mail; dein Passwort bleibt, wie es ist.\n"
+  },
+  "verify_email": {
+    "subject": "Bestätige deine E-Mail-Adresse",
+    "body": "Hallo {username},\n\ndein Code zur Bestätigung deiner E-Mail-Adresse lautet:\n\n    {code}\n\nEr ist {minutes} Minuten lang gültig. Wenn du kein Konto angelegt hast, ignoriere diese E-Mail.\n"
+  },
+  "change_email": {
+    "subject": "Bestätige deine neue E-Mail-Adresse",
+    "body": "Hallo {username},\n\nmit diesem Code wird diese Adresse zur E-Mail-Adresse deines Kontos:\n\n    {code}\n\nEr ist {minutes} Minuten lang gültig. Wenn du diese Änderung nicht angefordert hast, ignoriere diese E-Mail; es ändert sich nichts.\n"
+  }
+}

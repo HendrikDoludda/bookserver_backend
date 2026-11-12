@@ -14,7 +14,7 @@ use crate::{
     app_state::AppState,
     database_related_scripts::{
         db::{configure, Database},
-        migrations,
+        migrations, translation_seed,
     },
     models::{EmailConfig, SmtpTls},
     routes::{
@@ -32,8 +32,17 @@ pub fn test_cipher() -> TotpCipher {
     TotpCipher::from_signing_key(&[7; 32])
 }
 
-/// A fresh in-memory database with every migration applied.
+/// A fresh in-memory database with every migration applied and the shipped translations synced,
+/// as the server starts.
 pub fn memory_connection() -> Connection {
+    let mut conn = migrated_connection();
+    translation_seed::run(&mut conn).expect("sync the shipped translations");
+    conn
+}
+
+/// A fresh in-memory database with every migration applied and every table empty, for tests of
+/// the schema and of the sync itself.
+pub fn migrated_connection() -> Connection {
     let mut conn = Connection::open_in_memory().expect("open an in-memory database");
     configure(&conn).expect("configure the connection");
     migrations::run(&mut conn).expect("run the migrations");

@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::{
     data_models::settings_model::Settings,
-    database_related_scripts::extract::Extract,
+    database_related_scripts::{extract::Extract, translation_seed::is_language_code},
     db::Database,
     error_types::{AppErrors, DatabaseError, SettingsError},
     models::{UserSettings, UserSettingsDatabaseColumns},
@@ -25,7 +25,9 @@ pub async fn replace_settings(
     settings: Settings,
 ) -> Result<Settings, AppErrors> {
     if let Some(locale) = &settings.locale {
-        check_locale(locale)?;
+        if !is_language_code(locale) {
+            return Err(SettingsError::InvalidLocale.into());
+        }
     }
     let row = UserSettings {
         user_id,
@@ -53,24 +55,6 @@ pub async fn replace_settings(
 fn find(conn: &Connection, user_id: i64) -> Result<Option<UserSettings>, DatabaseError> {
     // Not `Database::get_entry`, which makes a missing row an error: here it is the usual case.
     UserSettings::extract(conn, user_id)
-}
-
-/// The shape of a language tag: `ll` or `lll`, optionally followed by `-RR` — `de`, `fil`,
-/// `pt-BR`.
-fn check_locale(locale: &str) -> Result<(), SettingsError> {
-    let (language, region) = match locale.split_once('-') {
-        Some((language, region)) => (language, Some(region)),
-        None => (locale, None),
-    };
-    let language_fits =
-        (2..=3).contains(&language.len()) && language.bytes().all(|b| b.is_ascii_lowercase());
-    let region_fits = region
-        .is_none_or(|region| region.len() == 2 && region.bytes().all(|b| b.is_ascii_uppercase()));
-    if language_fits && region_fits {
-        Ok(())
-    } else {
-        Err(SettingsError::InvalidLocale)
-    }
 }
 
 #[cfg(test)]
@@ -166,19 +150,6 @@ mod tests {
             );
         }
         assert_eq!(locale_of(&temp, alice).await.as_deref(), Some("de"));
-    }
-
-    #[test]
-    fn a_locale_is_two_or_three_lowercase_letters_and_maybe_a_region_in_capitals() {
-        for good in ["de", "en", "fil", "pt-BR", "yue-HK"] {
-            assert!(check_locale(good).is_ok(), "{good:?}");
-        }
-        for bad in [
-            "", "d", "deut", "DE", "De", "de-at", "de-A", "de-AUT", "de_AT", "de-", "-AT",
-            "de-AT-x", "zh-Hant", "es-419", " de", "de ", "dé",
-        ] {
-            assert!(check_locale(bad).is_err(), "{bad:?}");
-        }
     }
 
     #[tokio::test]

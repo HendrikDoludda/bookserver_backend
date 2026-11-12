@@ -375,6 +375,44 @@ impl SettingsError {
     }
 }
 
+/// A shipped translation file that breaks a rule: the server doesn't start with one. `file` is
+/// the path under `translations/`, `key` the dotted name inside the file.
+#[derive(Debug, Error, PartialEq)]
+pub enum ShippedTranslationError {
+    #[error(
+        "{file}: not <language>/language.json or <language>/frontend|backend/<namespace>.json"
+    )]
+    UnexpectedFile { file: String },
+    #[error("{file}: {code} is not a language code such as de or pt-BR")]
+    BadLanguageCode { file: String, code: String },
+    #[error("{file}: {reason}")]
+    InvalidJson { file: String, reason: String },
+    #[error("{file}: the file must hold one JSON object")]
+    NotAnObject { file: String },
+    #[error("{file}: {key}: a value must be a text or an object of texts")]
+    NotText { file: String, key: String },
+    #[error("{file}: {key}: names use only a-z, 0-9 and _")]
+    BadName { file: String, key: String },
+    #[error("{file}: {key}: the text is empty")]
+    EmptyText { file: String, key: String },
+    #[error("{file}: {key}: a hint needs a text of the same name next to it")]
+    HintWithoutText { file: String, key: String },
+    #[error("{file}: {key}: hints belong in the English files")]
+    HintOutsideSource { file: String, key: String },
+    #[error("translations/{code}/language.json is missing")]
+    MissingLanguageFile { code: String },
+    #[error("{file}: {namespace} is in frontend/ in one file and in backend/ in another")]
+    SideMismatch { file: String, namespace: String },
+    #[error("{file}: {key}: the English files have no such key")]
+    UnknownKey { file: String, key: String },
+    #[error("{file}: {key}: the placeholders must be the English text's: {expected}")]
+    PlaceholdersDiffer {
+        file: String,
+        key: String,
+        expected: String,
+    },
+}
+
 #[derive(Debug, Error)]
 pub enum AppErrors {
     #[error(transparent)]
@@ -455,7 +493,10 @@ pub enum ApplicationSetUpErrors {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
+    use crate::database_related_scripts::translation_seed;
     use serde_json::{json, Value};
 
     async fn answer(response: Response<Body>) -> (StatusCode, Value) {
@@ -466,10 +507,10 @@ mod tests {
         (status, serde_json::from_slice(&bytes).unwrap())
     }
 
-    #[tokio::test]
-    async fn client_errors_answer_with_their_own_status_and_key() {
+    /// Every error a client can get besides a 500, with its status and key.
+    fn client_error_cases() -> Vec<(AppErrors, StatusCode, &'static str)> {
         use AuthenticationError as Auth;
-        let cases: Vec<(AppErrors, StatusCode, &str)> = vec![
+        vec![
             (
                 Auth::IncorrectCredentials.into(),
                 StatusCode::UNAUTHORIZED,
@@ -591,14 +632,41 @@ mod tests {
                 StatusCode::BAD_REQUEST,
                 "invalid_request",
             ),
-        ];
+        ]
+    }
 
-        for (error, expected_status, expected_key) in cases {
+    #[tokio::test]
+    async fn client_errors_answer_with_their_own_status_and_key() {
+        for (error, expected_status, expected_key) in client_error_cases() {
             let label = error.to_string();
             let (status, body) = answer(error.into_response()).await;
             assert_eq!(status, expected_status, "{label}");
             assert_eq!(body, json!({ "error": expected_key }), "{label}");
         }
+    }
+
+    #[test]
+    fn the_english_error_texts_cover_exactly_the_keys_the_api_answers() {
+        let mut answered: BTreeSet<&str> = client_error_cases()
+            .iter()
+            .map(|(_, _, key)| *key)
+            .collect();
+        // Answered outside the error enums: every 500, and the router's own answers (`helpers.rs`).
+        answered.extend([
+            "internal_error",
+            "not_found",
+            "method_not_allowed",
+            "not_implemented",
+        ]);
+
+        let catalog = translation_seed::shipped().unwrap();
+        let texts: BTreeSet<&str> = catalog
+            .keys
+            .keys()
+            .filter(|key| key.namespace == "errors")
+            .map(|key| key.name.as_str())
+            .collect();
+        assert_eq!(texts, answered);
     }
 
     #[tokio::test]

@@ -596,6 +596,24 @@ impl AsRef<str> for UserSettingsDatabaseColumns {
     }
 }
 
+// === Translations ============================================================
+/// Who renders a translation: the apps (`frontend/` files) or the server itself (`backend/`
+/// files, such as the mail texts); stored as text in `translation_keys.audience`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Audience {
+    Frontend,
+    Backend,
+}
+
+impl Audience {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Audience::Frontend => "frontend",
+            Audience::Backend => "backend",
+        }
+    }
+}
+
 // === Email configuration =====================================================
 /// How the SMTP connection is encrypted (`SMTP_TLS`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
