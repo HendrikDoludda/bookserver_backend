@@ -413,6 +413,20 @@ pub enum ShippedTranslationError {
     },
 }
 
+#[derive(Error, Debug)]
+pub enum TranslationError {
+    #[error("The server doesn't offer this language")]
+    UnknownLocale,
+}
+
+impl TranslationError {
+    fn status_and_key(&self) -> (StatusCode, &'static str) {
+        match self {
+            TranslationError::UnknownLocale => (StatusCode::NOT_FOUND, "not_found"),
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum AppErrors {
     #[error(transparent)]
@@ -423,7 +437,9 @@ pub enum AppErrors {
     Email(#[from] EmailErrors),
     #[error(transparent)]
     Settings(#[from] SettingsError),
-    #[error("The request's body or path could not be read")]
+    #[error(transparent)]
+    Translation(#[from] TranslationError),
+    #[error("The request's body, path or query could not be read")]
     InvalidRequest,
 }
 
@@ -434,6 +450,7 @@ impl AppErrors {
             AppErrors::Authentication(err) => err.status_and_key(),
             AppErrors::Email(err) => err.status_and_key(),
             AppErrors::Settings(err) => err.status_and_key(),
+            AppErrors::Translation(err) => err.status_and_key(),
             AppErrors::InvalidRequest => (StatusCode::BAD_REQUEST, "invalid_request"),
         }
     }
@@ -624,6 +641,11 @@ mod tests {
             ),
             (
                 DatabaseError::EntryNotFound.into(),
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+            (
+                TranslationError::UnknownLocale.into(),
                 StatusCode::NOT_FOUND,
                 "not_found",
             ),

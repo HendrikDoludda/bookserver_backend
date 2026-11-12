@@ -50,6 +50,7 @@ src/
 │   ├── email_codes.rs          emailed codes: issuing, mail limits, checking
 │   ├── totp_management.rs      TOTP two-factor auth and recovery codes
 │   ├── totp_cipher.rs          TOTP secrets encrypted at rest (XChaCha20-Poly1305)
+│   ├── translations.rs         the translation catalog as the apps read it
 │   └── email_helper.rs         Mailer: SMTP delivery
 ├── database_related_scripts/
 │   ├── db.rs                   Database: connection pool + queries
@@ -57,12 +58,14 @@ src/
 │   │   db_update.rs, db_search.rs,
 │   │   db_delete.rs            one trait per database operation
 │   ├── db_from_row.rs          row → model mapping
-│   └── migrations.rs           versioned migration runner
+│   ├── migrations.rs           versioned migration runner
+│   └── translation_seed.rs     checks the shipped translations, syncs them at start
 ├── data_models/                domain models, request/response bodies
 ├── scanner/                    folder scanner + cover extraction
 ├── stream_reader.rs            range-request file streaming
 └── error_types.rs              typed error enums, one per domain
 migrations/                     SQL migrations (embedded at compile time)
+translations/                   UI and mail texts, one folder per language (embedded at compile time)
 docs/                           one design doc per feature
 ```
 
@@ -124,8 +127,8 @@ A bad or incomplete setting stops the server at start, naming it.
 
 ## API
 
-Every endpoint except `/health` and `/api/v1/auth/…` needs `Authorization: Bearer
-<session_token>` and answers 401 without it; scanning and deleting a library also need an admin
+Every endpoint except `/health`, `/api/v1/auth/…` and the two `/api/v1/locales…` reads needs
+`Authorization: Bearer <session_token>` and answers 401 without it; scanning and deleting a library also need an admin
 (403 for a member). Implemented endpoints:
 
 | Method | Path | Description |
@@ -161,6 +164,8 @@ Every endpoint except `/health` and `/api/v1/auth/…` needs `Authorization: Bea
 | `POST` | `/api/v1/account/totp/recovery_codes` | New recovery codes with the password and an authenticator or recovery code; answers 10 codes, shown once, and the old ones stop working |
 | `GET` | `/api/v1/users` | Admin only: every account — username, email, verified, role, created and last login |
 | `PATCH` | `/api/v1/users/{id}` | Admin only: `{"role": "admin" \| "member"}` and/or `{"email_verified": true}`; answers the changed account, `409 last_admin` for demoting the last admin |
+| `GET` | `/api/v1/locales` | No session needed: the languages the server offers, in their order — `code`, `display_name` (in the language itself), `icon`, `is_default` |
+| `GET` | `/api/v1/locales/{code}/translations` | No session needed: a language's texts for the apps, `{"<namespace>": {"<name>": "<text>"}}`; a text the language lacks comes in English; `?sections=errors,settings` limits the namespaces; `404 not_found` for a language the server doesn't offer |
 
 Errors answer with JSON `{"error": "<key>"}` and a matching status code.
 

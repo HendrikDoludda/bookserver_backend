@@ -10,7 +10,10 @@ use rusqlite::{
     Connection, ToSql,
 };
 
-use crate::{database_related_scripts::db::logged, error_types::DatabaseError, models::Audience};
+use crate::{
+    data_models::translations_model::Locale, database_related_scripts::db::logged,
+    error_types::DatabaseError, models::Audience,
+};
 
 /// The language every key is written in first; a text missing in another language falls back
 /// to it.
@@ -209,6 +212,80 @@ pub fn delete_text(conn: &Connection, code: &str, key_id: i64) -> Result<(), Dat
         DatabaseError::ConnectionExecutableFailure,
     ))?;
     Ok(())
+}
+
+/// The enabled languages, in their sort order.
+pub fn enabled_locales(conn: &Connection) -> Result<Vec<Locale>, DatabaseError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT code, display_name, icon, is_default FROM locales \
+             WHERE enabled ORDER BY sort_order, code",
+        )
+        .map_err(logged(
+            "reading",
+            "locales",
+            DatabaseError::TaskPreparationFailure,
+        ))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(Locale {
+                code: row.get("code")?,
+                display_name: row.get("display_name")?,
+                icon: row.get("icon")?,
+                is_default: row.get("is_default")?,
+            })
+        })
+        .map_err(logged("reading", "locales", DatabaseError::QueryFailure))?;
+    rows.collect::<Result<_, _>>().map_err(logged(
+        "reading",
+        "locales",
+        DatabaseError::NextRowFailure,
+    ))
+}
+
+/// Whether the server offers the language `code`.
+pub fn is_enabled(conn: &Connection, code: &str) -> Result<bool, DatabaseError> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM locales WHERE code = ?1 AND enabled)",
+        [code],
+        |row| row.get(0),
+    )
+    .map_err(logged("reading", "locales", DatabaseError::QueryFailure))
+}
+
+/// Every frontend text in the language `code` as (namespace, name, text); where `code` has no
+/// text for a key, the source language's.
+pub fn frontend_texts(
+    conn: &Connection,
+    code: &str,
+) -> Result<Vec<(String, String, String)>, DatabaseError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT k.namespace, k.name, COALESCE(t.value, f.value) AS value \
+             FROM translation_keys k \
+             LEFT JOIN translations t ON t.key_id = k.id AND t.locale_code = ?1 \
+             LEFT JOIN translations f ON f.key_id = k.id AND f.locale_code = ?2 \
+             WHERE k.audience = ?3 AND COALESCE(t.value, f.value) IS NOT NULL",
+        )
+        .map_err(logged(
+            "reading",
+            "translations",
+            DatabaseError::TaskPreparationFailure,
+        ))?;
+    let rows = stmt
+        .query_map(params![code, SOURCE_LOCALE, Audience::Frontend], |row| {
+            Ok((row.get("namespace")?, row.get("name")?, row.get("value")?))
+        })
+        .map_err(logged(
+            "reading",
+            "translations",
+            DatabaseError::QueryFailure,
+        ))?;
+    rows.collect::<Result<_, _>>().map_err(logged(
+        "reading",
+        "translations",
+        DatabaseError::NextRowFailure,
+    ))
 }
 
 #[cfg(test)]

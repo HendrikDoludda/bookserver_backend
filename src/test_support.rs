@@ -59,6 +59,40 @@ pub fn insert_user(conn: &Connection, username: &str) -> i64 {
     conn.last_insert_rowid()
 }
 
+/// Inserts an enabled language with plain SQL, its code as its name. Tests use codes from
+/// `qaa`–`qtz`, which ISO 639-2 reserves for local use, so they never clash with a shipped one.
+pub fn insert_language(conn: &Connection, code: &str, sort_order: i64) {
+    conn.execute(
+        "INSERT INTO locales (code, display_name, sort_order) VALUES (?1, ?1, ?2)",
+        params![code, sort_order],
+    )
+    .expect("insert a language");
+}
+
+/// Inserts a key for `audience` (`frontend` or `backend`) with plain SQL, and its text in each
+/// language of `texts`.
+pub fn insert_texts(
+    conn: &Connection,
+    audience: &str,
+    namespace: &str,
+    name: &str,
+    texts: &[(&str, &str)],
+) {
+    conn.execute(
+        "INSERT INTO translation_keys (audience, namespace, name) VALUES (?1, ?2, ?3)",
+        params![audience, namespace, name],
+    )
+    .expect("insert a key");
+    let key_id = conn.last_insert_rowid();
+    for (code, text) in texts {
+        conn.execute(
+            "INSERT INTO translations (locale_code, key_id, value) VALUES (?1, ?2, ?3)",
+            params![code, key_id, text],
+        )
+        .expect("insert a text");
+    }
+}
+
 /// The code in a mail from `email_codes::code_mail`: the line indented by four spaces.
 pub fn code_in(mail: &EmailInformation) -> String {
     mail.body

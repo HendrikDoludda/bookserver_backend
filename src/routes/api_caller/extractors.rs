@@ -1,13 +1,13 @@
 //! The request extractors. The session ones make Axum check the request's
 //! `Authorization: Bearer` token before the handler body runs: every failure — no header,
 //! another scheme, an unknown or expired token — gets the same 401; a non-admin gets 403.
-//! `JsonBody` and `PathParams` read the body and the path, and answer 400 `invalid_request`
-//! for what they can't read.
+//! `JsonBody`, `PathParams` and `QueryParams` read the body, the path and the query string,
+//! and answer 400 `invalid_request` for what they can't read.
 
 use std::{sync::Arc, time::SystemTime};
 
 use axum::{
-    extract::{FromRef, FromRequest, FromRequestParts, Path, Request},
+    extract::{FromRef, FromRequest, FromRequestParts, Path, Query, Request},
     http::{header::AUTHORIZATION, request::Parts, HeaderMap},
     Json,
 };
@@ -62,6 +62,25 @@ where
             .await
             .map_err(|_| AppErrors::InvalidRequest)?;
         Ok(PathParams(params))
+    }
+}
+
+/// The query string: axum's `Query`, but one it can't read — such as a field sent twice —
+/// answers 400 `invalid_request` as JSON.
+pub struct QueryParams<T>(pub T);
+
+impl<T, S> FromRequestParts<S> for QueryParams<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = AppErrors;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let Query(params) = Query::<T>::from_request_parts(parts, state)
+            .await
+            .map_err(|_| AppErrors::InvalidRequest)?;
+        Ok(QueryParams(params))
     }
 }
 

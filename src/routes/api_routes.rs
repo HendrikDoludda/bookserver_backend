@@ -21,6 +21,7 @@ use crate::{
             delete_library, get_libraries, get_series_children, get_series_in_library,
             request_file, retrieve_metadata, scan_all_directories,
         },
+        locales::{get_translations, list_locales},
         settings::{get_settings, replace_settings},
         totp::{
             disable_totp, finalize_totp_set_up, renew_totp_recovery_codes, sign_in_totp,
@@ -95,7 +96,9 @@ pub fn set_up_routes() -> Router<AppState> {
             post(renew_totp_recovery_codes),
         )
         .route("/users", get(list_users))
-        .route("/users/{id}", patch(update_user));
+        .route("/users/{id}", patch(update_user))
+        .route("/locales", get(list_locales))
+        .route("/locales/{code}/translations", get(get_translations));
 
     Router::new()
         .route("/health", get(ping_server))
@@ -122,7 +125,7 @@ mod tests {
             auth::{hash_secret, hash_token},
             email_helper::Mailer,
         },
-        test_support::{code_in, insert_user, TempDatabase, TEST_SETUP_CODE},
+        test_support::{code_in, insert_texts, insert_user, TempDatabase, TEST_SETUP_CODE},
     };
 
     #[tokio::test]
@@ -1056,8 +1059,9 @@ mod tests {
         .unwrap()
     }
 
-    /// Every route except `/health` and the public `/api/v1/auth/…` routes. A route added to
-    /// the table belongs here too, so this test proves it can't be reached without a login.
+    /// Every route except `/health`, the public `/api/v1/auth/…` routes and the catalog's reads
+    /// (`/api/v1/locales…`). A route added to the table belongs here too, so this test proves it
+    /// can't be reached without a login.
     const GUARDED_ROUTES: &[(&str, &str)] = &[
         ("GET", "/api/v1/libraries"),
         ("POST", "/api/v1/libraries"),
@@ -1089,6 +1093,86 @@ mod tests {
         ("GET", "/api/v1/users"),
         ("PATCH", "/api/v1/users/1"),
     ];
+
+    #[tokio::test]
+    async fn the_catalog_needs_no_session_and_ignores_a_dead_one() {
+        let temp = TempDatabase::open();
+        temp.db
+            .setup_new_transaction(|conn| {
+                insert_texts(
+                    conn,
+                    "frontend",
+                    "test",
+                    "title",
+                    &[("en", "Title"), ("de", "Titel")],
+                );
+                Ok(())
+            })
+            .unwrap();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        for token in [None, Some("not-a-session")] {
+            let request = |uri: &str| match token {
+                Some(token) => authorized("GET", uri, token, None),
+                None => bare("GET", uri),
+            };
+
+            let (status, _, body) = call(&app, request("/api/v1/locales")).await;
+            assert_eq!(status, StatusCode::OK, "{token:?}");
+            assert_eq!(
+                json(&body),
+                serde_json::json!([
+                    {"code": "en", "display_name": "English", "icon": null, "is_default": true},
+                    {"code": "de", "display_name": "Deutsch", "icon": null, "is_default": false},
+                ])
+            );
+
+            let uri = "/api/v1/locales/de/translations?sections=test";
+            let (status, _, body) = call(&app, request(uri)).await;
+            assert_eq!(status, StatusCode::OK, "{token:?}");
+            assert_eq!(
+                json(&body),
+                serde_json::json!({ "test": { "title": "Titel" } })
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_language_the_server_doesnt_offer_answers_404_json() {
+        let temp = TempDatabase::open();
+        temp.db
+            .setup_new_transaction(|conn| {
+                conn.execute("UPDATE locales SET enabled = FALSE WHERE code = 'de'", [])
+                    .unwrap();
+                Ok(())
+            })
+            .unwrap();
+        let app = set_up_routes().with_state(temp.state(Mailer::Disabled));
+
+        for uri in [
+            "/api/v1/locales/fr/translations",
+            "/api/v1/locales/de/translations",
+        ] {
+            let (status, _, body) = call(&app, bare("GET", uri)).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+            assert_eq!(
+                json(&body),
+                serde_json::json!({ "error": "not_found" }),
+                "{uri}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_catalog_query_the_server_cant_read_answers_400_json() {
+        let (status, body) = json_answer(bare(
+            "GET",
+            "/api/v1/locales/en/translations?sections=errors&sections=email",
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body, serde_json::json!({ "error": "invalid_request" }));
+    }
 
     #[tokio::test]
     async fn every_route_but_health_and_auth_needs_a_session() {
