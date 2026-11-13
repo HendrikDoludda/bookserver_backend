@@ -1,0 +1,6 @@
+{
+  "unexpected_answer": "The server's answer doesn't make sense to the app. Updating the app may help.",
+  "@unexpected_answer": "The server answered, but not in a way this version of the app understands.",
+  "unreachable": "Can't reach the server. Check the address and your connection.",
+  "@unreachable": "No answer at all: the server is off, the address is wrong, or the device is offline."
+}

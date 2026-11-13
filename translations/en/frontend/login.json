@@ -1,0 +1,9 @@
+{
+  "change_server": "Change server",
+  "password": "Password",
+  "sign_in": "Sign in",
+  "title": "Sign in",
+  "totp_unavailable": "This account uses two-factor authentication, which this version of the app can't do yet.",
+  "@totp_unavailable": "Temporary: shown until the app can ask for the authenticator code.",
+  "username_or_email": "Username or email address"
+}

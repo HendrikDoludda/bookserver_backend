@@ -1,0 +1,9 @@
+{
+  "address_hint": "https://my-server.tailnet.ts.net",
+  "address_label": "Serveradresse",
+  "connect": "Verbinden",
+  "insecure_address": "Nutze eine Adresse, die mit https:// beginnt.",
+  "invalid_address": "Das sieht nicht nach einer Serveradresse aus.",
+  "not_a_bookserver": "Unter dieser Adresse gibt es keinen Buchserver.",
+  "title": "Mit deinem Buchserver verbinden"
+}

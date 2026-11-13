@@ -1,0 +1,8 @@
+{
+  "change_server": "Server wechseln",
+  "password": "Passwort",
+  "sign_in": "Anmelden",
+  "title": "Anmelden",
+  "totp_unavailable": "Dieses Konto nutzt die Zwei-Faktor-Authentifizierung, die diese Version der App noch nicht kann.",
+  "username_or_email": "Benutzername oder E-Mail-Adresse"
+}

@@ -20,6 +20,8 @@
 | Frontend localization | F1 | in progress | [57-frontend-localization](features/57-frontend-localization.md) |
 | Account screens | F1 | in progress | [58-account-screens](features/58-account-screens.md) |
 | Flutter app | F1 | in progress | [73-flutter-app](features/73-flutter-app.md) |
+| Left- and right-handed controls | F1 | not started | [79-handedness](features/79-handedness.md) |
+| Reading direction | F1 | not started | [80-reading-direction](features/80-reading-direction.md) |
 | Library & series management | 2 | in progress | [01-library-and-series-management](features/01-library-and-series-management.md) |
 | Directory scanning | 2 | in progress | [34-directory-scanning](features/34-directory-scanning.md) |
 | Scannable directories | 2 | not started | [35-scannable-directories](features/35-scannable-directories.md) |

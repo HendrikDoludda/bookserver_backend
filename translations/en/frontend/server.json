@@ -1,0 +1,12 @@
+{
+  "address_hint": "https://my-server.tailnet.ts.net",
+  "@address_hint": "An example address, shown in the empty field. Keep it an address.",
+  "address_label": "Server address",
+  "connect": "Connect",
+  "insecure_address": "Use an address that starts with https://.",
+  "@insecure_address": "For an address that starts with http://, which only development builds of the app accept.",
+  "invalid_address": "This doesn't look like a server address.",
+  "not_a_bookserver": "There's no book server at this address.",
+  "@not_a_bookserver": "Something answers at the address, but it isn't a book server.",
+  "title": "Connect to your book server"
+}

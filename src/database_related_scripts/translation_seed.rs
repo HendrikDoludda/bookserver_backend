@@ -29,10 +29,20 @@ macro_rules! shipped {
 /// that is missing here.
 const SHIPPED: &[(&str, &str)] = &[
     shipped!("en/language.json"),
+    shipped!("en/frontend/app.json"),
+    shipped!("en/frontend/connection.json"),
     shipped!("en/frontend/errors.json"),
+    shipped!("en/frontend/home.json"),
+    shipped!("en/frontend/login.json"),
+    shipped!("en/frontend/server.json"),
     shipped!("en/backend/email.json"),
     shipped!("de/language.json"),
+    shipped!("de/frontend/app.json"),
+    shipped!("de/frontend/connection.json"),
     shipped!("de/frontend/errors.json"),
+    shipped!("de/frontend/home.json"),
+    shipped!("de/frontend/login.json"),
+    shipped!("de/frontend/server.json"),
     shipped!("de/backend/email.json"),
 ];
 

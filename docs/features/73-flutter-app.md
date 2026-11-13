@@ -7,7 +7,7 @@ feature can be tested in it. The desktop version is a client only — the server
 install is [52](52-packaging-and-deployment.md).
 
 ## Build
-- [ ] 1 h · Texts for the server-address, login and home screens and for failed connections, in `translations/en/frontend/` and `translations/de/frontend/` [BE]
+- [x] 1 h · Texts for the server-address, login and home screens and for failed connections, in `translations/en/frontend/` and `translations/de/frontend/` [BE]
 - [ ] 2 h · Replace the template app: the folder layout, and design tokens for the first screens [FE]
 - [ ] 2 h · Server address screen: an `https://` origin — `http://` in debug builds only — accepted when `GET /health` answers `pong` [FE]
 - [ ] 1 h · Network access: the INTERNET permission in Android's main manifest, the outgoing-network entitlement on macOS [FE]
