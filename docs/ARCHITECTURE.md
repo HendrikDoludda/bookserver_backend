@@ -97,10 +97,6 @@
 - Per-user data references `users.id` through a declared foreign key, in the one SQLite database.
 - Format-specific behaviour — filename parsing, cover extraction, reading positions — is chosen by `LibraryType` / `BookFormat` in one place, never spread through core.
 
-## Frontend
-- Components read design tokens, never literal colours or sizes.
-- Every visible string goes through `t("key")` against the backend's translation catalog.
-
 ## Hosting
 - A home server on the LAN, reached remotely only through Tailscale — never public port-forwarding. Hardening that only matters on the open internet lives in [54](features/54-public-exposure-hardening.md).
 - HTTPS ends at a TLS proxy in front of the server — `tailscale serve` ([run-deploy](run-deploy/tailscale.md)); the server speaks plain HTTP on `BIND_ADDRESS`, `127.0.0.1` behind the proxy, so the LAN gets no plain connection.

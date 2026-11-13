@@ -5,6 +5,10 @@ Project guidance for Claude Code.
 Personal **book / manga / comic home server** backend: scans directories of books, stores
 metadata in SQLite, extracts cover images, and exposes an HTTP API (Axum) for a frontend.
 
+The Flutter app lives in [bookserver-front-end](../bookserver-front-end). Its CLAUDE.md imports
+this file and keeps its feature docs here, so every rule below applies in both repositories —
+say which one when a rule is not for both.
+
 ## How we work
 
 The developer is new to Rust and to writing security-sensitive code, and this is a learning
@@ -244,8 +248,8 @@ does today is not on this list — the code is the truth for that. Git follows
 
 Every task comes with automated tests that prove it works — thorough: the real paths, the edge
 cases, the failure cases. Not a smoke test. They are written with the task, not after the
-feature. No tests exist yet: the first task that needs one also sets up the test layout, and
-plans it like any other change.
+feature. A repository without tests gets its test layout from the first task that needs one,
+planned like any other change.
 
 ## Plan before you build
 
