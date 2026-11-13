@@ -16,9 +16,10 @@
 | Recovery codes | 1 | completed | [50-recovery-codes](features/50-recovery-codes.md) |
 | Translation catalog (i18n) | F0 | completed | [13-internationalization](features/13-internationalization.md) |
 | Reading files | F1 | in progress | [38-reading-files](features/38-reading-files.md) |
-| Frontend localization | F1 | not started | [57-frontend-localization](features/57-frontend-localization.md) |
-| Account screens | F1 | not started | [58-account-screens](features/58-account-screens.md) |
-| Flutter app | F1 | not started | [73-flutter-app](features/73-flutter-app.md) |
+| Browsing | F1 | not started | [43-browsing](features/43-browsing.md) |
+| Frontend localization | F1 | in progress | [57-frontend-localization](features/57-frontend-localization.md) |
+| Account screens | F1 | in progress | [58-account-screens](features/58-account-screens.md) |
+| Flutter app | F1 | in progress | [73-flutter-app](features/73-flutter-app.md) |
 | Library & series management | 2 | in progress | [01-library-and-series-management](features/01-library-and-series-management.md) |
 | Directory scanning | 2 | in progress | [34-directory-scanning](features/34-directory-scanning.md) |
 | Scannable directories | 2 | not started | [35-scannable-directories](features/35-scannable-directories.md) |
