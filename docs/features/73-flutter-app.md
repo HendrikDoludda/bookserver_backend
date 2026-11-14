@@ -8,7 +8,7 @@ install is [52](52-packaging-and-deployment.md).
 
 ## Build
 - [x] 1 h · Texts for the server-address, login and home screens and for failed connections, in `translations/en/frontend/` and `translations/de/frontend/` [BE]
-- [ ] 2 h · Replace the template app: the folder layout, and design tokens for the first screens [FE]
+- [x] 2 h · Replace the template app: the folder layout, and design tokens for the first screens [FE]
 - [ ] 2 h · Server address screen: an `https://` origin — `http://` in debug builds only — accepted when `GET /health` answers `pong` [FE]
 - [ ] 1 h · Network access: the INTERNET permission in Android's main manifest, the outgoing-network entitlement on macOS [FE]
 - [ ] 2 h · API client: Bearer tokens and JSON bodies to the server's origin, redirects never followed; `{"error": key}` answers become typed errors, a failed connection or a timeout a connection error [FE]
